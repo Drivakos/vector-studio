@@ -1,0 +1,308 @@
+{
+  "menus": [
+    {
+      "label": "File",
+      "items": [
+        { "cmd": "file.new", "label": "New", "shortcut": "CmdOrCtrl+N" },
+        { "cmd": "file.new_from_template", "label": "New from Template…" },
+        { "cmd": "file.open", "label": "Open…", "shortcut": "CmdOrCtrl+O" },
+        { "label": "Open Recent", "items": [] },
+        "-",
+        { "cmd": "file.close", "label": "Close", "shortcut": "CmdOrCtrl+W" },
+        { "cmd": "file.close_all", "label": "Close All" },
+        { "cmd": "file.save", "label": "Save", "shortcut": "CmdOrCtrl+S" },
+        { "cmd": "file.save_as", "label": "Save As…", "shortcut": "CmdOrCtrl+Shift+S" },
+        { "cmd": "file.save_as_template", "label": "Save as Template…" },
+        { "cmd": "file.revert", "label": "Revert" },
+        "-",
+        { "cmd": "file.import", "label": "Import…", "shortcut": "CmdOrCtrl+I" },
+        { "cmd": "file.export", "label": "Export…", "shortcut": "CmdOrCtrl+E" },
+        { "label": "Export For", "items": [
+          { "cmd": "file.export_web", "label": "Web…" },
+          { "cmd": "file.export_print", "label": "Print-Ready PDF…" }
+        ] },
+        "-",
+        { "cmd": "file.print_merge", "label": "Print Merge" },
+        { "cmd": "file.print", "label": "Print…", "shortcut": "CmdOrCtrl+P" },
+        "-",
+        { "cmd": "file.document_properties", "label": "Document Properties…" }
+      ]
+    },
+    {
+      "label": "Edit",
+      "items": [
+        { "cmd": "edit.undo", "label": "Undo", "shortcut": "CmdOrCtrl+Z" },
+        { "cmd": "edit.redo", "label": "Redo", "shortcut": "CmdOrCtrl+Shift+Z" },
+        { "cmd": "edit.repeat", "label": "Repeat", "shortcut": "CmdOrCtrl+R" },
+        "-",
+        { "cmd": "edit.cut", "label": "Cut", "shortcut": "CmdOrCtrl+X" },
+        { "cmd": "edit.copy", "label": "Copy", "shortcut": "CmdOrCtrl+C" },
+        { "cmd": "edit.copy_properties", "label": "Copy Properties From…" },
+        { "cmd": "edit.paste", "label": "Paste", "shortcut": "CmdOrCtrl+V" },
+        { "cmd": "edit.paste_special", "label": "Paste Special…" },
+        { "cmd": "edit.delete", "label": "Delete" },
+        "-",
+        { "cmd": "edit.duplicate", "label": "Duplicate", "shortcut": "CmdOrCtrl+D" },
+        { "cmd": "edit.clone", "label": "Clone" },
+        { "label": "Select All", "items": [
+          { "cmd": "edit.select_all_objects", "label": "Objects", "shortcut": "CmdOrCtrl+A" },
+          { "cmd": "edit.select_all_text", "label": "Text" },
+          { "cmd": "edit.select_all_guidelines", "label": "Guidelines" },
+          { "cmd": "edit.select_all_nodes", "label": "Nodes" }
+        ] },
+        "-",
+        { "cmd": "edit.find_replace", "label": "Find and Replace…", "shortcut": "CmdOrCtrl+F" },
+        { "cmd": "edit.step_repeat", "label": "Step and Repeat…" }
+      ]
+    },
+    {
+      "label": "View",
+      "items": [
+        { "cmd": "view.mode_wireframe", "label": "Wireframe" },
+        { "cmd": "view.mode_normal", "label": "Normal" },
+        { "cmd": "view.mode_enhanced", "label": "Enhanced" },
+        { "cmd": "view.mode_pixels", "label": "Pixels" },
+        "-",
+        { "cmd": "view.full_screen_preview", "label": "Full-Screen Preview" },
+        { "cmd": "view.page_sorter", "label": "Page Sorter View" },
+        "-",
+        { "cmd": "view.zoom_in", "label": "Zoom In", "shortcut": "CmdOrCtrl+=" },
+        { "cmd": "view.zoom_out", "label": "Zoom Out", "shortcut": "CmdOrCtrl+-" },
+        { "cmd": "view.zoom_page", "label": "Zoom to Page", "shortcut": "Shift+F4" },
+        { "cmd": "view.zoom_actual", "label": "Actual Size", "shortcut": "CmdOrCtrl+1" },
+        "-",
+        { "cmd": "view.proof_colors", "label": "Proof Colors" },
+        { "cmd": "view.simulate_overprints", "label": "Simulate Overprints" },
+        "-",
+        { "cmd": "view.rulers", "label": "Rulers", "checkable": true, "shortcut": "CmdOrCtrl+Alt+R" },
+        { "cmd": "view.grid", "label": "Grid" },
+        { "cmd": "view.guidelines", "label": "Guidelines" },
+        { "cmd": "view.alignment_guides", "label": "Alignment Guides" },
+        { "cmd": "view.dynamic_guides", "label": "Dynamic Guides" },
+        { "label": "Snap To", "items": [
+          { "cmd": "view.snap_pixels", "label": "Pixels" },
+          { "cmd": "view.snap_grid", "label": "Document Grid" },
+          { "cmd": "view.snap_guidelines", "label": "Guidelines" },
+          { "cmd": "view.snap_objects", "label": "Objects" },
+          { "cmd": "view.snap_page", "label": "Page" }
+        ] },
+        "-",
+        { "cmd": "view.status_bar", "label": "Status Bar", "checkable": true },
+        { "cmd": "view.color_palette", "label": "Color Palette", "checkable": true }
+      ]
+    },
+    {
+      "label": "Layout",
+      "items": [
+        { "cmd": "layout.insert_page", "label": "Insert Page" },
+        { "cmd": "layout.insert_page_before", "label": "Insert Page Before" },
+        { "cmd": "layout.duplicate_page", "label": "Duplicate Page" },
+        { "cmd": "layout.rename_page", "label": "Rename Page…" },
+        { "cmd": "layout.delete_page", "label": "Delete Page" },
+        "-",
+        { "cmd": "layout.prev_page", "label": "Previous Page", "shortcut": "PageUp" },
+        { "cmd": "layout.next_page", "label": "Next Page", "shortcut": "PageDown" },
+        { "cmd": "layout.go_to_page", "label": "Go to Page…" },
+        "-",
+        { "cmd": "layout.page_numbers", "label": "Insert Page Number" },
+        { "cmd": "layout.switch_orientation", "label": "Switch Page Orientation" },
+        "-",
+        { "cmd": "layout.document_options", "label": "Document Options…" },
+        { "cmd": "layout.page_background", "label": "Page Background…" }
+      ]
+    },
+    {
+      "label": "Object",
+      "items": [
+        { "label": "Insert", "items": [
+          { "cmd": "object.insert_qr", "label": "QR Code" },
+          { "cmd": "object.insert_barcode", "label": "Barcode…" }
+        ] },
+        { "label": "Clip Frame", "items": [
+          { "cmd": "object.clip_place_inside", "label": "Place Inside Frame…" },
+          { "cmd": "object.clip_extract", "label": "Extract Contents" },
+          { "cmd": "object.clip_edit", "label": "Edit Contents" },
+          { "cmd": "object.clip_empty_frame", "label": "Create Empty Frame" }
+        ] },
+        { "label": "Symmetry", "items": [
+          { "cmd": "object.symmetry_new", "label": "Create New Symmetry" },
+          { "cmd": "object.symmetry_edit", "label": "Edit Symmetry" }
+        ] },
+        { "label": "Symbol", "items": [
+          { "cmd": "object.symbol_new", "label": "New Symbol" },
+          { "cmd": "object.symbol_edit", "label": "Edit Symbol" }
+        ] },
+        "-",
+        { "label": "Align and Distribute", "items": [
+          { "cmd": "object.align_left", "label": "Align Left", "shortcut": "L" },
+          { "cmd": "object.align_right", "label": "Align Right", "shortcut": "R" },
+          { "cmd": "object.align_top", "label": "Align Top", "shortcut": "T" },
+          { "cmd": "object.align_bottom", "label": "Align Bottom", "shortcut": "B" },
+          { "cmd": "object.align_center_h", "label": "Align Centers Horizontally", "shortcut": "E" },
+          { "cmd": "object.align_center_v", "label": "Align Centers Vertically", "shortcut": "C" },
+          { "cmd": "object.center_to_page", "label": "Center to Page", "shortcut": "P" }
+        ] },
+        { "label": "Order", "items": [
+          { "cmd": "object.to_front", "label": "To Front of Layer", "shortcut": "Shift+PageUp" },
+          { "cmd": "object.to_back", "label": "To Back of Layer", "shortcut": "Shift+PageDown" },
+          { "cmd": "object.forward", "label": "Forward One", "shortcut": "CmdOrCtrl+PageUp" },
+          { "cmd": "object.backward", "label": "Back One", "shortcut": "CmdOrCtrl+PageDown" },
+          { "cmd": "object.reverse_order", "label": "Reverse Order" }
+        ] },
+        { "label": "Group", "items": [
+          { "cmd": "object.group", "label": "Group", "shortcut": "CmdOrCtrl+G" },
+          { "cmd": "object.ungroup", "label": "Ungroup", "shortcut": "CmdOrCtrl+U" },
+          { "cmd": "object.ungroup_all", "label": "Ungroup All" }
+        ] },
+        { "label": "Lock", "items": [
+          { "cmd": "object.lock", "label": "Lock" },
+          { "cmd": "object.unlock", "label": "Unlock" },
+          { "cmd": "object.unlock_all", "label": "Unlock All" }
+        ] },
+        { "label": "Shaping", "items": [
+          { "cmd": "object.weld", "label": "Weld" },
+          { "cmd": "object.trim", "label": "Trim" },
+          { "cmd": "object.intersect", "label": "Intersect" },
+          { "cmd": "object.simplify", "label": "Simplify" },
+          { "cmd": "object.front_minus_back", "label": "Front Minus Back" },
+          { "cmd": "object.back_minus_front", "label": "Back Minus Front" },
+          { "cmd": "object.boundary", "label": "Boundary" }
+        ] },
+        { "cmd": "object.combine", "label": "Combine", "shortcut": "CmdOrCtrl+L" },
+        { "cmd": "object.break_apart", "label": "Break Apart", "shortcut": "CmdOrCtrl+K" },
+        "-",
+        { "label": "Perspective", "items": [
+          { "cmd": "object.add_perspective", "label": "Add Perspective" },
+          { "cmd": "object.draw_in_perspective", "label": "Draw in Perspective" }
+        ] },
+        { "cmd": "object.convert_to_curves", "label": "Convert to Curves", "shortcut": "CmdOrCtrl+Q" },
+        { "cmd": "object.convert_outline", "label": "Convert Outline to Object", "shortcut": "CmdOrCtrl+Shift+Q" },
+        { "cmd": "object.join_curves", "label": "Join Curves" },
+        "-",
+        { "cmd": "object.properties", "label": "Properties", "shortcut": "Alt+Enter" }
+      ]
+    },
+    {
+      "label": "Effects",
+      "items": [
+        { "label": "Adjust", "items": [
+          { "cmd": "fx.auto_adjust", "label": "Auto Adjust" },
+          { "cmd": "fx.tone_curve", "label": "Tone Curve…" },
+          { "cmd": "fx.brightness_contrast", "label": "Brightness/Contrast/Intensity…" },
+          { "cmd": "fx.color_balance", "label": "Color Balance…" },
+          { "cmd": "fx.hue_saturation", "label": "Hue/Saturation/Lightness…" },
+          { "cmd": "fx.grayscale", "label": "Grayscale" }
+        ] },
+        { "label": "Blur", "items": [
+          { "cmd": "fx.gaussian_blur", "label": "Gaussian Blur…" },
+          { "cmd": "fx.motion_blur", "label": "Motion Blur…" },
+          { "cmd": "fx.radial_blur", "label": "Radial Blur…" },
+          { "cmd": "fx.smart_blur", "label": "Smart Blur…" }
+        ] },
+        { "label": "Distort", "items": [
+          { "cmd": "fx.pixelate", "label": "Pixelate…" },
+          { "cmd": "fx.ripple", "label": "Ripple…" },
+          { "cmd": "fx.swirl", "label": "Swirl…" },
+          { "cmd": "fx.wind", "label": "Wind…" }
+        ] },
+        { "label": "Noise", "items": [
+          { "cmd": "fx.add_noise", "label": "Add Noise…" },
+          { "cmd": "fx.remove_noise", "label": "Remove Noise…" }
+        ] },
+        { "label": "Sharpen", "items": [
+          { "cmd": "fx.sharpen", "label": "Sharpen…" },
+          { "cmd": "fx.unsharp_mask", "label": "Unsharp Mask…" }
+        ] },
+        "-",
+        { "cmd": "fx.artistic_media", "label": "Artistic Media" },
+        { "cmd": "fx.bevel", "label": "Bevel" },
+        { "cmd": "fx.blend", "label": "Blend" },
+        { "cmd": "fx.contour", "label": "Contour" },
+        { "cmd": "fx.envelope", "label": "Envelope" },
+        { "cmd": "fx.extrude", "label": "Extrude" },
+        { "cmd": "fx.lens", "label": "Lens" }
+      ]
+    },
+    {
+      "label": "Bitmaps",
+      "items": [
+        { "cmd": "bitmap.convert", "label": "Convert to Bitmap…" },
+        { "cmd": "bitmap.straighten", "label": "Straighten Image…" },
+        { "cmd": "bitmap.adjustment_lab", "label": "Image Adjustment Lab…" },
+        { "cmd": "bitmap.remove_background", "label": "Remove Background" },
+        { "cmd": "bitmap.crop", "label": "Crop Bitmap" },
+        { "cmd": "bitmap.resample", "label": "Resample…" },
+        "-",
+        { "label": "Trace Bitmap", "items": [
+          { "cmd": "bitmap.quick_trace", "label": "Quick Trace" },
+          { "cmd": "bitmap.centerline_trace", "label": "Centerline Trace…" },
+          { "cmd": "bitmap.outline_trace", "label": "Outline Trace…" }
+        ] },
+        { "cmd": "bitmap.color_mask", "label": "Bitmap Color Mask" }
+      ]
+    },
+    {
+      "label": "Text",
+      "items": [
+        { "cmd": "text.properties", "label": "Text Properties…", "shortcut": "CmdOrCtrl+T" },
+        { "cmd": "text.edit", "label": "Edit Text…", "shortcut": "CmdOrCtrl+Shift+T" },
+        "-",
+        { "cmd": "text.tabs", "label": "Tabs…" },
+        { "cmd": "text.columns", "label": "Columns…" },
+        { "cmd": "text.bullets", "label": "Bullets and Numbering…" },
+        { "cmd": "text.drop_cap", "label": "Drop Cap…" },
+        "-",
+        { "cmd": "text.fit_to_path", "label": "Fit Text to Path" },
+        { "cmd": "text.straighten", "label": "Straighten Text" },
+        { "cmd": "text.align_baseline", "label": "Align to Baseline" },
+        { "cmd": "text.convert", "label": "Convert to Artistic/Paragraph Text", "shortcut": "CmdOrCtrl+F8" },
+        "-",
+        { "cmd": "text.glyphs", "label": "Glyphs" },
+        { "cmd": "text.change_case", "label": "Change Case…" },
+        { "cmd": "text.statistics", "label": "Text Statistics" },
+        { "cmd": "text.show_nonprinting", "label": "Show Nonprinting Characters" }
+      ]
+    },
+    {
+      "label": "Table",
+      "items": [
+        { "cmd": "table.create", "label": "Create New Table…" },
+        { "cmd": "table.text_to_table", "label": "Convert Text to Table…" },
+        { "cmd": "table.table_to_text", "label": "Convert Table to Text…" },
+        "-",
+        { "label": "Insert", "items": [
+          { "cmd": "table.row_above", "label": "Row Above" },
+          { "cmd": "table.row_below", "label": "Row Below" },
+          { "cmd": "table.column_left", "label": "Column Left" },
+          { "cmd": "table.column_right", "label": "Column Right" }
+        ] },
+        { "cmd": "table.merge_cells", "label": "Merge Cells" },
+        { "cmd": "table.split_rows", "label": "Split into Rows…" },
+        { "cmd": "table.split_columns", "label": "Split into Columns…" }
+      ]
+    },
+    {
+      "label": "Window",
+      "role": "window",
+      "items": [
+        { "label": "Dockers", "items": [
+          { "cmd": "window.docker.properties", "label": "Properties", "checkable": true },
+          { "cmd": "window.docker.objects", "label": "Objects", "checkable": true },
+          { "cmd": "window.docker.pages", "label": "Pages", "checkable": true },
+          { "cmd": "window.docker.transform", "label": "Transform", "checkable": true },
+          { "cmd": "window.docker.align", "label": "Align and Distribute", "checkable": true }
+        ] },
+        { "cmd": "window.show_dockers", "label": "Show Dockers", "checkable": true },
+        "-",
+        { "cmd": "window.reset_workspace", "label": "Reset Workspace" }
+      ]
+    },
+    {
+      "label": "Help",
+      "role": "help",
+      "items": [
+        { "cmd": "help.about", "label": "About Vector Studio" }
+      ]
+    }
+  ]
+}

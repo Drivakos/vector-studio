@@ -1,0 +1,21 @@
+[package]
+name = "vector-studio"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+eframe = { version = "0.37", default-features = false, features = ["wgpu", "persistence", "default_fonts", "accesskit"] }
+egui = "0.37"
+egui_material_icons = { version = "0.9", default-features = false, features = ["outline"] }
+env_logger = "0.11.11"
+log = "0.4.35"
+rfd = "0.18.0"
+serde = { workspace = true, features = ["derive"] }
+serde_json = "1.0.154"
+vs-core = { version = "0.1.0", path = "../crates/core" }
+vs-io = { version = "0.1.0", path = "../crates/io" }
+vs-render = { version = "0.1.0", path = "../crates/render" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+muda = "0.21"

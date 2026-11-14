@@ -1,0 +1,12 @@
+[workspace]
+resolver = "3"
+members = ["crates/io", "crates/core", "crates/render", "app"]
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+kurbo = { version = "0.13", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }

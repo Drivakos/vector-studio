@@ -1,0 +1,10 @@
+[package]
+name = "vs-render"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+kurbo.workspace = true
+vello = "0.12"
+vs-core = { version = "0.1.0", path = "../core" }

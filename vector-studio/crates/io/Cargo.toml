@@ -1,0 +1,12 @@
+[package]
+name = "vs-io"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+vs-core = { path = "../core" }
+serde = { workspace = true }
+serde_json = { version = "1.0.154", features = ["float_roundtrip"] }
+resvg = { version = "0.50.0", default-features = false }
+krilla = { version = "0.8.2", default-features = false }
