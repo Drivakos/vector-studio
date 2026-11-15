@@ -7,6 +7,9 @@ license.workspace = true
 [dependencies]
 kurbo = { workspace = true, features = ["serde"] }
 linesweeper = "0.5"
+skrifa = "0.44"
+epaint_default_fonts = "0.37"
+memmap2 = "0.9"
 serde = { workspace = true, features = ["derive"] }
 
 [dev-dependencies]

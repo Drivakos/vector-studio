@@ -9,6 +9,7 @@ mod groups;
 mod nodes;
 mod shaping;
 mod style;
+mod text;
 mod units;
 mod arrange;
 mod transform;

@@ -235,6 +235,12 @@ impl E2e {
         self.run();
     }
 
+    /// Type `text` as keyboard input to whatever has focus (the canvas text being edited).
+    pub fn type_text(&mut self, text: &str) {
+        self.h.event(Event::Text(text.to_owned()));
+        self.run();
+    }
+
     /// Hold `mods` for the pointer gestures that follow, until [`E2e::release_mods`].
     pub fn hold(&mut self, mods: Modifiers) {
         self.mods = mods;

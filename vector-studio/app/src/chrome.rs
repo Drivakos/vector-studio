@@ -125,6 +125,7 @@ pub fn property_bar_ui(ui: &mut egui::Ui, state: &mut AppState, out: &mut Vec<Co
                     state.tools.settings.star_inner_ratio = 1.0 - sharp / 100.0;
                 }
             }
+            Tool::Text => crate::text_tool::controls(ui, state),
             Tool::Shape if state.selection.len() == 1 => {
                 let curve = state.selected_objects().any(|o| matches!(o.shape, vs_core::Shape::Curve { .. }));
                 if curve {
@@ -269,6 +270,10 @@ fn selection_bar(ui: &mut egui::Ui, state: &mut AppState, out: &mut Vec<Command>
     if ellipse_controls(ui, state) {
         theme::vsep(ui);
     }
+    if crate::text_tool::selection_is_text(state) {
+        crate::text_tool::controls(ui, state);
+        theme::vsep(ui);
+    }
     outline_controls(ui, state);
     theme::vsep(ui);
     if shaping_controls(ui, state, out) {
@@ -401,7 +406,7 @@ fn stacked<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
 
 /// Icon, number field and stepper. Returns true if the value changed.
 #[allow(clippy::too_many_arguments)]
-fn number_row(
+pub(crate) fn number_row(
     ui: &mut egui::Ui,
     icon: Option<MaterialIcon>,
     tip: &str,
@@ -452,7 +457,7 @@ fn stepper(ui: &mut egui::Ui, tip: &str, value: &mut f64, step: f64, range: &std
 }
 
 /// A row of icon segments in one rounded box; the selected one is lighter.
-fn segmented(ui: &mut egui::Ui, id: &str, segments: &[(MaterialIcon, &str, bool)]) -> Option<usize> {
+pub(crate) fn segmented(ui: &mut egui::Ui, id: &str, segments: &[(MaterialIcon, &str, bool)]) -> Option<usize> {
     let seg = vec2(28.0, 22.0);
     let (rect, _) = ui.allocate_exact_size(vec2(seg.x * segments.len() as f32 + 4.0, seg.y + 4.0), Sense::hover());
     ui.painter().rect_filled(rect, 6.0, theme::SUNKEN);

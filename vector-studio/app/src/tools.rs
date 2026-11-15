@@ -28,18 +28,20 @@ pub enum PickMode {
     Rotate,
 }
 
-/// Settings the property bar edits for the shape tools.
-#[derive(Clone, Copy, Debug)]
+/// Settings the property bar edits for the shape and text tools.
+#[derive(Clone, Debug)]
 pub struct ToolSettings {
     pub polygon_sides: u32,
     pub star_points: u32,
     /// Star sharpness as inner radius / outer radius.
     pub star_inner_ratio: f64,
+    /// Font, size and alignment for new text (its content is unused).
+    pub text: vs_core::Text,
 }
 
 impl Default for ToolSettings {
     fn default() -> Self {
-        Self { polygon_sides: 5, star_points: 5, star_inner_ratio: 0.5 }
+        Self { polygon_sides: 5, star_points: 5, star_inner_ratio: 0.5, text: vs_core::Text::new("") }
     }
 }
 
@@ -76,6 +78,8 @@ pub struct ToolState {
     /// Selected nodes (path element indices) of the object being shape-edited.
     pub nodes: Vec<usize>,
     pub settings: ToolSettings,
+    /// Text being typed into with the Text tool.
+    pub text: Option<crate::text_tool::TextEdit>,
     drag: Option<Drag>,
     pen: Option<PenPath>,
     pointer: Option<Point>,
@@ -127,13 +131,14 @@ fn is_shape_tool(tool: Tool) -> bool {
 
 pub fn is_implemented(tool: Tool) -> bool {
     is_shape_tool(tool)
-        || matches!(tool, Tool::Pick | Tool::Shape | Tool::Zoom | Tool::Pan | Tool::Freehand | Tool::Bezier | Tool::Pen)
+        || matches!(tool, Tool::Pick | Tool::Shape | Tool::Zoom | Tool::Pan | Tool::Freehand | Tool::Bezier | Tool::Pen | Tool::Text)
 }
 
 pub fn cursor(tool: Tool) -> egui::CursorIcon {
     match tool {
         Tool::Pick => egui::CursorIcon::Default,
         Tool::Shape => egui::CursorIcon::PointingHand,
+        Tool::Text => egui::CursorIcon::Text,
         _ => egui::CursorIcon::Crosshair,
     }
 }
@@ -188,6 +193,7 @@ fn press(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers, dou
         Tool::Shape => press_shape(state, view, p, mods, double),
         Tool::Freehand => state.tools.drag = Some(Drag::Freehand { points: vec![p] }),
         Tool::Bezier | Tool::Pen => press_pen(state, view, p),
+        Tool::Text => crate::text_tool::press(state, p, view.doc_len(HIT)),
         t if is_shape_tool(t) => state.tools.drag = Some(Drag::Create { start: p }),
         _ => {}
     }
@@ -241,6 +247,12 @@ fn press_pick(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers
             } else {
                 state.selection.push(hit);
             }
+        }
+        // Double-clicking text types into it with the Text tool.
+        Some(hit) if double && page.object(hit).is_some_and(|o| !o.locked && matches!(o.shape, Shape::Text(_))) => {
+            state.tool = Tool::Text;
+            state.toolbox.remember(Tool::Text);
+            crate::text_tool::press(state, p, view.doc_len(HIT));
         }
         // Double-clicking an object switches to the Shape tool on it.
         Some(hit) if double => {
@@ -746,6 +758,7 @@ pub fn draw_overlay(painter: &egui::Painter, state: &AppState, canvas: Rect) {
     let view = View::new(state, canvas);
     let page = state.doc.active_page();
     let thin = Stroke::new(1.0, ACCENT);
+    crate::text_tool::draw_caret(painter, state, |p| view.screen(p));
 
     if state.tool == Tool::Shape {
         if let Some(obj) = shape_target(state).and_then(|id| page.object(id)) {
@@ -916,6 +929,8 @@ pub fn hint(state: &AppState) -> String {
         Tool::Bezier | Tool::Pen => {
             "Click for corners, drag for curves · click the first node to close · Enter or click the last node to finish".into()
         }
+        Tool::Text if state.tools.text.is_some() => "Type the text · Enter starts a new line · Esc or another tool finishes".into(),
+        Tool::Text => "Click the page to add text, or click text to edit it".into(),
         Tool::Zoom => "Click to zoom in; Shift-click to zoom out".into(),
         Tool::Pan => "Drag to move the view".into(),
         _ => "This tool is not available yet".into(),

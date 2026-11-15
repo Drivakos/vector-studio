@@ -7,6 +7,7 @@ pub mod history;
 pub mod nodes;
 pub mod ops;
 pub mod shaping;
+pub mod text;
 pub mod units;
 
 pub use document::{
@@ -17,4 +18,5 @@ pub use history::History;
 pub use kurbo;
 pub use ops::{Align, Order};
 pub use shaping::Shaping;
+pub use text::{Text, TextAlign};
 pub use units::Unit;

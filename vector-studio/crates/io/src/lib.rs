@@ -462,6 +462,22 @@ mod tests {
     }
 
     #[test]
+    fn text_exports_as_glyph_outlines() {
+        let mut doc = Document::new("Text");
+        let id = doc.add_object(Shape::Text(vs_core::Text::new("Hi")), Style::new_text());
+        doc.transform_objects(&[id], Affine::translate((100.0, 100.0)));
+        let svg = page_to_svg(doc.active_page());
+        assert_eq!(svg.matches("<path ").count(), 1);
+        assert!(svg.contains(r##"fill="#000000""##), "{svg}");
+        let png = page_to_png(doc.active_page(), &ExportOptions { dpi: 72.0, background: None }).unwrap();
+        let pixmap = resvg::tiny_skia::Pixmap::decode_png(&png).unwrap();
+        // "Hi" sits just right of the origin, above the baseline.
+        let inked = (100..130).any(|x| (84..99).any(|y| pixmap.pixel(x, y).unwrap().alpha() > 128));
+        assert!(inked, "the glyphs are drawn");
+        assert!(document_to_pdf(&doc).unwrap().starts_with(b"%PDF-"));
+    }
+
+    #[test]
     fn pdf_has_a_page_per_document_page() {
         let mut doc = sample();
         doc.insert_page_after(0).unwrap();

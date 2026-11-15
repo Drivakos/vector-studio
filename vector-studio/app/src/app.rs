@@ -294,6 +294,9 @@ impl VectorStudioApp {
             },
             Command::Undo | Command::Redo => {
                 tools::finish_pen(s);
+                // Typing so far becomes its own step, so Undo takes back just that.
+                crate::text_tool::finish(s);
+                s.history.commit(&s.doc);
                 if cmd == Command::Undo {
                     s.history.undo(&mut s.doc);
                 } else {
@@ -482,6 +485,7 @@ impl VectorStudioApp {
         }
         use egui::{Key, KeyboardShortcut, Modifiers};
         let s = &mut self.state;
+        let typing = crate::text_tool::keyboard(s, ctx);
 
         // Clipboard keys arrive as events, not key presses.
         let events = ctx.input(|i| i.events.clone());
@@ -506,7 +510,7 @@ impl VectorStudioApp {
             if i.consume_shortcut(&shortcut(Modifiers::COMMAND, Key::A)) {
                 commands.push(Command::SelectAll);
             }
-            if i.consume_key(Modifiers::NONE, Key::Delete) || i.consume_key(Modifiers::NONE, Key::Backspace) {
+            if !typing && (i.consume_key(Modifiers::NONE, Key::Delete) || i.consume_key(Modifiers::NONE, Key::Backspace)) {
                 commands.push(Command::Delete);
             }
             if i.consume_key(Modifiers::NONE, Key::Enter) {
@@ -527,6 +531,9 @@ impl VectorStudioApp {
         }
 
         let s = &mut self.state;
+        if typing {
+            return;
+        }
         if s.has_selection() {
             // Nudge distance from the property bar; Shift for ten times that.
             let step = s.prefs.nudge;
@@ -574,6 +581,9 @@ impl VectorStudioApp {
         let s = &mut self.state;
         if s.tool != s.last_tool {
             tools::finish_pen(s);
+            if s.tool != Tool::Text {
+                crate::text_tool::finish(s);
+            }
             tools::cancel(s);
             s.last_tool = s.tool;
         }
@@ -589,7 +599,7 @@ impl VectorStudioApp {
         }
 
         // One undo step per finished gesture or edit.
-        let busy = s.tools.is_dragging() || ctx.input(|i| i.pointer.any_down()) || ctx.egui_wants_keyboard_input();
+        let busy = s.tools.is_dragging() || s.tools.text.is_some() || ctx.input(|i| i.pointer.any_down()) || ctx.egui_wants_keyboard_input();
         if !busy {
             s.history.commit(&s.doc);
         }

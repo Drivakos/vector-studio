@@ -62,6 +62,7 @@ Names must be unique on screen, or a test cannot tell widgets apart.
 | Save, Save As, Open, command-line file, damaged file, unsaved-changes prompt, Export SVG / PNG / PDF | `files.rs` |
 | Group, Ungroup, Ungroup All, Lock, Unlock, Unlock All | `groups.rs` |
 | Shaping (Weld, Trim, Intersect, Simplify, Front/Back Minus, Boundary: property bar and Object > Shaping), the target rule (marquee vs Shift-click), Combine (Cmd+L) with even-odd holes, Break Apart (Cmd+K) | `shaping.rs` |
+| Text tool: typing, lines, caret keys, plain keys not running shortcuts, Esc, one undo step, empty text removed, clicking and Pick double-click to edit, font size and alignment for new and selected text, move, save/open, Convert to Curves | `text.rs` |
 | The 13 units in the property bar and the Properties docker | `units.rs` |
 | Zoom (keys, toolbar, Zoom tool), Pan tool, rulers, dockers, palette, status bar | `view.rs` |
 

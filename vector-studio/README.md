@@ -52,6 +52,7 @@ Phase 1 drawing:
 | Rectangle, Ellipse, Polygon, Star | Drag to draw; Cmd = equal sides, Shift = from the centre. Polygon sides and star points/sharpness in the property bar. A selected ellipse gets Whole ellipse / Pie / Arc and Change direction |
 | Freehand | Drag; the stroke is fitted to Béziers; ending on the start closes it |
 | Bézier, Pen | Click for corners, drag for smooth nodes, click the first node to close, Enter / Esc / click the last node to finish. Pen previews the next segment |
+| Text | Text tool (`F8`): click the page and type artistic text; Enter starts a new line, arrows/Home/End move the caret, Backspace/Delete remove, Esc or another tool finishes. Click text to edit it, or double-click it with the Pick tool. Property bar: font family and style (the bundled Ubuntu Light plus the system's fonts), size in points, left/centre/right alignment; with nothing selected they set up new text. New text is black with no outline. Text moves, scales, shapes and converts to curves like any object, and exports as outlines. Glyphs are placed by their advance widths only: no kerning, ligatures or complex scripts |
 | Fill and outline | Palette: click = fill, right-click = outline, crossed swatch removes. Property bar (with a selection): outline width with presets (None, Hairline, 0.25–36 pt) and line style. Properties docker: fill colour; outline width, colour, line style (solid, dotted, dashed, long dash, dash dot, dash dot dot), corners (miter, round, bevel), line caps (butt, round, square), behind fill, scale with object; corner radius, sides, points, sharpness, name. Edits to several objects change only the setting you touched. Fills use the even-odd rule on the canvas and in every export |
 | Group and lock | Group (`Cmd+G`), Ungroup (`Cmd+U`), Ungroup All, Lock, Unlock, Unlock All: title bar buttons and the Object menu. A group moves, scales and takes colours as one; SVG export writes it as `<g>`. Locked objects can be selected (padlocks instead of handles) but not moved, edited, restyled, grouped or deleted |
 | Units | 13 units: inches, millimeters, picas, points, pixels (96 dpi), ciceros, didots, feet, yards, miles, centimeters, meters, kilometers. Steppers move about 1 mm in any unit |
@@ -65,7 +66,7 @@ Phase 1 drawing:
 
 ## Tests
 
-`cargo test --workspace` runs about 180 tests. The 70 end-to-end tests drive the whole app through its window on a real GPU. Every feature and change ships with one. See [TESTING.md](TESTING.md).
+`cargo test --workspace` runs about 190 tests. The 74 end-to-end tests drive the whole app through its window on a real GPU. Every feature and change ships with one. See [TESTING.md](TESTING.md).
 
 ## Shortcuts
 

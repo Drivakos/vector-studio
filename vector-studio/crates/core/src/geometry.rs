@@ -30,6 +30,7 @@ impl Shape {
                 polygon_path(*rect, (*points).max(3), Some(inner_ratio.clamp(0.01, 1.0)))
             }
             Shape::Curve { path } => path.clone(),
+            Shape::Text(text) => text.to_path(),
             Shape::Group { children } => {
                 let mut path = BezPath::new();
                 for child in children {
@@ -48,6 +49,7 @@ impl Shape {
             | Shape::Polygon { rect, .. }
             | Shape::Star { rect, .. } => *rect,
             Shape::Curve { path } => path.bounding_box(),
+            Shape::Text(text) => text.layout().bounds(),
             Shape::Group { .. } => self.to_path().bounding_box(),
         }
     }
@@ -117,6 +119,7 @@ pub fn polygon_path(rect: Rect, n: u32, inner: Option<f64>) -> BezPath {
 /// A drawable (non-group) object with its outline already in page space.
 pub struct Leaf<'a> {
     pub path: BezPath,
+    pub shape: &'a Shape,
     pub style: &'a Style,
     pub closed: bool,
     /// Local → page transform, groups included.
@@ -145,7 +148,7 @@ impl Object {
             shape => {
                 let mut path = shape.to_path();
                 path.apply_affine(transform);
-                out.push(Leaf { path, style: &self.style, closed: shape.is_closed(), transform });
+                out.push(Leaf { path, shape, style: &self.style, closed: shape.is_closed(), transform });
             }
         }
     }
@@ -157,9 +160,27 @@ impl Object {
         path
     }
 
-    /// Geometric bounds in page space (outline width not included).
+    /// Geometric bounds in page space (outline width not included). Text counts its
+    /// whole line boxes, so empty text and spaces still have bounds.
     pub fn world_bounds(&self) -> Rect {
-        self.world_path().bounding_box()
+        self.bounds_in(Affine::IDENTITY)
+    }
+
+    fn bounds_in(&self, parent: Affine) -> Rect {
+        let transform = parent * self.transform;
+        match &self.shape {
+            Shape::Group { children } => children
+                .iter()
+                .map(|c| c.bounds_in(transform))
+                .reduce(|a, b| a.union(b))
+                .unwrap_or_default(),
+            Shape::Text(text) => transform.transform_rect_bbox(text.layout().bounds()),
+            shape => {
+                let mut path = shape.to_path();
+                path.apply_affine(transform);
+                path.bounding_box()
+            }
+        }
     }
 
     /// Whether `point` (page space) hits the fill or comes within `tolerance` of the outline
@@ -168,6 +189,14 @@ impl Object {
         self.leaves().iter().any(|leaf| {
             let half = leaf.style.outline.as_ref().map_or(0.0, |o| o.page_width(leaf.transform) / 2.0);
             let reach = tolerance + half;
+            // Text is picked anywhere in its line boxes, not just on the glyphs.
+            if let Shape::Text(text) = leaf.shape {
+                let local = leaf.transform.inverse() * point;
+                let pad = tolerance / leaf.transform.determinant().abs().sqrt().max(1e-9);
+                if text.layout().bounds().inflate(pad, pad).contains(local) {
+                    return true;
+                }
+            }
             if !leaf.path.bounding_box().inflate(reach, reach).contains(point) {
                 return false;
             }

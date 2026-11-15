@@ -3,6 +3,7 @@
 use kurbo::{Affine, BezPath, Rect, Size};
 use serde::{Deserialize, Serialize};
 
+use crate::text::Text;
 use crate::units::Unit;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -183,6 +184,11 @@ impl Style {
             outline: Some(Outline::new(Rgba::BLACK, 0.5)),
         }
     }
+
+    /// Style for new text: black fill, no outline.
+    pub fn new_text() -> Self {
+        Self { fill: Some(Rgba::BLACK), outline: None }
+    }
 }
 
 /// Whether a cut ellipse is closed through its centre (pie) or left open (arc).
@@ -235,6 +241,8 @@ pub enum Shape {
     /// Star inscribed in `rect`; inner vertices sit at `inner_ratio` of the outer radius.
     Star { rect: Rect, points: u32, inner_ratio: f64 },
     Curve { path: BezPath },
+    /// Artistic text, drawn as glyph outlines.
+    Text(Text),
     /// Objects moved, scaled and styled as one. Child transforms are relative to the group.
     Group { children: Vec<Object> },
 }
@@ -247,6 +255,7 @@ impl Shape {
             Shape::Polygon { .. } => "Polygon",
             Shape::Star { .. } => "Star",
             Shape::Curve { .. } => "Curve",
+            Shape::Text(_) => "Artistic Text",
             Shape::Group { .. } => "Group",
         }
     }

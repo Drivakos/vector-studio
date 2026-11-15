@@ -12,6 +12,7 @@ pub mod files;
 pub mod native_menu;
 pub mod outline;
 pub mod panels;
+pub mod text_tool;
 pub mod theme;
 pub mod titlebar;
 pub mod toolbox;

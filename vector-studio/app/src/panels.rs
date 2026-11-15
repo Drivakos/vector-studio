@@ -122,6 +122,17 @@ pub fn object_properties_ui(ui: &mut egui::Ui, state: &mut AppState) {
                     ui.label(children.len().to_string());
                     ui.end_row();
                 }
+                Shape::Text(text) => {
+                    ui.label("Text");
+                    crate::a11y::add(ui, egui::TextEdit::multiline(&mut text.content).desired_rows(2).desired_width(160.0), "Text (properties)");
+                    ui.end_row();
+                    ui.label("Font");
+                    ui.label(format!("{} {}", text.family, text.style));
+                    ui.end_row();
+                    ui.label("Size");
+                    crate::a11y::add(ui, egui::DragValue::new(&mut text.size).range(1.0..=3000.0).max_decimals(1).suffix(" pt"), "Font size (properties)");
+                    ui.end_row();
+                }
                 Shape::Ellipse { .. } => {}
             }
         });

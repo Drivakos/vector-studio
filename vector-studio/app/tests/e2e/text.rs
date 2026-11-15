@@ -1,0 +1,160 @@
+//! The Text tool (F8): typing artistic text, editing it, font controls, and text as an
+//! ordinary object (undo, Convert to Curves, save and open).
+
+use egui::{Key, Modifiers};
+use vector_studio::toolbox::Tool;
+use vs_core::kurbo::Shape as _;
+use vs_core::{Shape, Text, TextAlign};
+
+use crate::support::{E2e, close};
+
+fn text(app: &E2e, i: usize) -> Text {
+    match &app.objects()[i].shape {
+        Shape::Text(t) => t.clone(),
+        s => panic!("not text: {s:?}"),
+    }
+}
+
+/// Whether any pixel in the box from (x0, y0) to (x1, y1) (page points) is dark.
+fn any_dark(app: &mut E2e, x0: f64, y0: f64, x1: f64, y1: f64) -> bool {
+    let mut y = y0;
+    while y < y1 {
+        let mut x = x0;
+        while x < x1 {
+            let px = app.pixel(x, y);
+            if px[0] < 80 && px[1] < 80 && px[2] < 80 {
+                return true;
+            }
+            x += 1.5;
+        }
+        y += 1.5;
+    }
+    false
+}
+
+#[test]
+fn text_tool_types_lines_edits_at_the_caret_and_esc_finishes() {
+    let mut app = E2e::new();
+    app.key(Key::F8);
+    assert_eq!(app.state().tool, Tool::Text);
+    app.click_doc(100.0, 200.0);
+    app.type_text("Hello");
+    assert_eq!(app.objects().len(), 1);
+    assert_eq!(text(&app, 0).content, "Hello");
+    assert_eq!(app.selection(), vec![app.ids()[0]]);
+    assert_eq!(app.objects()[0].style.fill, Some(vs_core::Rgba::BLACK), "new text is filled black");
+    let b = app.bounds(0);
+    assert!(close(b.x0, 100.0) && b.y0 < 200.0 && b.y1 > 200.0, "first baseline starts at the click: {b:?}");
+
+    // Plain keys type, they do not run their shortcuts.
+    app.key(Key::F6);
+    app.key(Key::L);
+    assert_eq!(app.state().tool, Tool::Text, "F6 did not switch tools");
+    assert!(close(app.bounds(0).x0, 100.0), "L did not align");
+
+    app.key(Key::Enter);
+    app.type_text("World");
+    app.key(Key::Backspace);
+    app.key(Key::ArrowLeft);
+    app.key(Key::ArrowLeft);
+    app.type_text("X");
+    assert_eq!(text(&app, 0).content, "Hello\nWoXrl");
+    assert!(app.bounds(0).y1 > b.y1 + 10.0, "a second line below the first");
+
+    app.key(Key::Escape);
+    assert!(app.state().tools.text.is_none(), "Esc finishes typing");
+    assert_eq!(app.selection().len(), 1, "the text stays selected");
+    app.click_doc(500.0, 700.0);
+    app.pick_tool();
+    let b = app.bounds(0);
+    assert!(any_dark(&mut app, b.x0, b.y0, b.x0 + 30.0, 200.0), "the glyphs render in black");
+
+    // One undo step takes back the whole text.
+    app.shortcut(Modifiers::COMMAND, Key::Z);
+    assert!(app.objects().is_empty());
+}
+
+#[test]
+fn empty_text_is_removed_and_clicking_text_edits_it() {
+    let mut app = E2e::new();
+    app.key(Key::F8);
+    app.click_doc(100.0, 200.0);
+    app.pick_tool();
+    assert!(app.objects().is_empty(), "text left empty is removed");
+
+    app.key(Key::F8);
+    app.click_doc(100.0, 200.0);
+    app.type_text("abc");
+    app.click_doc(100.0, 400.0);
+    assert_eq!(app.objects().len(), 2, "a click elsewhere starts new text");
+    app.type_text("second");
+
+    // Click just before "c" of the first text: the caret goes there.
+    let layout = text(&app, 0).layout();
+    let x = 100.0 + layout.lines[0].carets[2] - 0.5;
+    app.click_doc(x, 195.0);
+    app.type_text("Z");
+    assert_eq!(text(&app, 0).content, "abZc");
+    assert_eq!(text(&app, 1).content, "second");
+
+    // Pick tool: a double-click on text types into it.
+    app.pick_tool();
+    app.double_click_doc(100.0 + text(&app, 1).layout().lines[0].carets.last().unwrap() - 1.0, 395.0);
+    assert_eq!(app.state().tool, Tool::Text);
+    app.key(Key::End);
+    app.type_text("!");
+    assert_eq!(text(&app, 1).content, "second!");
+}
+
+#[test]
+fn font_size_and_alignment_from_the_property_bar() {
+    let mut app = E2e::new();
+    app.key(Key::F8);
+    // Nothing selected: the settings are for new text.
+    app.fill("Font size", "48");
+    app.click("Align text center");
+    app.click_doc(300.0, 200.0);
+    app.type_text("Mid");
+    let t = text(&app, 0);
+    assert_eq!(t.size, 48.0);
+    assert_eq!(t.align, TextAlign::Center);
+    let b = app.bounds(0);
+    assert!((b.center().x - 300.0).abs() < 1.0, "centred on the click: {b:?}");
+
+    // With the Pick tool, the controls change the selected text.
+    app.key(Key::Escape);
+    app.pick_tool();
+    app.click_doc(300.0, 190.0);
+    assert!(app.exists("Font list"));
+    let before = app.bounds(0).height();
+    app.fill("Font size", "24");
+    assert_eq!(text(&app, 0).size, 24.0);
+    assert!((app.bounds(0).height() / before - 0.5).abs() < 0.01);
+    app.click("Align text right");
+    assert_eq!(text(&app, 0).align, TextAlign::Right);
+    assert!((app.bounds(0).x1 - 300.0).abs() < 1.0);
+}
+
+#[test]
+fn text_moves_converts_to_curves_and_survives_save_and_open() {
+    let mut app = E2e::new();
+    app.key(Key::F8);
+    app.click_doc(100.0, 200.0);
+    app.type_text("Save me");
+    app.pick_tool();
+    app.click_doc(110.0, 195.0);
+    app.drag_doc((110.0, 195.0), (160.0, 245.0));
+    assert!(close(app.bounds(0).x0, 150.0), "moved like any object");
+
+    let dir = crate::support::temp_dir("text");
+    let path = dir.join("text.vstudio");
+    app.script.borrow_mut().save_paths.push_back(path.clone());
+    app.shortcut(Modifiers::COMMAND | Modifiers::SHIFT, Key::S);
+    assert_eq!(vs_io::open_document(&path).expect("saved file opens"), *app.doc(), "text round-trips");
+
+    let glyphs = app.objects()[0].world_path().bounding_box();
+    app.shortcut(Modifiers::COMMAND, Key::Q);
+    assert!(matches!(app.objects()[0].shape, Shape::Curve { .. }), "converted to curves");
+    let b = app.objects()[0].world_path().bounding_box();
+    assert!((b.x0 - glyphs.x0).abs() < 0.01 && (b.y1 - glyphs.y1).abs() < 0.01, "same outlines: {b:?} vs {glyphs:?}");
+}
