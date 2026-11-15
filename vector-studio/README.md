@@ -19,7 +19,8 @@ cargo run -p vs-io --example sample_logo -- /some/dir   # builds, saves, reopens
 | `crates/core` (`vs-core`) | Document, pages, objects, transforms, hit-testing, align/order ops, node editing, undo history. No UI or GPU code |
 | `crates/io` (`vs-io`) | Native `.vstudio` format (versioned JSON), SVG, PNG (resvg) and PDF (krilla) export |
 | `crates/render` (`vs-render`) | Viewport maths, ruler ticks, Vello scene building |
-| `app` | eframe/egui shell: native menu (macOS), title bar and toolbar, property bar, toolbox, dockers, palette, GPU canvas |
+| `app` | eframe/egui shell: native menu (macOS), title bar and toolbar, property bar, toolbox, dockers, palette, GPU canvas. A library (`src/lib.rs`) with a thin binary (`src/main.rs`), so the end-to-end tests can start it. File dialogs go through a `Dialogs` trait; custom widgets report accessible names (`src/a11y.rs`) |
+| `app/tests/e2e` | End-to-end tests: the whole app driven through its window (see [TESTING.md](TESTING.md)) |
 | `app/layout/workspace.json` | Every menu item. Ids without a `Command` render disabled |
 
 ## What works
@@ -40,23 +41,29 @@ Dark theme, laid out as follows:
 | Canvas | Grey desk (#5a5a5a), white page without border or shadow; page navigator with + on both sides and page tabs |
 | Off by default | Rulers and status bar; View toolbar and View menu turn them on |
 
-Not yet available (shown disabled): Group, Ungroup, Lock, Unlock, Grid, Guidelines, Snap To options, view modes other than Enhanced. Icons are Material Symbols (outline).
+Not yet available (shown disabled): Grid, Guidelines, Snap To options, view modes other than Enhanced. Icons are Material Symbols (outline).
 
 Phase 1 drawing:
 
 | Area | What you can do |
 |---|---|
-| Pick | Click, Shift-click, marquee select. Drag to move (Cmd = one axis). Handles scale (corners keep proportions; Cmd frees them; Shift scales from the centre). Click a selected object again for rotate handles (Cmd = 15° steps) |
-| Shape | Drag nodes and Bézier handles, marquee nodes, double-click a segment to add a node or a node to delete it, Delete removes nodes. Drag a rectangle corner to round it |
-| Rectangle, Ellipse, Polygon, Star | Drag to draw; Cmd = equal sides, Shift = from the centre. Polygon sides and star points/sharpness in the property bar |
+| Pick | Click, Shift-click, marquee select. Drag to move (Cmd = one axis). Handles scale (corners keep proportions; Cmd frees them; Shift scales from the centre). Click a selected object again for rotate handles (Cmd = 15° steps). Double-click an object to edit its nodes with the Shape tool |
+| Shape | Drag nodes and Bézier handles, marquee nodes, double-click a segment to add a node or a node to delete it, Delete removes nodes. Drag a rectangle corner to round it. Ellipse: drag its node inside for a pie, outside for an arc (Cmd = 15° steps). Polygon and star: drag an outer node to resize and turn every side (Cmd keeps the angle); a star's inner node sets its sharpness |
+| Rectangle, Ellipse, Polygon, Star | Drag to draw; Cmd = equal sides, Shift = from the centre. Polygon sides and star points/sharpness in the property bar. A selected ellipse gets Whole ellipse / Pie / Arc and Change direction |
 | Freehand | Drag; the stroke is fitted to Béziers; ending on the start closes it |
 | Bézier, Pen | Click for corners, drag for smooth nodes, click the first node to close, Enter / Esc / click the last node to finish. Pen previews the next segment |
-| Fill and outline | Palette: click = fill, right-click = outline, crossed swatch removes. Properties docker: colours, outline width (0 = hairline), corner radius, sides, points, sharpness, name |
+| Fill and outline | Palette: click = fill, right-click = outline, crossed swatch removes. Property bar (with a selection): outline width with presets (None, Hairline, 0.25–36 pt) and line style. Properties docker: fill colour; outline width, colour, line style (solid, dotted, dashed, long dash, dash dot, dash dot dot), corners (miter, round, bevel), line caps (butt, round, square), behind fill, scale with object; corner radius, sides, points, sharpness, name. Edits to several objects change only the setting you touched |
+| Group and lock | Group (`Cmd+G`), Ungroup (`Cmd+U`), Ungroup All, Lock, Unlock, Unlock All: title bar buttons and the Object menu. A group moves, scales and takes colours as one; SVG export writes it as `<g>`. Locked objects can be selected (padlocks instead of handles) but not moved, edited, restyled, grouped or deleted |
+| Units | 13 units: inches, millimeters, picas, points, pixels (96 dpi), ciceros, didots, feet, yards, miles, centimeters, meters, kilometers. Steppers move about 1 mm in any unit |
 | Transform | Property bar and Transform docker: X, Y, W, H, rotate, mirror |
-| Arrange | Align (L R T B E C, P = centre to page): one object aligns to the page, several to the last selected. Order: front, back, forward, backward. Convert to Curves |
+| Arrange | Align (L R T B E C, P = centre to page): one object aligns to the page, several to the last selected. Order: front, back, forward, backward. Convert to Curves (Cmd+Q / Ctrl+Q), which also converts every member of a group |
 | Edit | Undo/redo (every finished gesture is one step), cut/copy/paste (copy also puts SVG on the system clipboard), duplicate (offset set in the property bar), delete, select all, arrow nudge (distance set in the property bar, default 1 mm; Shift ×10) |
 | Objects docker | Every page's objects top-first; click to select, Shift/Cmd-click to add, double-click to rename, order and delete buttons |
 | Files | New, Open, Save, Save As (`.vstudio`), unsaved-changes prompt on New/Open/close, `•` in the title when unsaved. Export: SVG (current page), PNG (current page, dpi, transparent or white), PDF (all pages) |
+
+## Tests
+
+`cargo test --workspace` runs about 150 tests. The 60 end-to-end tests drive the whole app through its window on a real GPU. Every feature and change ships with one. See [TESTING.md](TESTING.md).
 
 ## Shortcuts
 
@@ -65,4 +72,4 @@ Edit: `Cmd+Z` / `Cmd+Shift+Z`, `Cmd+X/C/V`, `Cmd+D` duplicate, `Cmd+A` select al
 Arrange: `L R T B E C P` align, `Shift+PageUp/PageDown` to front/back, `Cmd+PageUp/PageDown` forward/back one.
 View: `Cmd+=` / `Cmd+-` zoom, `Shift+F4` zoom to page, `Cmd+1` actual size. `PageUp`/`PageDown` change page.
 
-On macOS, `Cmd+Q` stays Quit. Convert to Curves is in the Object menu and the property bar.
+`Cmd+Q` is Convert to Curves, so Quit (in the Vector Studio menu) has no shortcut.

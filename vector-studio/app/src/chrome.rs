@@ -64,7 +64,15 @@ pub fn consume_menu_shortcuts(ctx: &egui::Context, layout: &Layout, cmd_state: C
     if ctx.egui_wants_keyboard_input() {
         return;
     }
-    for item in layout.command_items() {
+    // Most modifiers first: egui ignores extra Shift/Alt when matching, so Cmd+S would
+    // otherwise also fire for Cmd+Shift+S.
+    let mut items: Vec<_> = layout
+        .command_items()
+        .into_iter()
+        .filter_map(|item| Some((item, item.shortcut.as_deref().and_then(parse_shortcut)?)))
+        .collect();
+    items.sort_by_key(|(_, s)| std::cmp::Reverse(u8::from(s.modifiers.shift) + u8::from(s.modifiers.alt) + u8::from(s.modifiers.command)));
+    for (item, _) in items {
         if FIELD_SAFE_IDS.contains(&item.cmd.as_str()) || item.shortcut.as_deref().is_some_and(|s| s.len() == 1) {
             continue;
         }
@@ -118,14 +126,24 @@ pub fn property_bar_ui(ui: &mut egui::Ui, state: &mut AppState, out: &mut Vec<Co
                 }
             }
             Tool::Shape if state.selection.len() == 1 => {
-                let n = state.tools.nodes.len();
-                ui.label(egui::RichText::new(format!("{n} node(s) selected")).color(theme::TEXT_DIM));
-                theme::vsep(ui);
-                if icon_button(ui, ICON_REMOVE, "Delete nodes (Delete)", n > 0).clicked() {
-                    out.push(Command::Delete);
+                let curve = state.selected_objects().any(|o| matches!(o.shape, vs_core::Shape::Curve { .. }));
+                if curve {
+                    let n = state.tools.nodes.len();
+                    ui.label(egui::RichText::new(format!("{n} node(s) selected")).color(theme::TEXT_DIM));
+                    theme::vsep(ui);
+                    if icon_button(ui, ICON_REMOVE, "Delete nodes (Delete)", n > 0).clicked() {
+                        out.push(Command::Delete);
+                    }
+                } else if ellipse_controls(ui, state) {
+                    theme::vsep(ui);
                 }
-                if icon_button(ui, ICON_TIMELINE, "Convert to Curves", true).clicked() {
+                let convert = state.selected_objects().any(vs_core::Object::can_convert_to_curves);
+                if icon_button(ui, ICON_TIMELINE, "Convert to Curves", convert).clicked() {
                     out.push(Command::ConvertToCurves);
+                }
+                if !curve {
+                    theme::vsep(ui);
+                    ui.label(egui::RichText::new(crate::tools::hint(state)).color(theme::TEXT_DIM));
                 }
             }
             t if crate::tools::is_implemented(t) => {
@@ -145,7 +163,7 @@ fn page_bar(ui: &mut egui::Ui, state: &mut AppState) {
     let page = state.doc.active_page_mut();
     let orientation = page.orientation();
     let current = PagePreset::matching(page.size).map(|p| p.name).unwrap_or("Custom");
-    egui::ComboBox::from_id_salt("bar_page_preset")
+    let preset = egui::ComboBox::from_id_salt("bar_page_preset")
         .selected_text(current)
         .width(150.0)
         .height(400.0)
@@ -155,15 +173,17 @@ fn page_bar(ui: &mut egui::Ui, state: &mut AppState) {
                     page.size = preset.size(orientation);
                 }
             }
-        })
-        .response
+        });
+    crate::a11y::name(&preset.response, "Page size");
+    preset.response
         .on_hover_text("Page size");
     theme::vsep(ui);
 
     let (mut w, mut h) = (unit.from_points(page.size.width), unit.from_points(page.size.height));
+    let min_page = unit.from_points(1.0);
     let changed = stacked(ui, |ui| {
-        let a = number_row(ui, Some(ICON_WIDTH), "Page width", &mut w, &suffix, 1.0..=f64::MAX, 1.0, 3);
-        let b = number_row(ui, Some(ICON_HEIGHT), "Page height", &mut h, &suffix, 1.0..=f64::MAX, 1.0, 3);
+        let a = number_row(ui, Some(ICON_WIDTH), "Page width", &mut w, &suffix, min_page..=f64::MAX, unit.step(), unit.decimals());
+        let b = number_row(ui, Some(ICON_HEIGHT), "Page height", &mut h, &suffix, min_page..=f64::MAX, unit.step(), unit.decimals());
         a || b
     });
     if changed {
@@ -187,15 +207,15 @@ fn page_bar(ui: &mut egui::Ui, state: &mut AppState) {
     theme::vsep(ui);
 
     let mut nudge = unit.from_points(state.prefs.nudge);
-    if number_row(ui, Some(ICON_OPEN_WITH), "Nudge distance (arrow keys)", &mut nudge, &suffix, 0.001..=f64::MAX, 1.0, 3) {
+    if number_row(ui, Some(ICON_OPEN_WITH), "Nudge distance (arrow keys)", &mut nudge, &suffix, unit.step() / 100.0..=f64::MAX, unit.step(), unit.decimals()) {
         state.prefs.nudge = unit.to_points(nudge);
     }
     theme::vsep(ui);
 
     let [mut dx, mut dy] = state.prefs.duplicate_offset.map(|v| unit.from_points(v));
     let changed = stacked(ui, |ui| {
-        let a = number_row(ui, Some(ICON_CONTENT_COPY), "Duplicate distance, horizontal", &mut dx, &suffix, f64::MIN..=f64::MAX, 1.0, 3);
-        let b = number_row(ui, Some(ICON_CONTENT_COPY), "Duplicate distance, vertical", &mut dy, &suffix, f64::MIN..=f64::MAX, 1.0, 3);
+        let a = number_row(ui, Some(ICON_CONTENT_COPY), "Duplicate distance, horizontal", &mut dx, &suffix, f64::MIN..=f64::MAX, unit.step(), unit.decimals());
+        let b = number_row(ui, Some(ICON_CONTENT_COPY), "Duplicate distance, vertical", &mut dy, &suffix, f64::MIN..=f64::MAX, unit.step(), unit.decimals());
         a || b
     });
     if changed {
@@ -212,14 +232,14 @@ fn selection_bar(ui: &mut egui::Ui, state: &mut AppState, out: &mut Vec<Command>
     let (mut x, mut y) = (unit.from_points(b.x0), unit.from_points(b.y0));
     let (mut w, mut h) = (unit.from_points(b.width()), unit.from_points(b.height()));
     let (mx, my) = stacked(ui, |ui| {
-        let a = number_row(ui, None, "X: object position", &mut x, &suffix, f64::MIN..=f64::MAX, 1.0, 3);
-        let b = number_row(ui, None, "Y: object position", &mut y, &suffix, f64::MIN..=f64::MAX, 1.0, 3);
+        let a = number_row(ui, None, "X: object position", &mut x, &suffix, f64::MIN..=f64::MAX, unit.step(), unit.decimals());
+        let b = number_row(ui, None, "Y: object position", &mut y, &suffix, f64::MIN..=f64::MAX, unit.step(), unit.decimals());
         (a, b)
     });
     theme::vsep(ui);
     let (mw, mh) = stacked(ui, |ui| {
-        let a = number_row(ui, Some(ICON_WIDTH), "Object width", &mut w, &suffix, 0.001..=f64::MAX, 1.0, 3);
-        let b = number_row(ui, Some(ICON_HEIGHT), "Object height", &mut h, &suffix, 0.001..=f64::MAX, 1.0, 3);
+        let a = number_row(ui, Some(ICON_WIDTH), "Object width", &mut w, &suffix, unit.step() / 100.0..=f64::MAX, unit.step(), unit.decimals());
+        let b = number_row(ui, Some(ICON_HEIGHT), "Object height", &mut h, &suffix, unit.step() / 100.0..=f64::MAX, unit.step(), unit.decimals());
         (a, b)
     });
     if mx || my {
@@ -246,8 +266,84 @@ fn selection_bar(ui: &mut egui::Ui, state: &mut AppState, out: &mut Vec<Command>
         crate::panels::mirror(state, false);
     }
     theme::vsep(ui);
-    if icon_button(ui, ICON_TIMELINE, "Convert to Curves", true).clicked() {
+    if ellipse_controls(ui, state) {
+        theme::vsep(ui);
+    }
+    outline_controls(ui, state);
+    theme::vsep(ui);
+    let curves = crate::app::VectorStudioApp::command_state(state, Command::ConvertToCurves).0
+        && state.selected_objects().any(vs_core::Object::can_convert_to_curves);
+    if icon_button(ui, ICON_TIMELINE, "Convert to Curves", curves).clicked() {
         out.push(Command::ConvertToCurves);
+    }
+}
+
+/// Whole ellipse / Pie / Arc and Change direction, when every unlocked selected object is
+/// an ellipse. Returns whether anything was shown.
+fn ellipse_controls(ui: &mut egui::Ui, state: &mut AppState) -> bool {
+    use vs_core::{ArcKind, EllipseArc, Shape};
+    let arcs: Vec<_> = state
+        .selected_objects()
+        .filter(|o| !o.locked)
+        .map(|o| match o.shape {
+            Shape::Ellipse { arc, .. } => Some(arc),
+            _ => None,
+        })
+        .collect();
+    let Some(arcs) = arcs.into_iter().collect::<Option<Vec<_>>>().filter(|a| !a.is_empty()) else { return false };
+    let kind = arcs[0].map(|a| a.kind);
+    let picked = segmented(
+        ui,
+        "ellipse_kind",
+        &[
+            (ICON_CIRCLE, "Whole ellipse", kind.is_none()),
+            (ICON_PIE_CHART, "Pie", kind == Some(ArcKind::Pie)),
+            (ICON_DONUT_SMALL, "Arc", kind == Some(ArcKind::Arc)),
+        ],
+    )
+    .map(|i| [None, Some(ArcKind::Pie), Some(ArcKind::Arc)][i]);
+    let any_cut = arcs.iter().any(Option::is_some);
+    let flip = icon_button(ui, ICON_SWAP_CALLS, "Change direction", any_cut).clicked();
+    if picked.is_none() && !flip {
+        return true;
+    }
+    let ids = state.selection.clone();
+    let page = state.doc.active_page_mut();
+    for id in ids {
+        if let Some(obj) = page.object_mut(id).filter(|o| !o.locked)
+            && let Shape::Ellipse { arc, .. } = &mut obj.shape
+        {
+            if let Some(kind) = picked {
+                *arc = kind.map(|k| arc.map_or(EllipseArc::default_for(k), |a| EllipseArc { kind: k, ..a }));
+            }
+            if flip {
+                *arc = arc.map(EllipseArc::reversed);
+            }
+        }
+    }
+    true
+}
+
+/// Outline width and line style of the selection, as in the reference app's property bar.
+fn outline_controls(ui: &mut egui::Ui, state: &mut AppState) {
+    let Some(first) = state.selected_objects().next() else { return };
+    let before = first.shown_style().clone();
+    let mut style = before.clone();
+    let editable = state.selected_objects().any(|o| !o.locked);
+    ui.add_enabled_ui(editable, |ui| {
+        ui.label(ICON_LINE_WEIGHT.rich_text().size(16.0).color(theme::TEXT_DIM)).on_hover_text("Outline width");
+        if let Some(w) = crate::outline::width_field(ui, "property bar", style.outline.as_ref().map(|o| o.width), 76.0) {
+            crate::outline::set_width(&mut style, w);
+        }
+        if let Some(o) = &mut style.outline
+            && let Some(s) = crate::outline::line_style_picker(ui, "property bar", o.style, 84.0)
+        {
+            o.style = s;
+        }
+    });
+    if let Some(change) = crate::outline::style_change(&before, &style) {
+        let ids = state.selection.clone();
+        state.doc.restyle_objects(&ids, change);
     }
 }
 
@@ -287,20 +383,23 @@ fn number_row(
             None => ui.add_sized([16.0, 20.0], egui::Label::new(egui::RichText::new(tip.chars().next().unwrap_or(' ').to_string()).color(theme::TEXT_DIM))),
         };
         let field = egui::DragValue::new(value)
-            .speed(0.1)
+            .speed(step / 2.0)
             .max_decimals(decimals)
             .suffix(suffix)
             .range(range.clone());
-        let mut changed = ui.add_sized([92.0, 20.0], field).on_hover_text(tip).changed();
-        changed |= stepper(ui, value, step, &range);
+        let resp = ui.add_sized([92.0, 20.0], field);
+        crate::a11y::name(&resp, tip);
+        let mut changed = resp.on_hover_text(tip).changed();
+        changed |= stepper(ui, tip, value, step, &range);
         changed
     })
     .inner
 }
 
 /// Small up/down stepper next to a number field.
-fn stepper(ui: &mut egui::Ui, value: &mut f64, step: f64, range: &std::ops::RangeInclusive<f64>) -> bool {
+fn stepper(ui: &mut egui::Ui, tip: &str, value: &mut f64, step: f64, range: &std::ops::RangeInclusive<f64>) -> bool {
     let (rect, resp) = ui.allocate_exact_size(vec2(15.0, 20.0), Sense::click());
+    crate::a11y::button(&resp, true, &format!("{tip}: step up or down"));
     let painter = ui.painter();
     painter.rect_filled(rect, 4.0, theme::FIELD);
     let mid = rect.center().y;
@@ -325,7 +424,9 @@ fn segmented(ui: &mut egui::Ui, id: &str, segments: &[(MaterialIcon, &str, bool)
     let mut picked = None;
     for (i, (icon, tip, on)) in segments.iter().enumerate() {
         let r = egui::Rect::from_min_size(rect.min + vec2(2.0 + seg.x * i as f32, 2.0), seg);
-        let resp = ui.interact(r, ui.scope_id().with((id, i)), Sense::click()).on_hover_text(*tip);
+        let resp = ui.interact(r, ui.scope_id().with((id, i)), Sense::click());
+        crate::a11y::toggle(&resp, true, *on, tip);
+        let resp = resp.on_hover_text(*tip);
         if *on {
             ui.painter().rect_filled(r, 4.0, theme::SEGMENT_ON);
         } else if resp.hovered() {
@@ -342,6 +443,7 @@ fn segmented(ui: &mut egui::Ui, id: &str, segments: &[(MaterialIcon, &str, bool)
 /// Square icon button that only shows a background on hover.
 fn icon_button(ui: &mut egui::Ui, icon: MaterialIcon, tip: &str, enabled: bool) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(28.0), if enabled { Sense::click() } else { Sense::hover() });
+    crate::a11y::button(&resp, enabled, &format!("{tip} (property bar)"));
     if enabled && resp.hovered() {
         ui.painter().rect_filled(rect, 5.0, theme::FIELD);
     }
@@ -447,6 +549,7 @@ pub fn palette_ui(ui: &mut egui::Ui, state: &mut AppState) {
     // No colour: white with a red diagonal.
     let r = egui::Rect::from_min_size(egui::pos2(x, y), Vec2::splat(SWATCH));
     let resp = ui.interact(r, ui.scope_id().with("no_color"), Sense::click());
+    crate::a11y::button(&resp, true, "Swatch No color");
     ui.painter().rect_filled(r, 3.0, Color32::WHITE);
     ui.painter().line_segment([r.left_bottom() + vec2(2.0, -2.0), r.right_top() + vec2(-2.0, 2.0)], Stroke::new(1.5, Color32::from_rgb(0xE0, 0x1E, 0x1E)));
     let resp = resp.on_hover_text("No color\nClick: remove fill · Right-click: remove outline");
@@ -468,6 +571,7 @@ pub fn palette_ui(ui: &mut egui::Ui, state: &mut AppState) {
         offset -= ui.input(|i| i.smooth_scroll_delta.y);
     }
     let resp = ui.interact(chevron, ui.scope_id().with("palette_more"), Sense::click());
+    crate::a11y::button(&resp, true, "More colors");
     if resp.clicked() {
         offset += SWATCH * 5.0;
     }
@@ -489,6 +593,7 @@ pub fn palette_ui(ui: &mut egui::Ui, state: &mut AppState) {
         }
         painter.rect_filled(rect, 0.0, Color32::from_rgb(*r, *g, *b));
         let resp = ui.interact(rect.intersect(list), ui.scope_id().with(("swatch", i)), Sense::click());
+        crate::a11y::button(&resp, true, &format!("Swatch {name}"));
         if resp.hovered() {
             painter.rect_stroke(rect, 0.0, Stroke::new(1.0, Color32::WHITE), egui::StrokeKind::Inside);
         }
@@ -500,7 +605,7 @@ pub fn palette_ui(ui: &mut egui::Ui, state: &mut AppState) {
         if resp.secondary_clicked() {
             set_style(state, |s| match &mut s.outline {
                 Some(o) => o.color = color,
-                None => s.outline = Some(vs_core::Outline { color, width: 0.5 }),
+                None => s.outline = Some(vs_core::Outline::new(color, crate::outline::DEFAULT_WIDTH)),
             });
         }
     }
@@ -508,10 +613,5 @@ pub fn palette_ui(ui: &mut egui::Ui, state: &mut AppState) {
 
 fn set_style(state: &mut AppState, edit: impl Fn(&mut vs_core::Style)) {
     let ids = state.selection.clone();
-    let page = state.doc.active_page_mut();
-    for id in ids {
-        if let Some(o) = page.object_mut(id) {
-            edit(&mut o.style);
-        }
-    }
+    state.doc.restyle_objects(&ids, edit);
 }

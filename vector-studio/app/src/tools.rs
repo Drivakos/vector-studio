@@ -5,6 +5,7 @@
 
 use egui::{Color32, Pos2, Rect, Stroke};
 use vs_core::kurbo::{self, Affine, BezPath, PathEl, Point, Shape as _, Vec2};
+use vs_core::controls::{self, Control};
 use vs_core::nodes::{self, HandleRef};
 use vs_core::{ObjectId, Shape, Style};
 
@@ -57,6 +58,8 @@ enum Drag {
     Nodes { object: ObjectId, start: Point, original: BezPath },
     Handle { object: ObjectId, handle: HandleRef },
     Corner { object: ObjectId, corner: Point },
+    /// An ellipse, polygon or star node; `shape` and `transform` are as they were on press.
+    Control { object: ObjectId, control: Control, shape: Shape, transform: Affine },
 }
 
 /// A Bézier or Pen path being drawn, in document space.
@@ -166,7 +169,8 @@ fn constrain(mods: egui::Modifiers) -> bool {
 
 fn selection_originals(state: &AppState) -> Originals {
     let page = state.doc.active_page();
-    state.selection.iter().filter_map(|id| page.object(*id).map(|o| (*id, o.transform))).collect()
+    // Locked objects stay put.
+    state.selection.iter().filter_map(|id| page.object(*id).filter(|o| !o.locked).map(|o| (*id, o.transform))).collect()
 }
 
 fn apply(state: &mut AppState, originals: &Originals, t: Affine) {
@@ -180,7 +184,7 @@ fn apply(state: &mut AppState, originals: &Originals, t: Affine) {
 
 fn press(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers, double: bool) {
     match state.tool {
-        Tool::Pick => press_pick(state, view, p, mods),
+        Tool::Pick => press_pick(state, view, p, mods, double),
         Tool::Shape => press_shape(state, view, p, mods, double),
         Tool::Freehand => state.tools.drag = Some(Drag::Freehand { points: vec![p] }),
         Tool::Bezier | Tool::Pen => press_pen(state, view, p),
@@ -210,7 +214,7 @@ fn is_corner(handle: usize) -> bool {
     handle.is_multiple_of(2)
 }
 
-fn press_pick(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers) {
+fn press_pick(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers, double: bool) {
     let page = state.doc.active_page();
     if let Some(bounds) = page.bounds_of(&state.selection) {
         let near = handle_points(bounds, view)
@@ -237,6 +241,14 @@ fn press_pick(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers
                 state.selection.push(hit);
             }
         }
+        // Double-clicking an object switches to the Shape tool on it.
+        Some(hit) if double => {
+            state.selection = vec![hit];
+            state.tools.pick_mode = PickMode::Scale;
+            state.tools.nodes.clear();
+            state.tool = Tool::Shape;
+            state.toolbox.remember(Tool::Shape);
+        }
         Some(hit) => {
             let was_selected = state.selection.contains(&hit);
             if !was_selected {
@@ -250,10 +262,10 @@ fn press_pick(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers
     }
 }
 
-/// The object the Shape tool edits: the single selected object.
+/// The object the Shape tool edits: the single selected object, if it is not locked.
 fn shape_target(state: &AppState) -> Option<ObjectId> {
     match state.selection.as_slice() {
-        [id] => Some(*id),
+        [id] if state.doc.active_page().object(*id).is_some_and(|o| !o.locked) => Some(*id),
         _ => None,
     }
 }
@@ -324,7 +336,12 @@ fn press_shape(state: &mut AppState, view: &View, p: Point, mods: egui::Modifier
                     return;
                 }
             }
-            _ => {}
+            shape => {
+                if let Some((control, _)) = controls::controls(shape).into_iter().find(|(_, at)| view.screen_dist(t * *at, p) <= HIT) {
+                    state.tools.drag = Some(Drag::Control { object: id, control, shape: shape.clone(), transform: t });
+                    return;
+                }
+            }
         }
     }
     match state.doc.active_page().hit_test(p, tol) {
@@ -499,6 +516,16 @@ fn drag_to(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers) {
             }
             Drag::Corner { object, corner }
         }
+        Drag::Control { object, control, shape, transform } => {
+            let local = transform.inverse() * p;
+            if let Some((edited, turn)) = controls::drag(&shape, control, local, constrain(mods))
+                && let Some(obj) = state.doc.active_page_mut().object_mut(object)
+            {
+                obj.shape = edited;
+                obj.transform = transform * turn;
+            }
+            Drag::Control { object, control, shape, transform }
+        }
         other => other,
     };
     state.tools.drag = Some(drag);
@@ -561,7 +588,7 @@ fn creation_rect(start: Point, p: Point, mods: egui::Modifiers) -> kurbo::Rect {
 fn creation_shape(tool: Tool, rect: kurbo::Rect, settings: &ToolSettings) -> Option<Shape> {
     Some(match tool {
         Tool::Rectangle => Shape::Rectangle { rect, corner_radius: 0.0 },
-        Tool::Ellipse => Shape::Ellipse { rect },
+        Tool::Ellipse => Shape::Ellipse { rect, arc: None },
         Tool::Polygon => Shape::Polygon { rect, sides: settings.polygon_sides },
         Tool::Star => Shape::Star { rect, points: settings.star_points, inner_ratio: settings.star_inner_ratio },
         _ => return None,
@@ -738,7 +765,11 @@ pub fn draw_overlay(painter: &egui::Painter, state: &AppState, canvas: Rect) {
                         square(painter, view.screen(t * c), false);
                     }
                 }
-                _ => {}
+                shape => {
+                    for (_, at) in controls::controls(shape) {
+                        square(painter, view.screen(t * at), false);
+                    }
+                }
             }
         }
     } else if let Some(bounds) = page.bounds_of(&state.selection) {
@@ -757,9 +788,14 @@ pub fn draw_overlay(painter: &egui::Painter, state: &AppState, canvas: Rect) {
         }
         let handles = handle_points(bounds, &view);
         let rotate = state.tool == Tool::Pick && state.tools.pick_mode == PickMode::Rotate;
+        let all_locked = state.selection.iter().all(|id| page.object(*id).is_some_and(|o| o.locked));
         for (i, h) in handles.iter().enumerate() {
             let at = view.screen(*h);
-            if rotate {
+            if all_locked {
+                // Locked: small padlocks instead of handles.
+                let icon = egui_material_icons::icons::ICON_LOCK;
+                painter.text(at, egui::Align2::CENTER_CENTER, <&str>::from(icon), egui::FontId::new(11.0, icon.font_family()), Color32::BLACK);
+            } else if rotate {
                 if is_corner(i) {
                     painter.circle(at, 4.5, Color32::WHITE, Stroke::new(1.5, Color32::BLACK));
                 }
@@ -848,15 +884,26 @@ pub fn hint(state: &AppState) -> String {
         Tool::Pick if n > 0 && state.tools.pick_mode == PickMode::Rotate => {
             format!("{selected} · drag a corner to rotate (Cmd for 15° steps) · click the object to scale again")
         }
-        Tool::Pick if n > 0 => format!("{selected} · click again to rotate · Shift-click to add or remove"),
+        Tool::Pick if n > 0 => {
+            format!("{selected} · click again to rotate · double-click to edit nodes · Shift-click to add or remove")
+        }
         Tool::Pick => "Click an object to select it, or drag a box around objects".into(),
         Tool::Shape => match shape_target(state).and_then(|id| state.doc.active_page().object(id)) {
             Some(o) if matches!(o.shape, Shape::Curve { .. }) => {
                 "Drag nodes or handles · double-click a line to add a node, a node to delete it".into()
             }
-            Some(o) if matches!(o.shape, Shape::Rectangle { .. }) => "Drag a corner to round it".into(),
-            Some(_) => "Convert to curves to edit nodes (Object › Convert to Curves)".into(),
-            None => "Click a curve to edit its nodes".into(),
+            Some(o) if matches!(o.shape, Shape::Rectangle { .. }) => "Drag a corner to round it · Cmd+Q converts to curves".into(),
+            Some(o) if matches!(o.shape, Shape::Ellipse { .. }) => {
+                "Drag the node inside the ellipse for a pie, outside for an arc · Cmd for 15° steps · Cmd+Q converts to curves".into()
+            }
+            Some(o) if matches!(o.shape, Shape::Star { .. }) => {
+                "Drag an outer node to resize and turn all points, an inner node to change the sharpness · Cmd keeps the angle".into()
+            }
+            Some(o) if matches!(o.shape, Shape::Polygon { .. }) => {
+                "Drag a node to resize and turn all sides · Cmd keeps the angle · Cmd+Q converts to curves".into()
+            }
+            Some(_) => "Ungroup to edit the nodes of each object".into(),
+            None => "Click an object to edit its nodes".into(),
         },
         Tool::Rectangle | Tool::Ellipse | Tool::Polygon | Tool::Star => {
             "Drag to draw · Cmd constrains to equal sides · Shift draws from the centre".into()
@@ -1020,6 +1067,28 @@ mod tests {
     }
 
     #[test]
+    fn pick_moves_a_group_as_one_and_leaves_locked_objects() {
+        let mut h = Harness::new(Tool::Pick);
+        draw_rect(&mut h, 100.0, 100.0, 150.0, 150.0);
+        draw_rect(&mut h, 200.0, 100.0, 250.0, 150.0);
+        let ids = h.state.doc.all_object_ids();
+        let group = h.state.doc.group_objects(&ids).unwrap();
+        h.state.selection.clear();
+
+        // Clicking one member selects the whole group; dragging moves both members.
+        let (a, b) = (h.at(100.0, 125.0), h.at(110.0, 135.0));
+        h.drag(a, b);
+        assert_eq!(h.state.selection, vec![group]);
+        assert!(rect_eq(h.bounds(0), 110.0, 110.0, 260.0, 160.0), "{:?}", h.bounds(0));
+
+        h.state.doc.set_locked(&[group], true);
+        let (a, b) = (h.at(110.0, 135.0), h.at(150.0, 175.0));
+        h.drag(a, b);
+        assert_eq!(h.state.selection, vec![group], "locked objects can still be selected");
+        assert!(rect_eq(h.bounds(0), 110.0, 110.0, 260.0, 160.0), "locked group did not move");
+    }
+
+    #[test]
     fn pick_selects_moves_and_toggles_rotate_mode() {
         let mut h = Harness::new(Tool::Pick);
         draw_rect(&mut h, 100.0, 100.0, 200.0, 200.0);
@@ -1038,6 +1107,22 @@ mod tests {
         let (from, to) = (h.at(100.0, 150.0), h.at(130.0, 170.0));
         h.drag(from, to);
         assert!(rect_eq(h.bounds(0), 130.0, 120.0, 230.0, 220.0), "{:?}", h.bounds(0));
+    }
+
+    #[test]
+    fn pick_double_click_switches_to_the_shape_tool_on_that_object() {
+        let mut h = Harness::new(Tool::Pick);
+        draw_rect(&mut h, 100.0, 100.0, 200.0, 200.0);
+        h.state.selection.clear();
+        let empty = h.at(400.0, 400.0);
+        h.double_click(empty);
+        assert_eq!(h.state.tool, Tool::Pick, "empty page: no switch");
+
+        let edge = h.at(100.0, 150.0);
+        h.double_click(edge);
+        assert_eq!(h.state.tool, Tool::Shape);
+        assert_eq!(h.state.selection, vec![h.objects()[0].id]);
+        assert_eq!(h.state.tools.pick_mode, PickMode::Scale, "the first click must not leave rotate mode on");
     }
 
     #[test]

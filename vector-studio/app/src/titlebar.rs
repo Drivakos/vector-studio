@@ -87,6 +87,7 @@ fn items(state: &AppState) -> Vec<Vec<Item>> {
         s.checked = on;
         s
     };
+    let can = |cmd| crate::app::VectorStudioApp::command_state(state, cmd).0;
     let zoom = format!("{:.0}%", state.viewport.zoom_percent());
     vec![
         vec![
@@ -98,12 +99,12 @@ fn items(state: &AppState) -> Vec<Vec<Item>> {
             },
         ],
         vec![
-            Item { caption: "Group", seg_width: 46.0, segments: vec![seg(Face::Icon(ICON_GROUP_WORK), Action::Group, "Group (not available yet)", false)] },
-            Item { caption: "Ungroup", seg_width: 46.0, segments: vec![seg(Face::Icon(ICON_WORKSPACES), Action::Ungroup, "Ungroup (not available yet)", false)] },
+            Item { caption: "Group", seg_width: 46.0, segments: vec![seg(Face::Icon(ICON_GROUP_WORK), Action::Group, "Group (⌘G)", can(Command::Group))] },
+            Item { caption: "Ungroup", seg_width: 46.0, segments: vec![seg(Face::Icon(ICON_WORKSPACES), Action::Ungroup, "Ungroup (⌘U)", can(Command::Ungroup))] },
         ],
         vec![
-            Item { caption: "Lock", seg_width: 46.0, segments: vec![seg(Face::Icon(ICON_LOCK), Action::Lock, "Lock (not available yet)", false)] },
-            Item { caption: "Unlock", seg_width: 46.0, segments: vec![seg(Face::Icon(ICON_LOCK_OPEN_RIGHT), Action::Unlock, "Unlock (not available yet)", false)] },
+            Item { caption: "Lock", seg_width: 46.0, segments: vec![seg(Face::Icon(ICON_LOCK), Action::Lock, "Lock", can(Command::Lock))] },
+            Item { caption: "Unlock", seg_width: 46.0, segments: vec![seg(Face::Icon(ICON_LOCK_OPEN_RIGHT), Action::Unlock, "Unlock", can(Command::Unlock))] },
         ],
         vec![Item {
             caption: "Alignment",
@@ -182,6 +183,7 @@ pub fn titlebar_ui(ui: &mut egui::Ui, state: &mut AppState, out: &mut Vec<Comman
     let dockers_center = pos2(rect.max.x - 30.0, rect.min.y + PILL_TOP + PILL_HEIGHT / 2.0 + 1.0);
     let dockers_rect = Rect::from_center_size(dockers_center, Vec2::splat(36.0));
     let resp = ui.interact(dockers_rect, ui.scope_id().with("dockers_toggle"), Sense::click());
+    crate::a11y::toggle(&resp, true, state.dockers.has_content(), "Show or hide dockers");
     let painter = ui.painter();
     painter.circle_filled(dockers_center, 18.0, if resp.hovered() { Color32::from_gray(0x2A) } else { theme::PILL });
     let shown = state.dockers.has_content();
@@ -253,7 +255,9 @@ fn item_ui(ui: &mut egui::Ui, item: &Item, pill: Rect, key: (usize, usize)) -> V
     for (i, s) in item.segments.iter().enumerate() {
         let r = Rect::from_min_size(pos2(pill.min.x + item.seg_width * i as f32, pill.min.y), vec2(item.seg_width, PILL_HEIGHT));
         let sense = if s.enabled { Sense::click() } else { Sense::hover() };
-        let resp = ui.interact(r, ui.scope_id().with(("tb", key, i)), sense).on_hover_text(s.tip);
+        let resp = ui.interact(r, ui.scope_id().with(("tb", key, i)), sense);
+        crate::a11y::toggle(&resp, s.enabled, s.checked, s.tip);
+        let resp = resp.on_hover_text(s.tip);
         let corners = CornerRadius {
             nw: if i == 0 { radius } else { 0 },
             sw: if i == 0 { radius } else { 0 },
@@ -370,7 +374,11 @@ fn act(state: &mut AppState, action: Action, resp: &egui::Response, out: &mut Ve
         Action::MirrorV => crate::panels::mirror(state, false),
         Action::Arrange(order) => out.push(Command::Order(order)),
         Action::Rulers => out.push(Command::ToggleRulers),
-        Action::Group | Action::Ungroup | Action::Lock | Action::Unlock | Action::Grid | Action::Guidelines => {}
+        Action::Group => out.push(Command::Group),
+        Action::Ungroup => out.push(Command::Ungroup),
+        Action::Lock => out.push(Command::Lock),
+        Action::Unlock => out.push(Command::Unlock),
+        Action::Grid | Action::Guidelines => {}
     }
 }
 

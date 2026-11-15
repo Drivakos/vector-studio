@@ -237,6 +237,7 @@ pub fn toolbox_ui(ui: &mut egui::Ui, state: &mut ToolboxState, active: Tool) -> 
             None => tool.label().to_owned(),
         };
         let tip = if tool.is_live() { tip } else { format!("{tip}\nNot available yet") };
+        crate::a11y::toggle(&response, tool.is_live(), selected, tool.label());
         let response = response.on_hover_text(tip);
 
         let corner_hit = response

@@ -142,6 +142,7 @@ pub fn canvas_pane_ui(
     ui.allocate_rect(full, Sense::hover());
 
     state.canvas_size = canvas_rect.size();
+    state.canvas_rect = canvas_rect;
     if state.needs_fit && canvas_rect.width() > 10.0 && canvas_rect.height() > 10.0 {
         fit_page(state);
         state.needs_fit = false;
@@ -210,7 +211,9 @@ fn handle_input(ui: &egui::Ui, state: &mut AppState, response: &egui::Response, 
     let pan_drag = response.dragged_by(PointerButton::Middle)
         || (response.dragged_by(PointerButton::Primary) && (state.tool == Tool::Pan || space));
     if pan_drag {
-        let d = response.drag_delta();
+        // A drag only starts after a few points of movement; include them so the page
+        // stays under the pointer.
+        let d = if response.drag_started() { response.total_drag_delta().unwrap_or_default() } else { response.drag_delta() };
         state.viewport.pan(kurbo::Vec2::new(d.x as f64, d.y as f64));
     }
 
@@ -338,6 +341,7 @@ fn page_tabs_ui(ui: &mut egui::Ui, state: &mut AppState, rect: Rect, commands: &
             theme::TEXT
         };
         ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, <&str>::from(icon), egui::FontId::new(17.0, icon.font_family()), color);
+        crate::a11y::button(&resp, enabled, tip);
         resp.on_hover_text(tip).clicked()
     };
 
@@ -371,6 +375,7 @@ fn page_tabs_ui(ui: &mut egui::Ui, state: &mut AppState, rect: Rect, commands: &
                 let text_w = ui.fonts_mut(|f| f.layout_no_wrap(label.clone(), egui::FontId::proportional(13.0), Color32::WHITE).size().x);
                 let (r, resp) = ui.allocate_exact_size(vec2((text_w + 40.0).max(100.0), rect.height()), Sense::click());
                 let on = i == active;
+                crate::a11y::toggle(&resp, true, on, &format!("Page tab {label}"));
                 if on {
                     ui.painter().rect_filled(r, 0.0, theme::SUNKEN);
                 } else if resp.hovered() {

@@ -54,20 +54,31 @@ pub fn build_page_scene(
     }
     scene.fill(Fill::NonZero, screen, colors.page, None, &page_screen);
 
+    // Zero width = hairline: one physical pixel at any zoom.
+    let hairline = 1.0 / (viewport.zoom() * pixels_per_point);
     for object in &page.objects {
-        let path = object.world_path();
-        let style = &object.style;
-        if let Some(fill) = style.fill.filter(|_| object.shape.is_closed()) {
-            scene.fill(Fill::NonZero, doc, to_color(fill), None, &path);
-        }
-        if let Some(outline) = &style.outline {
-            // Zero width = hairline: one physical pixel at any zoom.
-            let width = if outline.width > 0.0 {
-                outline.width
-            } else {
-                1.0 / (viewport.zoom() * pixels_per_point)
+        for leaf in object.leaves() {
+            let fill = leaf.fill();
+            let outline = leaf.style.outline.as_ref().map(|o| {
+                let width = if o.width > 0.0 { o.page_width(leaf.transform) } else { hairline };
+                (o.stroke(width), to_color(o.color), o.behind_fill)
+            });
+            let draw_fill = |scene: &mut Scene| {
+                if let Some(fill) = fill {
+                    scene.fill(Fill::NonZero, doc, to_color(fill), None, &leaf.path);
+                }
             };
-            scene.stroke(&Stroke::new(width), doc, to_color(outline.color), None, &path);
+            match outline {
+                Some((stroke, color, true)) => {
+                    scene.stroke(&stroke, doc, color, None, &leaf.path);
+                    draw_fill(scene);
+                }
+                Some((stroke, color, false)) => {
+                    draw_fill(scene);
+                    scene.stroke(&stroke, doc, color, None, &leaf.path);
+                }
+                None => draw_fill(scene),
+            }
         }
     }
 

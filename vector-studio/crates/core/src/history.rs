@@ -97,7 +97,7 @@ mod tests {
     use kurbo::Rect;
 
     fn add(doc: &mut Document) {
-        doc.add_object(Shape::Ellipse { rect: Rect::new(0.0, 0.0, 1.0, 1.0) }, Style::default());
+        doc.add_object(Shape::Ellipse { rect: Rect::new(0.0, 0.0, 1.0, 1.0), arc: None }, Style::default());
     }
 
     fn count(doc: &Document) -> usize {

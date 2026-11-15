@@ -144,6 +144,7 @@ pub fn strip_ui(ui: &mut egui::Ui, host: &mut DockerHost) {
             egui::FontId::new(18.0, kind.icon().font_family()),
             color,
         );
+        crate::a11y::toggle(&resp, true, active, &format!("{} docker", kind.title()));
         if resp.on_hover_text(kind.title()).clicked() {
             clicked = Some(kind);
         }
@@ -168,6 +169,7 @@ pub fn strip_ui(ui: &mut egui::Ui, host: &mut DockerHost) {
         egui::FontId::new(18.0, ICON_MORE_HORIZ.font_family()),
         if resp.hovered() { egui::Color32::WHITE } else { theme::TEXT_DIM },
     );
+    crate::a11y::button(&resp, true, "Docker list");
     let resp = resp.on_hover_text("Dockers");
     egui::Popup::menu(&resp).show(|ui| {
         for kind in DockerKind::ALL {
@@ -194,6 +196,7 @@ pub fn docker_ui(ui: &mut egui::Ui, state: &mut AppState, commands: &mut Vec<Com
     );
     let close = egui::Rect::from_center_size(egui::pos2(header.min.x + 18.0, header.center().y), egui::vec2(22.0, 22.0));
     let resp = ui.interact(close, ui.scope_id().with("docker_close"), egui::Sense::click());
+    crate::a11y::button(&resp, true, &format!("Close {} docker", kind.title()));
     if resp.hovered() {
         ui.painter().rect_filled(close, 4.0, theme::FIELD);
     }
@@ -234,7 +237,7 @@ fn properties_ui(ui: &mut egui::Ui, state: &mut AppState) {
     section(ui, "Document", |ui| {
         egui::Grid::new("doc_props").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
             ui.label("Title");
-            ui.text_edit_singleline(&mut state.doc.title);
+            crate::a11y::add(ui, egui::TextEdit::singleline(&mut state.doc.title), "Document title");
             ui.end_row();
             ui.label("Units");
             unit_combo(ui, "doc_units", &mut state.doc.display_unit);
@@ -254,7 +257,7 @@ pub fn page_settings_ui(ui: &mut egui::Ui, state: &mut AppState, vertical: bool)
     let current = PagePreset::matching(page.size).map(|p| p.name).unwrap_or("Custom");
 
     let mut body = |ui: &mut egui::Ui| {
-        egui::ComboBox::from_id_salt(("page_preset", vertical))
+        let preset = egui::ComboBox::from_id_salt(("page_preset", vertical))
             .selected_text(current)
             .width(90.0)
             .show_ui(ui, |ui| {
@@ -264,15 +267,17 @@ pub fn page_settings_ui(ui: &mut egui::Ui, state: &mut AppState, vertical: bool)
                     }
                 }
             });
+        crate::a11y::name(&preset.response, "Page size (docker)");
         let mut w = unit.from_points(page.size.width);
         let mut h = unit.from_points(page.size.height);
-        let speed = 0.1;
-        let changed_w = ui
-            .add(egui::DragValue::new(&mut w).speed(speed).range(1.0..=f64::MAX).max_decimals(3).suffix(format!(" {}", unit.suffix())))
-            .on_hover_text("Page width")
-            .changed();
-        let changed_h = ui
-            .add(egui::DragValue::new(&mut h).speed(speed).range(1.0..=f64::MAX).max_decimals(3).suffix(format!(" {}", unit.suffix())))
+        let speed = unit.step() / 2.0;
+        let min = unit.from_points(1.0);
+        let field_w = ui.add(egui::DragValue::new(&mut w).speed(speed).range(min..=f64::MAX).max_decimals(unit.decimals()).suffix(format!(" {}", unit.suffix())));
+        crate::a11y::name(&field_w, "Page width (docker)");
+        let changed_w = field_w.on_hover_text("Page width").changed();
+        let field_h = ui.add(egui::DragValue::new(&mut h).speed(speed).range(min..=f64::MAX).max_decimals(unit.decimals()).suffix(format!(" {}", unit.suffix())));
+        crate::a11y::name(&field_h, "Page height (docker)");
+        let changed_h = field_h
             .on_hover_text("Page height")
             .changed();
         if changed_w || changed_h {
@@ -301,30 +306,30 @@ pub fn page_settings_ui(ui: &mut egui::Ui, state: &mut AppState, vertical: bool)
 }
 
 pub fn unit_combo(ui: &mut egui::Ui, id: &str, unit: &mut Unit) {
-    egui::ComboBox::from_id_salt(id)
+    let combo = egui::ComboBox::from_id_salt(id)
         .selected_text(unit.label())
         .width(100.0)
+        .height(400.0)
         .show_ui(ui, |ui| {
             for u in Unit::ALL {
                 ui.selectable_value(unit, u, u.label());
             }
         });
+    crate::a11y::name(&combo.response, if id == "bar_units" { "Units (property bar)" } else { "Units (document)" });
 }
 
 fn pages_ui(ui: &mut egui::Ui, state: &mut AppState, commands: &mut Vec<Command>) {
     ui.horizontal(|ui| {
-        if ui.button(ICON_ADD.rich_text()).on_hover_text("Insert page").clicked() {
+        if crate::a11y::icon_button(ui, ICON_ADD.rich_text(), "Insert page").clicked() {
             commands.push(Command::InsertPage);
         }
-        if ui.button(ICON_CONTENT_COPY.rich_text()).on_hover_text("Duplicate page").clicked() {
+        if crate::a11y::icon_button(ui, ICON_CONTENT_COPY.rich_text(), "Duplicate page").clicked() {
             commands.push(Command::DuplicatePage);
         }
         let can_delete = state.doc.page_count() > 1;
-        if ui
-            .add_enabled(can_delete, egui::Button::new(ICON_DELETE.rich_text()))
-            .on_hover_text("Delete page")
-            .clicked()
-        {
+        let delete = ui.add_enabled(can_delete, egui::Button::new(ICON_DELETE.rich_text()));
+        crate::a11y::name(&delete, "Delete page (docker)");
+        if delete.on_hover_text("Delete page").clicked() {
             commands.push(Command::DeletePage);
         }
     });
@@ -345,7 +350,7 @@ fn pages_ui(ui: &mut egui::Ui, state: &mut AppState, commands: &mut Vec<Command>
             if let Some((idx, name)) = &mut state.renaming_page
                 && *idx == i
             {
-                let resp = ui.text_edit_singleline(name);
+                let resp = crate::a11y::add(ui, egui::TextEdit::singleline(name), "Page name");
                 if resp.lost_focus() {
                     if let Some(page) = state.doc.page_mut(i) {
                         page.name = name.trim().to_owned();

@@ -5,7 +5,8 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use vs_core::kurbo::{BezPath, PathEl};
-use vs_core::{Document, Object, Page, Rgba};
+use vs_core::geometry::Leaf;
+use vs_core::{Document, LineCap, LineJoin, Object, Outline, Page, Rgba, Shape};
 
 /// Extension of the native format (JSON).
 pub const FILE_EXTENSION: &str = "vstudio";
@@ -164,8 +165,60 @@ pub fn export(doc: &Document, path: &Path, options: &ExportOptions) -> Result<Ex
     Ok(format)
 }
 
-fn fills(obj: &Object) -> Option<Rgba> {
-    obj.style.fill.filter(|_| obj.shape.is_closed())
+/// One `<path>` per drawable object; groups become `<g>` around their members.
+fn write_svg_object(out: &mut String, obj: &Object, parent: vs_core::kurbo::Affine, depth: usize) {
+    let indent = "  ".repeat(depth);
+    if let Shape::Group { children } = &obj.shape {
+        let _ = writeln!(out, "{indent}<g>");
+        for child in children {
+            write_svg_object(out, child, parent * obj.transform, depth + 1);
+        }
+        let _ = writeln!(out, "{indent}</g>");
+        return;
+    }
+    let mut path = obj.shape.to_path();
+    let transform = parent * obj.transform;
+    path.apply_affine(transform);
+    round_path(&mut path);
+    let _ = write!(out, r#"{indent}<path d="{}""#, path.to_svg());
+    match obj.style.fill.filter(|_| obj.shape.is_closed()) {
+        Some(c) => {
+            let _ = write!(out, r#" fill="{}""#, hex(c));
+            if c.a < 255 {
+                let _ = write!(out, r#" fill-opacity="{}""#, num(f64::from(c.a) / 255.0));
+            }
+        }
+        None => out.push_str(r#" fill="none""#),
+    }
+    if let Some(o) = &obj.style.outline {
+        write_svg_stroke(out, o, o.page_width(transform));
+    }
+    out.push_str("/>\n");
+}
+
+fn write_svg_stroke(out: &mut String, o: &Outline, width: f64) {
+    let _ = write!(out, r#" stroke="{}" stroke-width="{}" stroke-miterlimit="{}""#, hex(o.color), num(width), num(Outline::MITER_LIMIT));
+    if o.color.a < 255 {
+        let _ = write!(out, r#" stroke-opacity="{}""#, num(f64::from(o.color.a) / 255.0));
+    }
+    match o.join {
+        LineJoin::Miter => {}
+        LineJoin::Round => out.push_str(r#" stroke-linejoin="round""#),
+        LineJoin::Bevel => out.push_str(r#" stroke-linejoin="bevel""#),
+    }
+    match o.cap {
+        LineCap::Butt => {}
+        LineCap::Round => out.push_str(r#" stroke-linecap="round""#),
+        LineCap::Square => out.push_str(r#" stroke-linecap="square""#),
+    }
+    let dashes = o.dashes(width);
+    if !dashes.is_empty() {
+        let list: Vec<String> = dashes.iter().map(|d| num(*d)).collect();
+        let _ = write!(out, r#" stroke-dasharray="{}""#, list.join(" "));
+    }
+    if o.behind_fill {
+        out.push_str(r#" paint-order="stroke""#);
+    }
 }
 
 fn hex(c: Rgba) -> String {
@@ -189,25 +242,7 @@ pub fn page_to_svg(page: &Page) -> String {
         num(w), num(h), num(w), num(h)
     );
     for obj in &page.objects {
-        let mut path = obj.world_path();
-        round_path(&mut path);
-        let _ = write!(out, r#"  <path d="{}""#, path.to_svg());
-        match fills(obj) {
-            Some(c) => {
-                let _ = write!(out, r#" fill="{}""#, hex(c));
-                if c.a < 255 {
-                    let _ = write!(out, r#" fill-opacity="{}""#, num(f64::from(c.a) / 255.0));
-                }
-            }
-            None => out.push_str(r#" fill="none""#),
-        }
-        if let Some(o) = &obj.style.outline {
-            let _ = write!(out, r#" stroke="{}" stroke-width="{}""#, hex(o.color), num(o.effective_width()));
-            if o.color.a < 255 {
-                let _ = write!(out, r#" stroke-opacity="{}""#, num(f64::from(o.color.a) / 255.0));
-            }
-        }
-        out.push_str("/>\n");
+        write_svg_object(&mut out, obj, vs_core::kurbo::Affine::IDENTITY, 1);
     }
     out.push_str("</svg>\n");
     out
@@ -254,13 +289,39 @@ pub fn page_to_png(page: &Page, options: &ExportOptions) -> Result<Vec<u8>, IoEr
     pixmap.encode_png().map_err(|e| IoError::Png(e.to_string()))
 }
 
+fn pdf_path(leaf: &Leaf<'_>) -> Option<krilla::geom::Path> {
+    let mut pb = krilla::geom::PathBuilder::new();
+    let f = |p: vs_core::kurbo::Point| (p.x as f32, p.y as f32);
+    for el in leaf.path.elements() {
+        match *el {
+            PathEl::MoveTo(p) => {
+                let (x, y) = f(p);
+                pb.move_to(x, y)
+            }
+            PathEl::LineTo(p) => {
+                let (x, y) = f(p);
+                pb.line_to(x, y)
+            }
+            PathEl::QuadTo(a, p) => {
+                let ((ax, ay), (x, y)) = (f(a), f(p));
+                pb.quad_to(ax, ay, x, y)
+            }
+            PathEl::CurveTo(a, b, p) => {
+                let ((ax, ay), (bx, by), (x, y)) = (f(a), f(b), f(p));
+                pb.cubic_to(ax, ay, bx, by, x, y)
+            }
+            PathEl::ClosePath => pb.close(),
+        }
+    }
+    pb.finish()
+}
+
 /// Every page of the document as a PDF, 1 unit = 1 pt.
 pub fn document_to_pdf(doc: &Document) -> Result<Vec<u8>, IoError> {
     use krilla::color::rgb;
-    use krilla::geom::PathBuilder;
     use krilla::num::NormalizedF32;
     use krilla::page::PageSettings;
-    use krilla::paint::{Fill, FillRule, Stroke};
+    use krilla::paint::{Fill, FillRule, Stroke, StrokeDash};
 
     let opacity = |a: u8| NormalizedF32::new(f32::from(a) / 255.0).unwrap_or(NormalizedF32::ONE);
     let mut pdf = krilla::Document::new();
@@ -269,38 +330,49 @@ pub fn document_to_pdf(doc: &Document) -> Result<Vec<u8>, IoError> {
             .ok_or_else(|| IoError::Pdf("invalid page size".into()))?;
         let mut pdf_page = pdf.start_page_with(settings);
         let mut surface = pdf_page.surface();
-        for obj in &page.objects {
-            let mut pb = PathBuilder::new();
-            for el in obj.world_path().elements() {
-                let f = |p: vs_core::kurbo::Point| (p.x as f32, p.y as f32);
-                match *el {
-                    PathEl::MoveTo(p) => { let (x, y) = f(p); pb.move_to(x, y) }
-                    PathEl::LineTo(p) => { let (x, y) = f(p); pb.line_to(x, y) }
-                    PathEl::QuadTo(a, p) => { let ((ax, ay), (x, y)) = (f(a), f(p)); pb.quad_to(ax, ay, x, y) }
-                    PathEl::CurveTo(a, b, p) => {
-                        let ((ax, ay), (bx, by), (x, y)) = (f(a), f(b), f(p));
-                        pb.cubic_to(ax, ay, bx, by, x, y)
-                    }
-                    PathEl::ClosePath => pb.close(),
-                }
-            }
-            let Some(path) = pb.finish() else { continue };
-            let fill = fills(obj).map(|c| Fill {
+        for leaf in page.objects.iter().flat_map(Object::leaves) {
+            let Some(path) = pdf_path(&leaf) else { continue };
+            let fill = leaf.fill().map(|c| Fill {
                 paint: rgb::Color::new(c.r, c.g, c.b).into(),
                 opacity: opacity(c.a),
                 rule: FillRule::NonZero,
             });
-            let stroke = obj.style.outline.as_ref().map(|o| Stroke {
-                paint: rgb::Color::new(o.color.r, o.color.g, o.color.b).into(),
-                width: o.effective_width() as f32,
-                opacity: opacity(o.color.a),
-                ..Default::default()
+            let outline = leaf.style.outline.as_ref();
+            let stroke = outline.map(|o| {
+                let width = o.page_width(leaf.transform);
+                let dashes = o.dashes(width);
+                Stroke {
+                    paint: rgb::Color::new(o.color.r, o.color.g, o.color.b).into(),
+                    width: width as f32,
+                    miter_limit: Outline::MITER_LIMIT as f32,
+                    line_cap: match o.cap {
+                        LineCap::Butt => krilla::paint::LineCap::Butt,
+                        LineCap::Round => krilla::paint::LineCap::Round,
+                        LineCap::Square => krilla::paint::LineCap::Square,
+                    },
+                    line_join: match o.join {
+                        LineJoin::Miter => krilla::paint::LineJoin::Miter,
+                        LineJoin::Round => krilla::paint::LineJoin::Round,
+                        LineJoin::Bevel => krilla::paint::LineJoin::Bevel,
+                    },
+                    opacity: opacity(o.color.a),
+                    dash: (!dashes.is_empty()).then(|| StrokeDash { array: dashes.iter().map(|d| *d as f32).collect(), offset: 0.0 }),
+                }
             });
             if fill.is_none() && stroke.is_none() {
                 continue;
             }
-            surface.set_fill(fill);
-            surface.set_stroke(stroke);
+            if outline.is_some_and(|o| o.behind_fill) && fill.is_some() {
+                // Outline under the fill: two passes.
+                surface.set_fill(None);
+                surface.set_stroke(stroke);
+                surface.draw_path(&path);
+                surface.set_fill(fill);
+                surface.set_stroke(None);
+            } else {
+                surface.set_fill(fill);
+                surface.set_stroke(stroke);
+            }
             surface.draw_path(&path);
         }
         surface.finish();
@@ -319,10 +391,10 @@ mod tests {
         let mut doc = Document::new("Logo");
         let id = doc.add_object(
             Shape::Star { rect: Rect::new(100.0, 100.0, 300.0, 300.0), points: 5, inner_ratio: 0.5 },
-            Style { fill: Some(Rgba::rgb(255, 0, 0)), outline: Some(Outline { color: Rgba::BLACK, width: 2.0 }) },
+            Style { fill: Some(Rgba::rgb(255, 0, 0)), outline: Some(Outline::new(Rgba::BLACK, 2.0)) },
         );
         doc.transform_objects(&[id], Affine::rotate_about(0.2, vs_core::kurbo::Point::new(200.0, 200.0)));
-        doc.add_object(Shape::Ellipse { rect: Rect::new(10.0, 10.0, 60.0, 40.0) }, Style::new_object());
+        doc.add_object(Shape::Ellipse { rect: Rect::new(10.0, 10.0, 60.0, 40.0), arc: None }, Style::new_object());
         doc
     }
 
@@ -332,7 +404,7 @@ mod tests {
         let text = document_to_string(&doc).unwrap();
         let mut back = document_from_str(&text).unwrap();
         assert_eq!(back, doc);
-        let new = back.add_object(Shape::Ellipse { rect: Rect::ZERO }, Style::default());
+        let new = back.add_object(Shape::Ellipse { rect: Rect::ZERO, arc: None }, Style::default());
         assert!(doc.active_page().objects.iter().all(|o| o.id != new));
     }
 
@@ -353,6 +425,29 @@ mod tests {
         assert!(svg.contains(r##"fill="#ff0000""##));
         assert!(svg.contains(r#"width="595.276pt""#), "{svg}");
         resvg::usvg::Tree::from_str(&svg, &resvg::usvg::Options::default()).unwrap();
+    }
+
+    #[test]
+    fn svg_writes_outline_style_and_groups() {
+        let mut doc = sample();
+        let ids = doc.all_object_ids();
+        doc.restyle_objects(&ids, |s| {
+            if let Some(o) = &mut s.outline {
+                o.style = vs_core::LineStyle::Dash;
+                o.join = LineJoin::Round;
+                o.cap = LineCap::Square;
+                o.behind_fill = true;
+            }
+        });
+        doc.group_objects(&ids).unwrap();
+        let svg = page_to_svg(doc.active_page());
+        assert_eq!(svg.matches("<g>").count(), 1);
+        assert_eq!(svg.matches("<path ").count(), 2);
+        assert!(svg.contains(r#"stroke-dasharray="8 4""#), "{svg}");
+        assert!(svg.contains(r#"stroke-linejoin="round""#) && svg.contains(r#"stroke-linecap="square""#));
+        assert!(svg.contains(r#"paint-order="stroke""#));
+        resvg::usvg::Tree::from_str(&svg, &resvg::usvg::Options::default()).unwrap();
+        assert!(document_to_pdf(&doc).unwrap().starts_with(b"%PDF-"));
     }
 
     #[test]

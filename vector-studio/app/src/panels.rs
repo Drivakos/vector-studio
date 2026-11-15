@@ -2,7 +2,7 @@
 
 use egui_material_icons::icons::*;
 use vs_core::kurbo::{Affine, Vec2};
-use vs_core::{Align, Order, Outline, Rgba, Shape, Style};
+use vs_core::{Align, Order, Rgba, Shape, Style};
 
 use crate::app::AppState;
 use crate::commands::Command;
@@ -26,7 +26,7 @@ pub fn section(ui: &mut egui::Ui, title: &str, add: impl FnOnce(&mut egui::Ui)) 
 }
 
 fn length(value: &mut f64, unit: vs_core::Unit) -> egui::DragValue<'_> {
-    egui::DragValue::new(value).speed(0.1).max_decimals(3).suffix(format!(" {}", unit.suffix()))
+    egui::DragValue::new(value).speed(unit.step() / 2.0).max_decimals(unit.decimals()).suffix(format!(" {}", unit.suffix()))
 }
 
 /// Fill, outline and shape settings of the selection. Edits apply to every selected object.
@@ -38,61 +38,38 @@ pub fn object_properties_ui(ui: &mut egui::Ui, state: &mut AppState) {
     ui.label(egui::RichText::new(title).strong());
     ui.add_space(4.0);
 
-    let mut style = first.style.clone();
+    let locked = first.locked;
+    if locked {
+        ui.label(egui::RichText::new(format!("{} Locked: unlock it to edit.", <&str>::from(ICON_LOCK))).weak());
+    }
+    let mut style = first.shown_style().clone();
     let before = style.clone();
-    section(ui, "Fill", |ui| {
-        ui.horizontal(|ui| {
-            let mut on = style.fill.is_some();
-            if ui.checkbox(&mut on, "Uniform fill").changed() {
-                style.fill = on.then_some(Rgba::BLACK);
-            }
-            if let Some(fill) = &mut style.fill {
-                let mut c = to_arr(*fill);
-                if ui.color_edit_button_srgba_unmultiplied(&mut c).changed() {
-                    *fill = from_arr(c);
-                }
-            }
-        });
-        if !first.shape.is_closed() {
-            ui.label(egui::RichText::new("Open curves are not filled.").weak().small());
-        }
-    });
-    section(ui, "Outline", |ui| {
-        ui.horizontal(|ui| {
-            let mut on = style.outline.is_some();
-            if ui.checkbox(&mut on, "Outline").changed() {
-                style.outline = on.then_some(Outline { color: Rgba::BLACK, width: 0.5 });
-            }
-            if let Some(o) = &mut style.outline {
-                let mut c = to_arr(o.color);
-                if ui.color_edit_button_srgba_unmultiplied(&mut c).changed() {
-                    o.color = from_arr(c);
-                }
-            }
-        });
-        if let Some(o) = &mut style.outline {
+    let closed = !matches!(first.shape, Shape::Curve { .. }) || first.shape.is_closed();
+    ui.add_enabled_ui(!locked, |ui| {
+        section(ui, "Fill", |ui| {
             ui.horizontal(|ui| {
-                ui.label("Width");
-                let hairline = o.width <= 0.0;
-                ui.add(
-                    egui::DragValue::new(&mut o.width)
-                        .speed(0.05)
-                        .range(0.0..=500.0)
-                        .max_decimals(2)
-                        .suffix(" pt")
-                        .custom_formatter(move |v, _| if v <= 0.0 { "Hairline".into() } else { format!("{v:.2} pt") }),
-                )
-                .on_hover_text(if hairline { "0 = hairline: one device pixel on screen" } else { "Outline width" });
+                let mut on = style.fill.is_some();
+                if ui.checkbox(&mut on, "Uniform fill").changed() {
+                    style.fill = on.then_some(Rgba::BLACK);
+                }
+                if let Some(fill) = &mut style.fill {
+                    let mut c = to_arr(*fill);
+                    if ui.color_edit_button_srgba_unmultiplied(&mut c).changed() {
+                        *fill = from_arr(c);
+                    }
+                }
             });
-        }
-    });
-    if style != before {
-        let page = state.doc.active_page_mut();
-        for id in &ids {
-            if let Some(o) = page.object_mut(*id) {
-                o.style = style.clone();
+            if !closed {
+                ui.label(egui::RichText::new("Open curves are not filled.").weak().small());
             }
-        }
+        });
+        section(ui, "Outline", |ui| crate::outline::outline_editor(ui, &mut style));
+    });
+    if let Some(change) = crate::outline::style_change(&before, &style) {
+        state.doc.restyle_objects(&ids, change);
+    }
+    if locked {
+        return;
     }
 
     if ids.len() != 1 {
@@ -105,7 +82,7 @@ pub fn object_properties_ui(ui: &mut egui::Ui, state: &mut AppState) {
         grid(ui, "shape_props", |ui| {
             ui.label("Name");
             let mut name = obj.name.clone().unwrap_or_default();
-            if ui.add(egui::TextEdit::singleline(&mut name).hint_text(obj.shape.kind_label()).desired_width(120.0)).changed() {
+            if crate::a11y::add(ui, egui::TextEdit::singleline(&mut name).hint_text(obj.shape.kind_label()).desired_width(120.0), "Name (properties)").changed() {
                 obj.name = (!name.trim().is_empty()).then_some(name);
             }
             ui.end_row();
@@ -114,23 +91,23 @@ pub fn object_properties_ui(ui: &mut egui::Ui, state: &mut AppState) {
                     ui.label("Corner radius");
                     let mut r = unit.from_points(*corner_radius);
                     let max = unit.from_points(rect.width().min(rect.height()) / 2.0);
-                    if ui.add(length(&mut r, unit).range(0.0..=max)).changed() {
+                    if crate::a11y::add(ui, length(&mut r, unit).range(0.0..=max), "Corner radius (properties)").changed() {
                         *corner_radius = unit.to_points(r);
                     }
                     ui.end_row();
                 }
                 Shape::Polygon { sides, .. } => {
                     ui.label("Sides");
-                    ui.add(egui::DragValue::new(sides).range(3..=100));
+                    crate::a11y::add(ui, egui::DragValue::new(sides).range(3..=100), "Sides (properties)");
                     ui.end_row();
                 }
                 Shape::Star { points, inner_ratio, .. } => {
                     ui.label("Points");
-                    ui.add(egui::DragValue::new(points).range(3..=100));
+                    crate::a11y::add(ui, egui::DragValue::new(points).range(3..=100), "Points (properties)");
                     ui.end_row();
                     ui.label("Sharpness");
                     let mut sharp = (1.0 - *inner_ratio) * 100.0;
-                    if ui.add(egui::DragValue::new(&mut sharp).range(0.0..=99.0).max_decimals(0).suffix("%")).changed() {
+                    if crate::a11y::add(ui, egui::DragValue::new(&mut sharp).range(0.0..=99.0).max_decimals(0).suffix("%"), "Sharpness (properties)").changed() {
                         *inner_ratio = 1.0 - sharp / 100.0;
                     }
                     ui.end_row();
@@ -140,10 +117,15 @@ pub fn object_properties_ui(ui: &mut egui::Ui, state: &mut AppState) {
                     ui.label(vs_core::nodes::nodes(path).len().to_string());
                     ui.end_row();
                 }
+                Shape::Group { children } => {
+                    ui.label("Objects");
+                    ui.label(children.len().to_string());
+                    ui.end_row();
+                }
                 Shape::Ellipse { .. } => {}
             }
         });
-        if !matches!(obj.shape, Shape::Curve { .. }) {
+        if !matches!(obj.shape, Shape::Curve { .. } | Shape::Group { .. }) {
             ui.add_space(4.0);
             if ui.button("Convert to Curves").clicked() {
                 obj.shape = Shape::Curve { path: obj.shape.to_path() };
@@ -170,16 +152,16 @@ pub fn transform_ui(ui: &mut egui::Ui, state: &mut AppState) {
         let mut sized = false;
         grid(ui, "transform_grid", |ui| {
             ui.label("X");
-            moved |= ui.add(length(&mut x, unit)).changed();
+            moved |= crate::a11y::add(ui, length(&mut x, unit), "X (transform)").changed();
             ui.end_row();
             ui.label("Y");
-            moved |= ui.add(length(&mut y, unit)).changed();
+            moved |= crate::a11y::add(ui, length(&mut y, unit), "Y (transform)").changed();
             ui.end_row();
             ui.label("Width");
-            sized |= ui.add(length(&mut w, unit).range(0.001..=f64::MAX)).changed();
+            sized |= crate::a11y::add(ui, length(&mut w, unit).range(0.001..=f64::MAX), "Width (transform)").changed();
             ui.end_row();
             ui.label("Height");
-            sized |= ui.add(length(&mut h, unit).range(0.001..=f64::MAX)).changed();
+            sized |= crate::a11y::add(ui, length(&mut h, unit).range(0.001..=f64::MAX), "Height (transform)").changed();
             ui.end_row();
         });
         ui.checkbox(&mut lock, "Proportional");
@@ -205,16 +187,16 @@ pub fn transform_ui(ui: &mut egui::Ui, state: &mut AppState) {
 
     section(ui, "Rotate", |ui| {
         ui.horizontal(|ui| {
-            ui.add(egui::DragValue::new(&mut angle).range(-360.0..=360.0).speed(1.0).suffix("°"));
+            crate::a11y::add(ui, egui::DragValue::new(&mut angle).range(-360.0..=360.0).speed(1.0).suffix("°"), "Rotation angle");
             if ui.button("Apply").on_hover_text("Rotate counter-clockwise around the centre").clicked() {
                 rotate(state, -angle);
             }
         });
         ui.horizontal(|ui| {
-            if ui.button(ICON_ROTATE_LEFT.rich_text().size(18.0)).on_hover_text("Rotate 90° left").clicked() {
+            if crate::a11y::icon_button(ui, ICON_ROTATE_LEFT.rich_text().size(18.0), "Rotate 90° left").clicked() {
                 rotate(state, -90.0);
             }
-            if ui.button(ICON_ROTATE_RIGHT.rich_text().size(18.0)).on_hover_text("Rotate 90° right").clicked() {
+            if crate::a11y::icon_button(ui, ICON_ROTATE_RIGHT.rich_text().size(18.0), "Rotate 90° right").clicked() {
                 rotate(state, 90.0);
             }
         });
@@ -222,10 +204,10 @@ pub fn transform_ui(ui: &mut egui::Ui, state: &mut AppState) {
 
     section(ui, "Mirror", |ui| {
         ui.horizontal(|ui| {
-            if ui.button(ICON_SWAP_HORIZ.rich_text().size(18.0)).on_hover_text("Mirror horizontally").clicked() {
+            if crate::a11y::icon_button(ui, ICON_SWAP_HORIZ.rich_text().size(18.0), "Mirror horizontally").clicked() {
                 mirror(state, true);
             }
-            if ui.button(ICON_SWAP_VERT.rich_text().size(18.0)).on_hover_text("Mirror vertically").clicked() {
+            if crate::a11y::icon_button(ui, ICON_SWAP_VERT.rich_text().size(18.0), "Mirror vertically").clicked() {
                 mirror(state, false);
             }
         });
@@ -268,7 +250,7 @@ pub fn align_ui(ui: &mut egui::Ui, state: &AppState, commands: &mut Vec<Command>
                 (ICON_ALIGN_VERTICAL_CENTER, "Align centers vertically (C)", Align::CenterVertical),
                 (ICON_ALIGN_VERTICAL_BOTTOM, "Align bottom (B)", Align::Bottom),
             ] {
-                if ui.button(icon.rich_text().size(18.0)).on_hover_text(tip).clicked() {
+                if crate::a11y::icon_button(ui, icon.rich_text().size(18.0), tip).clicked() {
                     commands.push(Command::Align(align));
                 }
             }
@@ -289,7 +271,7 @@ pub fn order_buttons(ui: &mut egui::Ui, commands: &mut Vec<Command>) {
         (ICON_ARROW_DOWNWARD, "Back one", Order::Backward),
         (ICON_FLIP_TO_BACK, "To back", Order::ToBack),
     ] {
-        if ui.button(icon.rich_text().size(18.0)).on_hover_text(tip).clicked() {
+        if crate::a11y::icon_button(ui, icon.rich_text().size(18.0), tip).clicked() {
             commands.push(Command::Order(order));
         }
     }
@@ -300,7 +282,7 @@ pub fn objects_ui(ui: &mut egui::Ui, state: &mut AppState, commands: &mut Vec<Co
     ui.horizontal(|ui| {
         ui.add_enabled_ui(state.has_selection(), |ui| {
             order_buttons(ui, commands);
-            if ui.button(ICON_DELETE.rich_text().size(18.0)).on_hover_text("Delete").clicked() {
+            if crate::a11y::icon_button(ui, ICON_DELETE.rich_text().size(18.0), "Delete").clicked() {
                 commands.push(Command::Delete);
             }
         });
@@ -315,7 +297,10 @@ pub fn objects_ui(ui: &mut egui::Ui, state: &mut AppState, commands: &mut Vec<Co
             .id_salt(("objects_page", page_id.0))
             .default_open(i == active)
             .show(ui, |ui| {
-                let objects: Vec<_> = state.doc.pages()[i].objects.iter().rev().map(|o| (o.id, o.label())).collect();
+                let objects: Vec<_> = state.doc.pages()[i].objects.iter().rev().map(|o| {
+                    let label = if o.locked { format!("{}  {}", o.label(), <&str>::from(ICON_LOCK)) } else { o.label() };
+                    (o.id, label)
+                }).collect();
                 if objects.is_empty() {
                     ui.label(egui::RichText::new("No objects").weak());
                 }
@@ -323,7 +308,7 @@ pub fn objects_ui(ui: &mut egui::Ui, state: &mut AppState, commands: &mut Vec<Co
                     if let Some((rid, name)) = &mut state.renaming_object
                         && *rid == id
                     {
-                        let resp = ui.text_edit_singleline(name);
+                        let resp = crate::a11y::add(ui, egui::TextEdit::singleline(name), "Object name");
                         if resp.lost_focus() {
                             let new = name.trim().to_owned();
                             if let Some(page) = state.doc.page_mut(i)
@@ -338,7 +323,9 @@ pub fn objects_ui(ui: &mut egui::Ui, state: &mut AppState, commands: &mut Vec<Co
                         continue;
                     }
                     let selected = i == active && state.selection.contains(&id);
-                    let resp = ui.selectable_label(selected, label).on_hover_text("Double-click to rename");
+                    let resp = ui.selectable_label(selected, &label);
+                    crate::a11y::name(&resp, &format!("Object {label}"));
+                    let resp = resp.on_hover_text("Double-click to rename");
                     if resp.clicked() {
                         if i != active {
                             let _ = state.doc.set_active_page(i);

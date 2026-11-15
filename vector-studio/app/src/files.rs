@@ -1,4 +1,5 @@
-//! Open, save and export flows (native dialogs via rfd).
+//! Open, save and export flows. Dialogs go through [`Dialogs`]: native ones (rfd) in the
+//! app, scripted ones in the end-to-end tests.
 
 use std::path::{Path, PathBuf};
 
@@ -33,13 +34,61 @@ fn file_stem(state: &AppState) -> String {
         .unwrap_or_else(|| state.doc.title.clone())
 }
 
-fn error(title: &str, detail: impl std::fmt::Display) {
-    MessageDialog::new()
-        .set_level(MessageLevel::Error)
-        .set_title(title)
-        .set_description(detail.to_string())
-        .set_buttons(MessageButtons::Ok)
-        .show();
+/// Answer to "save changes before closing?".
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Unsaved {
+    Save,
+    Discard,
+    Cancel,
+}
+
+/// The file and message dialogs the app shows.
+pub trait Dialogs {
+    /// Ask where to save. `extension` is the one file type offered.
+    fn save_file(&mut self, title: &str, filter: &str, extension: &str, file_name: &str) -> Option<PathBuf>;
+    fn open_file(&mut self, title: &str, filter: &str, extension: &str) -> Option<PathBuf>;
+    fn unsaved_changes(&mut self, document: &str) -> Unsaved;
+    fn error(&mut self, title: &str, detail: &str);
+}
+
+/// The system's own dialogs.
+pub struct NativeDialogs;
+
+impl Dialogs for NativeDialogs {
+    fn save_file(&mut self, title: &str, filter: &str, extension: &str, file_name: &str) -> Option<PathBuf> {
+        FileDialog::new().set_title(title).add_filter(filter, &[extension]).set_file_name(file_name).save_file()
+    }
+
+    fn open_file(&mut self, title: &str, filter: &str, extension: &str) -> Option<PathBuf> {
+        FileDialog::new().set_title(title).add_filter(filter, &[extension]).pick_file()
+    }
+
+    fn unsaved_changes(&mut self, document: &str) -> Unsaved {
+        let answer = MessageDialog::new()
+            .set_level(MessageLevel::Warning)
+            .set_title("Unsaved changes")
+            .set_description(format!("Save changes to “{document}” before closing it?"))
+            .set_buttons(MessageButtons::YesNoCancel)
+            .show();
+        match answer {
+            MessageDialogResult::Yes => Unsaved::Save,
+            MessageDialogResult::No => Unsaved::Discard,
+            _ => Unsaved::Cancel,
+        }
+    }
+
+    fn error(&mut self, title: &str, detail: &str) {
+        MessageDialog::new()
+            .set_level(MessageLevel::Error)
+            .set_title(title)
+            .set_description(detail)
+            .set_buttons(MessageButtons::Ok)
+            .show();
+    }
+}
+
+fn error(state: &mut AppState, title: &str, detail: impl std::fmt::Display) {
+    state.dialogs.error(title, &detail.to_string());
 }
 
 /// Ask to save unsaved changes. Returns false if the user cancelled.
@@ -48,16 +97,11 @@ pub fn confirm_discard(state: &mut AppState) -> bool {
     if !state.history.is_dirty() {
         return true;
     }
-    let answer = MessageDialog::new()
-        .set_level(MessageLevel::Warning)
-        .set_title("Unsaved changes")
-        .set_description(format!("Save changes to “{}” before closing it?", file_stem(state)))
-        .set_buttons(MessageButtons::YesNoCancel)
-        .show();
-    match answer {
-        MessageDialogResult::Yes => save(state, false),
-        MessageDialogResult::No => true,
-        _ => false,
+    let name = file_stem(state);
+    match state.dialogs.unsaved_changes(&name) {
+        Unsaved::Save => save(state, false),
+        Unsaved::Discard => true,
+        Unsaved::Cancel => false,
     }
 }
 
@@ -77,12 +121,8 @@ pub fn save(state: &mut AppState, ask: bool) -> bool {
     let path = match (&state.file_path, ask) {
         (Some(p), false) => p.clone(),
         _ => {
-            let Some(mut p) = FileDialog::new()
-                .set_title("Save Drawing")
-                .add_filter("Vector Studio drawing", &[FILE_EXTENSION])
-                .set_file_name(format!("{}.{FILE_EXTENSION}", file_stem(state)))
-                .save_file()
-            else {
+            let name = format!("{}.{FILE_EXTENSION}", file_stem(state));
+            let Some(mut p) = state.dialogs.save_file("Save Drawing", "Vector Studio drawing", FILE_EXTENSION, &name) else {
                 return false;
             };
             if p.extension().is_none() {
@@ -104,7 +144,7 @@ pub fn save(state: &mut AppState, ask: bool) -> bool {
             true
         }
         Err(e) => {
-            error("Could not save", format!("{}: {e}", path.display()));
+            error(state, "Could not save", format!("{}: {e}", path.display()));
             false
         }
     }
@@ -114,11 +154,7 @@ pub fn open(state: &mut AppState) {
     if !confirm_discard(state) {
         return;
     }
-    let Some(path) = FileDialog::new()
-        .set_title("Open Drawing")
-        .add_filter("Vector Studio drawing", &[FILE_EXTENSION])
-        .pick_file()
-    else {
+    let Some(path) = state.dialogs.open_file("Open Drawing", "Vector Studio drawing", FILE_EXTENSION) else {
         return;
     };
     open_path(state, &path);
@@ -127,7 +163,7 @@ pub fn open(state: &mut AppState) {
 pub fn open_path(state: &mut AppState, path: &Path) {
     match vs_io::open_document(path) {
         Ok(doc) => set_document(state, doc, Some(path.to_path_buf())),
-        Err(e) => error("Could not open", format!("{}: {e}", path.display())),
+        Err(e) => error(state, "Could not open", format!("{}: {e}", path.display())),
     }
 }
 
@@ -135,12 +171,8 @@ pub fn open_path(state: &mut AppState, path: &Path) {
 pub fn export(state: &mut AppState) {
     let settings = state.export.clone();
     let format = settings.format;
-    let Some(mut path) = FileDialog::new()
-        .set_title("Export")
-        .add_filter(format.label(), &[format.extension()])
-        .set_file_name(format!("{}.{}", file_stem(state), format.extension()))
-        .save_file()
-    else {
+    let name = format!("{}.{}", file_stem(state), format.extension());
+    let Some(mut path) = state.dialogs.save_file("Export", format.label(), format.extension(), &name) else {
         return;
     };
     if ExportFormat::from_path(&path).ok() != Some(format) {
@@ -155,7 +187,7 @@ pub fn export(state: &mut AppState) {
             state.export.open = false;
             state.status = Some(format!("Exported {}", path.display()));
         }
-        Err(e) => error("Could not export", format!("{}: {e}", path.display())),
+        Err(e) => error(state, "Could not export", format!("{}: {e}", path.display())),
     }
 }
 
@@ -174,18 +206,19 @@ pub fn export_window(ctx: &egui::Context, state: &mut AppState) {
         .show(ctx, |ui| {
             egui::Grid::new("export_grid").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
                 ui.label("Format:");
-                egui::ComboBox::from_id_salt("export_format")
+                let format = egui::ComboBox::from_id_salt("export_format")
                     .selected_text(state.export.format.label())
                     .show_ui(ui, |ui| {
                         for f in ExportFormat::ALL {
                             ui.selectable_value(&mut state.export.format, f, f.label());
                         }
                     });
+                crate::a11y::name(&format.response, "Export format");
                 ui.end_row();
                 match state.export.format {
                     ExportFormat::Png => {
                         ui.label("Resolution:");
-                        ui.add(egui::DragValue::new(&mut state.export.dpi).range(18.0..=1200.0).speed(1.0).suffix(" dpi"));
+                        crate::a11y::add(ui, egui::DragValue::new(&mut state.export.dpi).range(18.0..=1200.0).speed(1.0).suffix(" dpi"), "Resolution");
                         ui.end_row();
                         ui.label("Background:");
                         ui.horizontal(|ui| {

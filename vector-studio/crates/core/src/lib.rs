@@ -1,5 +1,6 @@
 //! Document model for Vector Studio. No UI or GPU dependencies.
 
+pub mod controls;
 pub mod document;
 pub mod geometry;
 pub mod history;
@@ -8,8 +9,8 @@ pub mod ops;
 pub mod units;
 
 pub use document::{
-    Document, DocumentError, Object, ObjectId, Orientation, Outline, PAGE_PRESETS, Page, PageId,
-    PagePreset, Rgba, Shape, Style,
+    ArcKind, Document, DocumentError, EllipseArc, LineCap, LineJoin, LineStyle, Object, ObjectId, Orientation, Outline,
+    PAGE_PRESETS, Page, PageId, PagePreset, Rgba, Shape, Style,
 };
 pub use history::History;
 pub use kurbo;

@@ -3,10 +3,10 @@
 use std::f64::consts::{FRAC_PI_2, TAU};
 
 use kurbo::{
-    BezPath, Ellipse, ParamCurveNearest, Point, Rect, RoundedRect, Shape as _, Vec2,
+    Affine, BezPath, Ellipse, ParamCurveNearest, Point, Rect, RoundedRect, Shape as _, Vec2,
 };
 
-use crate::document::{Object, ObjectId, Page, Shape};
+use crate::document::{ArcKind, EllipseArc, Object, ObjectId, Page, Shape, Style};
 
 /// Flattening tolerance used when converting analytic shapes to Béziers, in points.
 pub const PATH_TOLERANCE: f64 = 0.01;
@@ -23,12 +23,20 @@ impl Shape {
                     rect.to_path(PATH_TOLERANCE)
                 }
             }
-            Shape::Ellipse { rect } => Ellipse::from_rect(*rect).to_path(PATH_TOLERANCE),
+            Shape::Ellipse { rect, arc: None } => Ellipse::from_rect(*rect).to_path(PATH_TOLERANCE),
+            Shape::Ellipse { rect, arc: Some(arc) } => arc_path(*rect, arc),
             Shape::Polygon { rect, sides } => polygon_path(*rect, (*sides).max(3), None),
             Shape::Star { rect, points, inner_ratio } => {
                 polygon_path(*rect, (*points).max(3), Some(inner_ratio.clamp(0.01, 1.0)))
             }
             Shape::Curve { path } => path.clone(),
+            Shape::Group { children } => {
+                let mut path = BezPath::new();
+                for child in children {
+                    path.extend(child.world_path());
+                }
+                path
+            }
         }
     }
 
@@ -36,10 +44,11 @@ impl Shape {
     pub fn frame(&self) -> Rect {
         match self {
             Shape::Rectangle { rect, .. }
-            | Shape::Ellipse { rect }
+            | Shape::Ellipse { rect, .. }
             | Shape::Polygon { rect, .. }
             | Shape::Star { rect, .. } => *rect,
             Shape::Curve { path } => path.bounding_box(),
+            Shape::Group { .. } => self.to_path().bounding_box(),
         }
     }
 
@@ -49,14 +58,45 @@ impl Shape {
                 .elements()
                 .iter()
                 .any(|el| matches!(el, kurbo::PathEl::ClosePath)),
+            Shape::Ellipse { arc: Some(arc), .. } => arc.kind == ArcKind::Pie,
             _ => true,
         }
     }
 }
 
+/// Point on the ellipse inscribed in `rect` at `degrees`, counterclockwise on the page
+/// from 3 o'clock.
+pub fn ellipse_point(rect: Rect, degrees: f64) -> Point {
+    let (c, a) = (rect.center(), degrees.to_radians());
+    Point::new(c.x + rect.width() / 2.0 * a.cos(), c.y - rect.height() / 2.0 * a.sin())
+}
+
+fn arc_path(rect: Rect, arc: &EllipseArc) -> BezPath {
+    let c = rect.center();
+    // kurbo measures angles clockwise on the page (y points down).
+    let curve = kurbo::Arc::new(
+        c,
+        (rect.width() / 2.0, rect.height() / 2.0),
+        -arc.start.to_radians(),
+        -arc.sweep().to_radians(),
+        0.0,
+    );
+    let mut path = BezPath::new();
+    match arc.kind {
+        ArcKind::Pie => {
+            path.move_to(c);
+            path.line_to(ellipse_point(rect, arc.start));
+            path.extend(curve.append_iter(PATH_TOLERANCE));
+            path.close_path();
+        }
+        ArcKind::Arc => path.extend(curve.path_elements(PATH_TOLERANCE)),
+    }
+    path
+}
+
 /// Vertices on an ellipse inscribed in `rect`, starting at the top, clockwise on screen.
 /// With `inner`, every other vertex sits at that fraction of the radius (a star).
-fn polygon_path(rect: Rect, n: u32, inner: Option<f64>) -> BezPath {
+pub fn polygon_path(rect: Rect, n: u32, inner: Option<f64>) -> BezPath {
     let c = rect.center();
     let (rx, ry) = (rect.width() / 2.0, rect.height() / 2.0);
     let count = if inner.is_some() { n * 2 } else { n };
@@ -74,7 +114,42 @@ fn polygon_path(rect: Rect, n: u32, inner: Option<f64>) -> BezPath {
     path
 }
 
+/// A drawable (non-group) object with its outline already in page space.
+pub struct Leaf<'a> {
+    pub path: BezPath,
+    pub style: &'a Style,
+    pub closed: bool,
+    /// Local → page transform, groups included.
+    pub transform: Affine,
+}
+
+impl Leaf<'_> {
+    /// Fill colour, if the leaf is closed and has one.
+    pub fn fill(&self) -> Option<crate::Rgba> {
+        self.style.fill.filter(|_| self.closed)
+    }
+}
+
 impl Object {
+    /// Everything this object draws, bottom first: itself, or its group's members.
+    pub fn leaves(&self) -> Vec<Leaf<'_>> {
+        let mut out = Vec::new();
+        self.collect_leaves(Affine::IDENTITY, &mut out);
+        out
+    }
+
+    fn collect_leaves<'a>(&'a self, parent: Affine, out: &mut Vec<Leaf<'a>>) {
+        let transform = parent * self.transform;
+        match &self.shape {
+            Shape::Group { children } => children.iter().for_each(|c| c.collect_leaves(transform, out)),
+            shape => {
+                let mut path = shape.to_path();
+                path.apply_affine(transform);
+                out.push(Leaf { path, style: &self.style, closed: shape.is_closed(), transform });
+            }
+        }
+    }
+
     /// The outline in page space.
     pub fn world_path(&self) -> BezPath {
         let mut path = self.shape.to_path();
@@ -87,19 +162,20 @@ impl Object {
         self.world_path().bounding_box()
     }
 
-    /// Whether `point` (page space) hits the fill or comes within `tolerance` of the outline.
+    /// Whether `point` (page space) hits the fill or comes within `tolerance` of the outline
+    /// of this object or, for a group, of any object in it.
     pub fn hit(&self, point: Point, tolerance: f64) -> bool {
-        let path = self.world_path();
-        let half = self.style.outline.as_ref().map_or(0.0, |o| o.effective_width() / 2.0);
-        let reach = tolerance + half;
-        if !path.bounding_box().inflate(reach, reach).contains(point) {
-            return false;
-        }
-        if self.style.fill.is_some() && self.shape.is_closed() && path.contains(point) {
-            return true;
-        }
-        path.segments()
-            .any(|seg| seg.nearest(point, 1e-6).distance_sq <= reach * reach)
+        self.leaves().iter().any(|leaf| {
+            let half = leaf.style.outline.as_ref().map_or(0.0, |o| o.page_width(leaf.transform) / 2.0);
+            let reach = tolerance + half;
+            if !leaf.path.bounding_box().inflate(reach, reach).contains(point) {
+                return false;
+            }
+            if leaf.fill().is_some() && leaf.path.contains(point) {
+                return true;
+            }
+            leaf.path.segments().any(|seg| seg.nearest(point, 1e-6).distance_sq <= reach * reach)
+        })
     }
 }
 
@@ -195,8 +271,8 @@ mod tests {
         assert_eq!(page.hit_test(Point::new(50.0, 50.0), 1.0), Some(filled_id));
 
         let mut doc = Document::default();
-        let outline = Style { fill: None, outline: Some(Outline { color: Rgba::BLACK, width: 2.0 }) };
-        let id = doc.add_object(Shape::Ellipse { rect }, outline);
+        let outline = Style { fill: None, outline: Some(Outline::new(Rgba::BLACK, 2.0)) };
+        let id = doc.add_object(Shape::Ellipse { rect, arc: None }, outline);
         let page = doc.active_page();
         assert_eq!(page.hit_test(Point::new(50.0, 50.0), 1.0), None);
         assert_eq!(page.hit_test(Point::new(50.0, 1.5), 1.0), Some(id));
@@ -207,15 +283,15 @@ mod tests {
         let mut doc = Document::default();
         let rect = Rect::new(0.0, 0.0, 100.0, 100.0);
         doc.add_object(Shape::Rectangle { rect, corner_radius: 0.0 }, filled());
-        let top = doc.add_object(Shape::Ellipse { rect }, filled());
+        let top = doc.add_object(Shape::Ellipse { rect, arc: None }, filled());
         assert_eq!(doc.active_page().hit_test(Point::new(50.0, 50.0), 0.0), Some(top));
     }
 
     #[test]
     fn marquee_selects_only_fully_enclosed() {
         let mut doc = Document::default();
-        let a = doc.add_object(Shape::Ellipse { rect: Rect::new(10.0, 10.0, 20.0, 20.0) }, filled());
-        doc.add_object(Shape::Ellipse { rect: Rect::new(40.0, 40.0, 80.0, 80.0) }, filled());
+        let a = doc.add_object(Shape::Ellipse { rect: Rect::new(10.0, 10.0, 20.0, 20.0), arc: None }, filled());
+        doc.add_object(Shape::Ellipse { rect: Rect::new(40.0, 40.0, 80.0, 80.0), arc: None }, filled());
         assert_eq!(doc.active_page().objects_inside(Rect::new(0.0, 0.0, 50.0, 50.0)), vec![a]);
     }
 

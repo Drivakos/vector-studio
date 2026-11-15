@@ -2,7 +2,7 @@
 
 use kurbo::{Affine, Rect, Vec2};
 
-use crate::document::{Document, Object, ObjectId, Shape};
+use crate::document::{Document, Object, ObjectId, Shape, Style};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Align {
@@ -23,9 +23,9 @@ pub enum Order {
 }
 
 impl Document {
-    /// Pre-multiply `transform` (page space) onto each object.
+    /// Pre-multiply `transform` (page space) onto each unlocked object.
     pub fn transform_objects(&mut self, ids: &[ObjectId], transform: Affine) {
-        for obj in self.active_page_mut().objects.iter_mut().filter(|o| ids.contains(&o.id)) {
+        for obj in self.active_page_mut().objects.iter_mut().filter(|o| ids.contains(&o.id) && !o.locked) {
             obj.transform = transform * obj.transform;
         }
     }
@@ -37,7 +37,7 @@ impl Document {
     /// Align `ids` to `target` (page space).
     pub fn align_objects(&mut self, ids: &[ObjectId], target: Rect, align: Align) {
         let page = self.active_page_mut();
-        for obj in page.objects.iter_mut().filter(|o| ids.contains(&o.id)) {
+        for obj in page.objects.iter_mut().filter(|o| ids.contains(&o.id) && !o.locked) {
             let b = obj.world_bounds();
             let delta = match align {
                 Align::Left => Vec2::new(target.x0 - b.x0, 0.0),
@@ -81,8 +81,78 @@ impl Document {
         }
     }
 
+    /// Delete the unlocked objects among `ids`.
     pub fn delete_objects(&mut self, ids: &[ObjectId]) {
-        self.active_page_mut().objects.retain(|o| !ids.contains(&o.id));
+        self.active_page_mut().objects.retain(|o| o.locked || !ids.contains(&o.id));
+    }
+
+    /// Change the style of the unlocked objects among `ids` (every member of a group).
+    pub fn restyle_objects(&mut self, ids: &[ObjectId], mut f: impl FnMut(&mut Style)) {
+        for obj in self.active_page_mut().objects.iter_mut().filter(|o| ids.contains(&o.id) && !o.locked) {
+            obj.restyle(&mut f);
+        }
+    }
+
+    pub fn set_locked(&mut self, ids: &[ObjectId], locked: bool) {
+        for obj in self.active_page_mut().objects.iter_mut().filter(|o| ids.contains(&o.id)) {
+            obj.locked = locked;
+        }
+    }
+
+    /// Group the unlocked objects among `ids` (at least two). The group takes the place of
+    /// the topmost one in the stack. Returns the group's id.
+    pub fn group_objects(&mut self, ids: &[ObjectId]) -> Option<ObjectId> {
+        let page = self.active_page();
+        let picked = |o: &Object| ids.contains(&o.id) && !o.locked;
+        if page.objects.iter().filter(|o| picked(o)).count() < 2 {
+            return None;
+        }
+        let top = page.objects.iter().rposition(picked)?;
+        let below_top = page.objects[..top].iter().filter(|o| picked(o)).count();
+        let id = self.alloc_object_id();
+        let objects = &mut self.active_page_mut().objects;
+        let (children, rest): (Vec<_>, Vec<_>) = objects.drain(..).partition(picked);
+        *objects = rest;
+        let group = Object {
+            id,
+            name: None,
+            shape: Shape::Group { children },
+            style: Style::default(),
+            transform: Affine::IDENTITY,
+            locked: false,
+        };
+        objects.insert(top - below_top, group);
+        Some(id)
+    }
+
+    /// Replace each unlocked group among `ids` by its members, in place. Returns the ids of
+    /// the members (to select them) and of any non-group objects in `ids`.
+    pub fn ungroup_objects(&mut self, ids: &[ObjectId]) -> Vec<ObjectId> {
+        let objects = &mut self.active_page_mut().objects;
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i < objects.len() {
+            let obj = &objects[i];
+            if !ids.contains(&obj.id) {
+                i += 1;
+                continue;
+            }
+            if obj.locked || !matches!(obj.shape, Shape::Group { .. }) {
+                out.push(obj.id);
+                i += 1;
+                continue;
+            }
+            let group = objects.remove(i);
+            let Shape::Group { children } = group.shape else { unreachable!() };
+            let n = children.len();
+            for (k, mut child) in children.into_iter().enumerate() {
+                child.transform = group.transform * child.transform;
+                out.push(child.id);
+                objects.insert(i + k, child);
+            }
+            i += n;
+        }
+        out
     }
 
     /// Copies of `ids`, not yet in the document.
@@ -100,7 +170,7 @@ impl Document {
         let mut new_ids = Vec::with_capacity(objects.len());
         for obj in objects {
             let mut copy = obj.clone();
-            copy.id = self.alloc_object_id();
+            self.renumber(&mut copy);
             copy.transform = Affine::translate(offset) * copy.transform;
             new_ids.push(copy.id);
             self.active_page_mut().objects.push(copy);
@@ -113,12 +183,11 @@ impl Document {
         self.paste_objects(&copies, offset)
     }
 
-    /// Replace analytic shapes with editable curves (transform kept).
+    /// Replace analytic shapes with editable curves (transform kept). Groups and locked
+    /// objects are left alone.
     pub fn convert_to_curves(&mut self, ids: &[ObjectId]) {
         for obj in self.active_page_mut().objects.iter_mut().filter(|o| ids.contains(&o.id)) {
-            if !matches!(obj.shape, Shape::Curve { .. }) {
-                obj.shape = Shape::Curve { path: obj.shape.to_path() };
-            }
+            obj.convert_to_curves();
         }
     }
 
@@ -195,6 +264,75 @@ mod tests {
         assert!(matches!(obj.shape, Shape::Curve { .. }));
         let after = obj.world_bounds();
         assert!((before.x0 - after.x0).abs() < 1e-9 && (before.y1 - after.y1).abs() < 1e-9);
+    }
+
+    #[test]
+    fn convert_to_curves_reaches_into_groups_and_skips_locked_objects() {
+        let r = Rect::new(0.0, 0.0, 10.0, 10.0);
+        let (mut doc, ids) = doc_with(&[r, r + Vec2::new(20.0, 0.0), r + Vec2::new(40.0, 0.0)]);
+        let group = doc.group_objects(&ids[..2]).unwrap();
+        doc.set_locked(&[ids[2]], true);
+        assert!(doc.active_page().object(group).unwrap().can_convert_to_curves());
+        doc.convert_to_curves(&[group, ids[2]]);
+        let page = doc.active_page();
+        let Shape::Group { children } = &page.object(group).unwrap().shape else { panic!("still a group") };
+        assert!(children.iter().all(|c| matches!(c.shape, Shape::Curve { .. })));
+        assert!(!page.object(group).unwrap().can_convert_to_curves());
+        assert!(matches!(page.object(ids[2]).unwrap().shape, Shape::Rectangle { .. }), "locked: unchanged");
+    }
+
+    #[test]
+    fn group_and_ungroup_keep_stack_position_and_geometry() {
+        let r = Rect::new(0.0, 0.0, 10.0, 10.0);
+        let (mut doc, ids) = doc_with(&[r, r + Vec2::new(20.0, 0.0), r, r + Vec2::new(40.0, 0.0)]);
+        let group = doc.group_objects(&[ids[1], ids[3]]).expect("grouped");
+        assert_eq!(order(&doc), vec![ids[0], ids[2], group]);
+        assert_eq!(doc.active_page().object(group).unwrap().world_bounds(), Rect::new(20.0, 0.0, 50.0, 10.0));
+
+        doc.transform_objects(&[group], Affine::translate((5.0, 7.0)));
+        let members = doc.ungroup_objects(&[group]);
+        assert_eq!(members, vec![ids[1], ids[3]]);
+        assert_eq!(order(&doc), vec![ids[0], ids[2], ids[1], ids[3]]);
+        let b = doc.active_page().object(ids[3]).unwrap().world_bounds();
+        assert_eq!((b.x0, b.y0), (45.0, 7.0));
+    }
+
+    #[test]
+    fn group_needs_two_unlocked_objects() {
+        let r = Rect::new(0.0, 0.0, 1.0, 1.0);
+        let (mut doc, ids) = doc_with(&[r, r]);
+        assert_eq!(doc.group_objects(&ids[..1]), None);
+        doc.set_locked(&ids[..1], true);
+        assert_eq!(doc.group_objects(&ids), None);
+    }
+
+    #[test]
+    fn locked_objects_do_not_move_restyle_or_delete() {
+        let r = Rect::new(0.0, 0.0, 10.0, 10.0);
+        let (mut doc, ids) = doc_with(&[r, r]);
+        doc.set_locked(&ids[..1], true);
+        doc.move_objects(&ids, Vec2::new(5.0, 0.0));
+        doc.restyle_objects(&ids, |s| s.fill = None);
+        let page = doc.active_page();
+        assert_eq!(page.object(ids[0]).unwrap().world_bounds().x0, 0.0);
+        assert!(page.object(ids[0]).unwrap().style.fill.is_some());
+        assert_eq!(page.object(ids[1]).unwrap().world_bounds().x0, 5.0);
+        assert!(page.object(ids[1]).unwrap().style.fill.is_none());
+        doc.delete_objects(&ids);
+        assert_eq!(order(&doc), vec![ids[0]]);
+    }
+
+    #[test]
+    fn restyle_reaches_group_members_and_paste_renumbers_them() {
+        let r = Rect::new(0.0, 0.0, 1.0, 1.0);
+        let (mut doc, ids) = doc_with(&[r, r]);
+        let group = doc.group_objects(&ids).unwrap();
+        doc.restyle_objects(&[group], |s| s.fill = Some(crate::Rgba::WHITE));
+        let obj = doc.active_page().object(group).unwrap().clone();
+        assert!(obj.leaves().iter().all(|l| l.style.fill == Some(crate::Rgba::WHITE)));
+        let copy = doc.duplicate_objects(&[group], Vec2::ZERO)[0];
+        let copied = doc.active_page().object(copy).unwrap().all_ids();
+        assert!(copied.iter().all(|id| !obj.all_ids().contains(id)));
     }
 
     #[test]

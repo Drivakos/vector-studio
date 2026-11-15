@@ -1,18 +1,6 @@
 //! Vector Studio: a native vector illustration app.
 
-mod app;
-mod canvas;
-mod chrome;
-mod commands;
-mod dockers;
-mod files;
-#[cfg(target_os = "macos")]
-mod native_menu;
-mod panels;
-mod theme;
-mod titlebar;
-mod toolbox;
-mod tools;
+use vector_studio::{Startup, VectorStudioApp};
 
 fn main() -> eframe::Result {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
@@ -33,6 +21,13 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "Vector Studio",
         options,
-        Box::new(|cc| Ok(Box::new(app::VectorStudioApp::new(cc)))),
+        Box::new(|cc| {
+            let startup = Startup {
+                native_menu: true,
+                // `vector-studio path/to/file.vstudio` opens that file.
+                open: std::env::args_os().nth(1).map(std::path::PathBuf::from),
+            };
+            Ok(Box::new(VectorStudioApp::new(cc, startup)))
+        }),
     )
 }

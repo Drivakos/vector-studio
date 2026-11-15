@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use vs_core::kurbo::{Point, Vec2};
-use vs_core::{Align, Document, History, Object, ObjectId, Unit};
+use vs_core::{Align, Document, History, Object, ObjectId, Shape, Unit};
 use vs_render::Viewport;
 
 use crate::canvas::{CanvasInteraction, GpuCanvas, fit_page};
@@ -64,6 +64,10 @@ pub struct AppState {
     pub cursor_doc: Option<Point>,
     /// Canvas size in logical points, from the last frame.
     pub canvas_size: egui::Vec2,
+    /// Canvas area in window coordinates, from the last frame.
+    pub canvas_rect: egui::Rect,
+    /// Native file and message dialogs; tests swap in scripted ones.
+    pub dialogs: Box<dyn files::Dialogs>,
     pub renaming_page: Option<(usize, String)>,
     pub renaming_object: Option<(ObjectId, String)>,
     pub interaction: CanvasInteraction,
@@ -97,6 +101,8 @@ impl AppState {
             dockers,
             cursor_doc: None,
             canvas_size: egui::Vec2::ZERO,
+            canvas_rect: egui::Rect::NOTHING,
+            dialogs: Box::new(files::NativeDialogs),
             renaming_page: None,
             renaming_object: None,
             interaction: CanvasInteraction::default(),
@@ -116,6 +122,24 @@ impl AppState {
     pub fn has_selection(&self) -> bool {
         !self.selection.is_empty()
     }
+
+    /// The SVG text the last copy put on the system clipboard.
+    pub fn system_clipboard_text(&self) -> &str {
+        &self.clipboard_text
+    }
+
+    pub fn selected_objects(&self) -> impl Iterator<Item = &Object> {
+        let page = self.doc.active_page();
+        self.selection.iter().filter_map(|id| page.object(*id))
+    }
+}
+
+/// How the app starts. The window binary installs the native menu and opens the file
+/// named on the command line; tests start without either.
+#[derive(Clone, Debug, Default)]
+pub struct Startup {
+    pub native_menu: bool,
+    pub open: Option<PathBuf>,
 }
 
 pub struct VectorStudioApp {
@@ -128,7 +152,7 @@ pub struct VectorStudioApp {
 }
 
 impl VectorStudioApp {
-    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>, startup: Startup) -> Self {
         egui_material_icons::initialize(&cc.egui_ctx);
         theme::apply(&cc.egui_ctx);
         let layout = Layout::load_default();
@@ -148,18 +172,21 @@ impl VectorStudioApp {
         };
 
         #[cfg(target_os = "macos")]
-        let native_menu = match crate::native_menu::NativeMenu::install(&layout, cc.egui_ctx.clone()) {
-            Ok(m) => Some(m),
-            Err(err) => {
-                log::warn!("native menu unavailable, using in-window menu: {err}");
-                None
+        let native_menu = if !startup.native_menu {
+            None
+        } else {
+            match crate::native_menu::NativeMenu::install(&layout, cc.egui_ctx.clone()) {
+                Ok(m) => Some(m),
+                Err(err) => {
+                    log::warn!("native menu unavailable, using in-window menu: {err}");
+                    None
+                }
             }
         };
 
         let mut state = AppState::new(Document::new("Untitled-1"), toolbox, prefs, dockers);
-        // `vector-studio path/to/file.vstudio` opens that file.
-        if let Some(path) = std::env::args_os().nth(1).map(PathBuf::from) {
-            files::open_path(&mut state, &path);
+        if let Some(path) = &startup.open {
+            files::open_path(&mut state, path);
         }
 
         Self {
@@ -172,6 +199,14 @@ impl VectorStudioApp {
         }
     }
 
+    pub fn state(&self) -> &AppState {
+        &self.state
+    }
+
+    pub fn state_mut(&mut self) -> &mut AppState {
+        &mut self.state
+    }
+
     fn has_native_menu(&self) -> bool {
         #[cfg(target_os = "macos")]
         return self.native_menu.is_some();
@@ -180,7 +215,7 @@ impl VectorStudioApp {
     }
 
     /// (enabled, checked) for a command, used by every menu and toolbar.
-    fn command_state(state: &AppState, cmd: Command) -> (bool, Option<bool>) {
+    pub(crate) fn command_state(state: &AppState, cmd: Command) -> (bool, Option<bool>) {
         let doc = &state.doc;
         let selected = state.has_selection();
         match cmd {
@@ -196,14 +231,21 @@ impl VectorStudioApp {
             Command::Redo => (state.history.can_redo(), None),
             Command::Paste => (!state.clipboard.is_empty(), None),
             Command::SelectAll => (!doc.active_page().objects.is_empty(), None),
+            Command::Group => (state.selected_objects().filter(|o| !o.locked).count() >= 2, None),
+            Command::Ungroup | Command::UngroupAll => {
+                (state.selected_objects().any(|o| !o.locked && matches!(o.shape, Shape::Group { .. })), None)
+            }
+            Command::Lock => (state.selected_objects().any(|o| !o.locked), None),
+            Command::Unlock => (state.selected_objects().any(|o| o.locked), None),
+            Command::UnlockAll => (doc.active_page().objects.iter().any(|o| o.locked), None),
             Command::Cut
             | Command::Copy
             | Command::Delete
             | Command::Duplicate
             | Command::Align(_)
             | Command::CenterToPage
-            | Command::Order(_)
-            | Command::ConvertToCurves => (selected, None),
+            | Command::Order(_) => (selected, None),
+            Command::ConvertToCurves => (state.selected_objects().any(vs_core::Object::can_convert_to_curves), None),
             _ => (true, None),
         }
     }
@@ -245,7 +287,7 @@ impl VectorStudioApp {
                 copy_selection(s, ctx);
                 if cmd == Command::Cut {
                     s.doc.delete_objects(&s.selection);
-                    s.selection.clear();
+                    keep_surviving(s);
                 }
                 Ok(())
             }
@@ -257,7 +299,7 @@ impl VectorStudioApp {
             Command::Delete => {
                 if !tools::delete_selected_nodes(s) {
                     s.doc.delete_objects(&s.selection);
-                    s.selection.clear();
+                    keep_surviving(s);
                 }
                 Ok(())
             }
@@ -288,6 +330,37 @@ impl VectorStudioApp {
                 s.doc.convert_to_curves(&s.selection);
                 Ok(())
             },
+            Command::Group => {
+                if let Some(id) = s.doc.group_objects(&s.selection) {
+                    // Locked objects stay out of the group and out of the selection.
+                    s.selection = vec![id];
+                }
+                Ok(())
+            }
+            Command::Ungroup => {
+                s.selection = s.doc.ungroup_objects(&s.selection);
+                Ok(())
+            }
+            Command::UngroupAll => {
+                // Ungroup until no selected group is left, so nested groups dissolve too.
+                loop {
+                    let next = s.doc.ungroup_objects(&s.selection);
+                    if next == s.selection {
+                        break;
+                    }
+                    s.selection = next;
+                }
+                Ok(())
+            }
+            Command::Lock | Command::Unlock => {
+                s.doc.set_locked(&s.selection, cmd == Command::Lock);
+                Ok(())
+            }
+            Command::UnlockAll => {
+                let all = s.doc.all_object_ids();
+                s.doc.set_locked(&all, false);
+                Ok(())
+            }
             Command::ObjectProperties => {
                 s.dockers.show(DockerKind::Properties);
                 Ok(())
@@ -419,7 +492,8 @@ impl VectorStudioApp {
             // Nudge distance from the property bar; Shift for ten times that.
             let step = s.prefs.nudge;
             for (key, dx, dy) in [(Key::ArrowLeft, -1.0, 0.0), (Key::ArrowRight, 1.0, 0.0), (Key::ArrowUp, 0.0, -1.0), (Key::ArrowDown, 0.0, 1.0)] {
-                for (mods, k) in [(Modifiers::NONE, 1.0), (Modifiers::SHIFT, 10.0)] {
+                // Shift first: egui matches a plain key even with Shift held.
+                for (mods, k) in [(Modifiers::SHIFT, 10.0), (Modifiers::NONE, 1.0)] {
                     if ctx.input_mut(|i| i.consume_key(mods, key)) {
                         s.doc.move_objects(&s.selection, Vec2::new(dx * step * k, dy * step * k));
                     }
@@ -499,6 +573,12 @@ impl VectorStudioApp {
             }
         }
     }
+}
+
+/// After a delete: locked objects were not deleted and stay selected.
+fn keep_surviving(s: &mut AppState) {
+    let page = s.doc.active_page();
+    s.selection.retain(|id| page.object(*id).is_some());
 }
 
 fn copy_selection(s: &mut AppState, ctx: &egui::Context) {

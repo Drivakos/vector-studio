@@ -29,19 +29,143 @@ impl Rgba {
     }
 }
 
+/// How outline segments meet at corners.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LineJoin {
+    #[default]
+    Miter,
+    Round,
+    Bevel,
+}
+
+/// How open outline ends are drawn.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LineCap {
+    #[default]
+    Butt,
+    Round,
+    Square,
+}
+
+/// Dash pattern of an outline. Dash and gap lengths are multiples of the outline width,
+/// so a pattern keeps its look at any width.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LineStyle {
+    #[default]
+    Solid,
+    Dot,
+    Dash,
+    LongDash,
+    DashDot,
+    DashDotDot,
+}
+
+impl LineStyle {
+    pub const ALL: [LineStyle; 6] = [
+        LineStyle::Solid,
+        LineStyle::Dot,
+        LineStyle::Dash,
+        LineStyle::LongDash,
+        LineStyle::DashDot,
+        LineStyle::DashDotDot,
+    ];
+
+    /// Dash and gap lengths in outline widths; empty for solid.
+    pub fn pattern(self) -> &'static [f64] {
+        match self {
+            LineStyle::Solid => &[],
+            LineStyle::Dot => &[1.0, 2.0],
+            LineStyle::Dash => &[4.0, 2.0],
+            LineStyle::LongDash => &[8.0, 3.0],
+            LineStyle::DashDot => &[4.0, 2.0, 1.0, 2.0],
+            LineStyle::DashDotDot => &[4.0, 2.0, 1.0, 2.0, 1.0, 2.0],
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            LineStyle::Solid => "Solid",
+            LineStyle::Dot => "Dotted",
+            LineStyle::Dash => "Dashed",
+            LineStyle::LongDash => "Long dash",
+            LineStyle::DashDot => "Dash dot",
+            LineStyle::DashDotDot => "Dash dot dot",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Outline {
     pub color: Rgba,
     /// Width in points. 0 means hairline.
     pub width: f64,
+    #[serde(default)]
+    pub style: LineStyle,
+    #[serde(default)]
+    pub join: LineJoin,
+    #[serde(default)]
+    pub cap: LineCap,
+    /// Draw the outline under the fill, so only its outer half shows.
+    #[serde(default)]
+    pub behind_fill: bool,
+    /// Scale the width when the object is scaled.
+    #[serde(default)]
+    pub scale_with_object: bool,
 }
 
 impl Outline {
     /// Width drawn for a hairline (0) outline, in points.
     pub const HAIRLINE: f64 = 0.25;
+    /// Miter joins sharper than this ratio of length to width fall back to bevels.
+    pub const MITER_LIMIT: f64 = 10.0;
+
+    /// A solid outline with mitered corners and butt ends.
+    pub fn new(color: Rgba, width: f64) -> Self {
+        Self {
+            color,
+            width,
+            style: LineStyle::Solid,
+            join: LineJoin::Miter,
+            cap: LineCap::Butt,
+            behind_fill: false,
+            scale_with_object: false,
+        }
+    }
 
     pub fn effective_width(&self) -> f64 {
         if self.width > 0.0 { self.width } else { Self::HAIRLINE }
+    }
+
+    /// Width in page space for an object whose local → page transform is `transform`.
+    /// Only "scale with object" outlines grow with it; the scale used is the geometric
+    /// mean of the two axis scales.
+    pub fn page_width(&self, transform: Affine) -> f64 {
+        let w = self.effective_width();
+        if self.scale_with_object { w * transform.determinant().abs().sqrt() } else { w }
+    }
+
+    /// Dash lengths in points for a stroke `width` wide; empty for solid.
+    pub fn dashes(&self, width: f64) -> Vec<f64> {
+        self.style.pattern().iter().map(|k| k * width).collect()
+    }
+
+    /// The stroke to draw this outline `width` points wide.
+    pub fn stroke(&self, width: f64) -> kurbo::Stroke {
+        let join = match self.join {
+            LineJoin::Miter => kurbo::Join::Miter,
+            LineJoin::Round => kurbo::Join::Round,
+            LineJoin::Bevel => kurbo::Join::Bevel,
+        };
+        let cap = match self.cap {
+            LineCap::Butt => kurbo::Cap::Butt,
+            LineCap::Round => kurbo::Cap::Round,
+            LineCap::Square => kurbo::Cap::Square,
+        };
+        kurbo::Stroke::new(width)
+            .with_join(join)
+            .with_miter_limit(Self::MITER_LIMIT)
+            .with_caps(cap)
+            .with_dashes(0.0, self.dashes(width))
     }
 }
 
@@ -56,21 +180,63 @@ impl Style {
     pub fn new_object() -> Self {
         Self {
             fill: None,
-            outline: Some(Outline { color: Rgba::BLACK, width: 0.5 }),
+            outline: Some(Outline::new(Rgba::BLACK, 0.5)),
         }
     }
 }
 
 /// Geometry in the object's local space. The object's `transform` maps it to page space.
+/// Whether a cut ellipse is closed through its centre (pie) or left open (arc).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ArcKind {
+    Pie,
+    Arc,
+}
+
+/// The part of an ellipse a pie or arc keeps: from `start` counterclockwise to `end`.
+/// Angles are in degrees, counterclockwise on the page from the 3 o'clock direction.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct EllipseArc {
+    pub kind: ArcKind,
+    pub start: f64,
+    pub end: f64,
+}
+
+impl EllipseArc {
+    /// Angles used when Pie or Arc is chosen for a whole ellipse: three quarters, open at
+    /// the top right.
+    pub fn default_for(kind: ArcKind) -> Self {
+        Self { kind, start: 90.0, end: 0.0 }
+    }
+
+    /// Degrees covered going counterclockwise from `start` to `end`, in (0, 360].
+    pub fn sweep(&self) -> f64 {
+        let s = (self.end - self.start).rem_euclid(360.0);
+        if s < 1e-9 { 360.0 } else { s }
+    }
+
+    /// The same shape drawn the other way round: keeps the part that was cut away.
+    pub fn reversed(self) -> Self {
+        Self { start: self.end, end: self.start, ..self }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Shape {
     Rectangle { rect: Rect, corner_radius: f64 },
-    Ellipse { rect: Rect },
+    Ellipse {
+        rect: Rect,
+        /// A pie or arc cut from the ellipse; `None` is the whole ellipse.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        arc: Option<EllipseArc>,
+    },
     /// Regular polygon inscribed in `rect`, first vertex at the top.
     Polygon { rect: Rect, sides: u32 },
     /// Star inscribed in `rect`; inner vertices sit at `inner_ratio` of the outer radius.
     Star { rect: Rect, points: u32, inner_ratio: f64 },
     Curve { path: BezPath },
+    /// Objects moved, scaled and styled as one. Child transforms are relative to the group.
+    Group { children: Vec<Object> },
 }
 
 impl Shape {
@@ -81,6 +247,7 @@ impl Shape {
             Shape::Polygon { .. } => "Polygon",
             Shape::Star { .. } => "Star",
             Shape::Curve { .. } => "Curve",
+            Shape::Group { .. } => "Group",
         }
     }
 }
@@ -94,13 +261,67 @@ pub struct Object {
     /// Local → page transform.
     #[serde(default)]
     pub transform: Affine,
+    /// Locked objects can be selected but not moved, edited, restyled or deleted.
+    #[serde(default)]
+    pub locked: bool,
 }
 
 impl Object {
+    /// Turn this object, or every member of this group, into curves. Locked objects
+    /// stay as they are.
+    pub fn convert_to_curves(&mut self) {
+        if self.locked {
+            return;
+        }
+        match &mut self.shape {
+            Shape::Curve { .. } => {}
+            Shape::Group { children } => children.iter_mut().for_each(Object::convert_to_curves),
+            shape => *shape = Shape::Curve { path: shape.to_path() },
+        }
+    }
+
+    /// Whether Convert to Curves would change anything.
+    pub fn can_convert_to_curves(&self) -> bool {
+        !self.locked
+            && match &self.shape {
+                Shape::Curve { .. } => false,
+                Shape::Group { children } => children.iter().any(Object::can_convert_to_curves),
+                _ => true,
+            }
+    }
+
     pub fn label(&self) -> String {
         match &self.name {
             Some(n) if !n.trim().is_empty() => n.clone(),
-            _ => self.shape.kind_label().to_string(),
+            _ => match &self.shape {
+                Shape::Group { children } => format!("Group of {} objects", children.len()),
+                shape => shape.kind_label().to_string(),
+            },
+        }
+    }
+
+    /// This object's id and the ids of everything nested in it.
+    pub fn all_ids(&self) -> Vec<ObjectId> {
+        let mut out = vec![self.id];
+        if let Shape::Group { children } = &self.shape {
+            out.extend(children.iter().flat_map(Object::all_ids));
+        }
+        out
+    }
+
+    /// Apply `f` to this object's style, or to every object inside it if it is a group.
+    pub fn restyle(&mut self, f: &mut impl FnMut(&mut Style)) {
+        match &mut self.shape {
+            Shape::Group { children } => children.iter_mut().for_each(|c| c.restyle(f)),
+            _ => f(&mut self.style),
+        }
+    }
+
+    /// The style shown for this object: its own, or the first leaf's for a group.
+    pub fn shown_style(&self) -> &Style {
+        match &self.shape {
+            Shape::Group { children } => children.first().map_or(&self.style, Object::shown_style),
+            _ => &self.style,
         }
     }
 }
@@ -315,7 +536,7 @@ impl Document {
             .clone();
         copy.id = PageId(self.alloc_id());
         for obj in &mut copy.objects {
-            obj.id = ObjectId(self.alloc_id());
+            self.renumber(obj);
         }
         self.pages.insert(index + 1, copy);
         self.active_page = index + 1;
@@ -345,8 +566,19 @@ impl Document {
             shape,
             style,
             transform: Affine::IDENTITY,
+            locked: false,
         });
         id
+    }
+
+    /// Give `obj` and everything nested in it fresh ids.
+    pub(crate) fn renumber(&mut self, obj: &mut Object) {
+        obj.id = self.alloc_object_id();
+        if let Shape::Group { children } = &mut obj.shape {
+            for child in children {
+                self.renumber(child);
+            }
+        }
     }
 
     pub(crate) fn alloc_object_id(&mut self) -> ObjectId {
@@ -365,7 +597,7 @@ impl Document {
         let max = self
             .pages
             .iter()
-            .flat_map(|p| std::iter::once(p.id.0).chain(p.objects.iter().map(|o| o.id.0)))
+            .flat_map(|p| std::iter::once(p.id.0).chain(p.objects.iter().flat_map(Object::all_ids).map(|id| id.0)))
             .max()
             .unwrap_or(0);
         self.next_id = self.next_id.max(max + 1);
@@ -375,6 +607,38 @@ impl Document {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn outline_dashes_follow_width_and_scale_option() {
+        let mut o = Outline::new(Rgba::BLACK, 2.0);
+        assert!(o.dashes(2.0).is_empty());
+        o.style = LineStyle::DashDot;
+        assert_eq!(o.dashes(2.0), vec![8.0, 4.0, 2.0, 4.0]);
+        let doubled = Affine::scale(2.0);
+        assert_eq!(o.page_width(doubled), 2.0);
+        o.scale_with_object = true;
+        assert!((o.page_width(doubled) - 4.0).abs() < 1e-12);
+        o.width = 0.0;
+        assert!((o.page_width(Affine::IDENTITY) - Outline::HAIRLINE).abs() < 1e-12);
+    }
+
+    #[test]
+    fn old_files_without_new_outline_fields_still_load() {
+        let json = r#"{"color":{"r":0,"g":0,"b":0,"a":255},"width":1.5}"#;
+        let o: Outline = serde_json::from_str(json).expect("parses");
+        assert_eq!(o, Outline::new(Rgba::BLACK, 1.5));
+    }
+
+    #[test]
+    fn ellipses_load_without_an_arc_and_save_pies_and_arcs() {
+        let rect = Rect::new(0.0, 0.0, 10.0, 10.0);
+        let old: Shape = serde_json::from_str(r#"{"Ellipse":{"rect":[0.0,0.0,10.0,10.0]}}"#).expect("parses");
+        assert_eq!(old, Shape::Ellipse { rect, arc: None });
+        let pie = Shape::Ellipse { rect, arc: Some(EllipseArc { kind: ArcKind::Pie, start: 30.0, end: 300.0 }) };
+        let back: Shape = serde_json::from_str(&serde_json::to_string(&pie).unwrap()).unwrap();
+        assert_eq!(back, pie);
+        assert_eq!(EllipseArc { kind: ArcKind::Arc, start: 300.0, end: 30.0 }.sweep(), 90.0);
+    }
 
     #[test]
     fn new_document_has_one_a4_portrait_page() {
@@ -412,7 +676,7 @@ mod tests {
     fn duplicate_page_gives_fresh_ids() {
         let mut doc = Document::default();
         let original = doc.add_object(
-            Shape::Ellipse { rect: Rect::new(0.0, 0.0, 10.0, 10.0) },
+            Shape::Ellipse { rect: Rect::new(0.0, 0.0, 10.0, 10.0), arc: None },
             Style::default(),
         );
         doc.duplicate_page(0).unwrap();

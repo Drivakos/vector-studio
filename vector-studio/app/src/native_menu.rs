@@ -8,6 +8,8 @@ use muda::{AboutMetadata, CheckMenuItem, Menu, MenuEvent, MenuItem as NativeItem
 
 use crate::commands::{Command, CommandItem, FIELD_SAFE_IDS, Layout, MenuItem, MenuRole};
 
+const QUIT_ID: &str = "app.quit";
+
 enum Handle {
     Normal(NativeItem),
     Check(CheckMenuItem),
@@ -26,7 +28,12 @@ impl NativeMenu {
     pub fn install(layout: &Layout, ctx: egui::Context) -> Result<Self, muda::Error> {
         let (tx, rx): (Sender<String>, Receiver<String>) = channel();
         MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
-            let _ = tx.send(event.id.0);
+            if event.id.0 == QUIT_ID {
+                // Goes through the unsaved-changes check like closing the window.
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            } else {
+                let _ = tx.send(event.id.0);
+            }
             ctx.request_repaint();
         }));
 
@@ -50,7 +57,8 @@ impl NativeMenu {
             &PredefinedMenuItem::hide_others(None),
             &PredefinedMenuItem::show_all(None),
             &PredefinedMenuItem::separator(),
-            &PredefinedMenuItem::quit(None),
+            // No ⌘Q: it is Convert to Curves.
+            &NativeItem::with_id(QUIT_ID, "Quit Vector Studio", true, None),
         ])?;
         menu.append(&app_menu)?;
 
@@ -126,11 +134,10 @@ fn append_items(parent: &Submenu, items: &[MenuItem], live: &mut Vec<(Command, H
 }
 
 /// Shortcuts left to the canvas key handler, which skips them while a text field has focus:
-/// bare letters (e.g. "L" for Align Left) and the clipboard/undo keys. Cmd+Q stays Quit,
-/// as on every Mac app.
+/// bare letters (e.g. "L" for Align Left) and the clipboard/undo keys.
 fn accelerator(item: &CommandItem) -> Option<Accelerator> {
     let text = item.shortcut.as_deref()?;
-    if text.len() == 1 || FIELD_SAFE_IDS.contains(&item.cmd.as_str()) || text == "CmdOrCtrl+Q" {
+    if text.len() == 1 || FIELD_SAFE_IDS.contains(&item.cmd.as_str()) {
         return None;
     }
     match text.parse() {
