@@ -19,7 +19,7 @@ pub use document::{
 pub use fill::{Fill, Gradient, GradientKind, GradientStop};
 pub use history::History;
 pub use kurbo;
-pub use ops::{Align, Order};
+pub use ops::{Align, Distribute, Order};
 pub use shaping::Shaping;
 pub use snap::{Guide, GuideAxis, SnapOptions, Snapper};
 pub use text::{Text, TextAlign};

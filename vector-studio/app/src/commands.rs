@@ -5,7 +5,7 @@
 
 use serde::Deserialize;
 
-use vs_core::{Align, Order, Shaping};
+use vs_core::{Align, Distribute, Order, Shaping};
 
 use crate::dockers::DockerKind;
 
@@ -51,6 +51,7 @@ pub enum Command {
     SelectAll,
     Align(Align),
     CenterToPage,
+    Distribute(Distribute),
     Order(Order),
     ConvertToCurves,
     Group,
@@ -114,6 +115,15 @@ impl Command {
             "object.to_back" => Order(vs_core::Order::ToBack),
             "object.forward" => Order(vs_core::Order::Forward),
             "object.backward" => Order(vs_core::Order::Backward),
+            "object.reverse_order" => Order(vs_core::Order::Reverse),
+            "object.distribute_left" => Distribute(vs_core::Distribute::Left),
+            "object.distribute_center_h" => Distribute(vs_core::Distribute::CenterHorizontal),
+            "object.distribute_right" => Distribute(vs_core::Distribute::Right),
+            "object.distribute_spacing_h" => Distribute(vs_core::Distribute::SpacingHorizontal),
+            "object.distribute_top" => Distribute(vs_core::Distribute::Top),
+            "object.distribute_center_v" => Distribute(vs_core::Distribute::CenterVertical),
+            "object.distribute_bottom" => Distribute(vs_core::Distribute::Bottom),
+            "object.distribute_spacing_v" => Distribute(vs_core::Distribute::SpacingVertical),
             "object.convert_to_curves" => ConvertToCurves,
             "object.group" => Group,
             "object.ungroup" => Ungroup,
@@ -190,6 +200,15 @@ impl Command {
         Command::Order(Order::ToBack),
         Command::Order(Order::Forward),
         Command::Order(Order::Backward),
+        Command::Order(Order::Reverse),
+        Command::Distribute(Distribute::Left),
+        Command::Distribute(Distribute::CenterHorizontal),
+        Command::Distribute(Distribute::Right),
+        Command::Distribute(Distribute::SpacingHorizontal),
+        Command::Distribute(Distribute::Top),
+        Command::Distribute(Distribute::CenterVertical),
+        Command::Distribute(Distribute::Bottom),
+        Command::Distribute(Distribute::SpacingVertical),
         Command::ConvertToCurves,
         Command::Group,
         Command::Ungroup,

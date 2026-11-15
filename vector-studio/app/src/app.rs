@@ -303,6 +303,7 @@ impl VectorStudioApp {
             Command::Lock => (state.selected_objects().any(|o| !o.locked), None),
             Command::Unlock => (state.selected_objects().any(|o| o.locked), None),
             Command::UnlockAll => (doc.active_page().objects.iter().any(|o| o.locked), None),
+            Command::Order(vs_core::Order::Reverse) => (state.selected_objects().count() >= 2, None),
             Command::Cut
             | Command::Copy
             | Command::Delete
@@ -312,6 +313,7 @@ impl VectorStudioApp {
             | Command::Order(_) => (selected, None),
             Command::ConvertToCurves => (state.selected_objects().any(vs_core::Object::can_convert_to_curves), None),
             Command::Shape(_) => (doc.can_shape(&state.selection), None),
+            Command::Distribute(_) => (state.selected_objects().filter(|o| !o.locked).count() >= 3, None),
             Command::Combine => (doc.can_combine(&state.selection), None),
             Command::BreakApart => (doc.can_break_apart(&state.selection), None),
             _ => (true, None),
@@ -398,6 +400,10 @@ impl VectorStudioApp {
                 s.doc.reorder_objects(&s.selection, order);
                 Ok(())
             },
+            Command::Distribute(how) => {
+                s.doc.distribute_objects(&s.selection, how);
+                Ok(())
+            }
             Command::ConvertToCurves => {
                 s.doc.convert_to_curves(&s.selection);
                 Ok(())

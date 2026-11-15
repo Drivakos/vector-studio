@@ -2,7 +2,7 @@
 
 use egui_material_icons::icons::*;
 use vs_core::kurbo::{Affine, Vec2};
-use vs_core::{Align, Order, Shape, Style};
+use vs_core::{Align, Distribute, Order, Shape, Style};
 
 use crate::app::AppState;
 use crate::commands::Command;
@@ -252,6 +252,29 @@ pub fn align_ui(ui: &mut egui::Ui, state: &AppState, commands: &mut Vec<Command>
             commands.push(Command::CenterToPage);
         }
     });
+    section(ui, "Distribute", |ui| {
+        if state.selection.len() < 3 {
+            ui.label(egui::RichText::new("Select three or more objects.").weak().small());
+        }
+        ui.add_enabled_ui(state.selection.len() >= 3, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                for (icon, tip, how) in [
+                    (ICON_ALIGN_HORIZONTAL_LEFT, "Distribute left", Distribute::Left),
+                    (ICON_ALIGN_HORIZONTAL_CENTER, "Distribute centers horizontally", Distribute::CenterHorizontal),
+                    (ICON_ALIGN_HORIZONTAL_RIGHT, "Distribute right", Distribute::Right),
+                    (ICON_HORIZONTAL_DISTRIBUTE, "Distribute spacing horizontally", Distribute::SpacingHorizontal),
+                    (ICON_ALIGN_VERTICAL_TOP, "Distribute top", Distribute::Top),
+                    (ICON_ALIGN_VERTICAL_CENTER, "Distribute centers vertically", Distribute::CenterVertical),
+                    (ICON_ALIGN_VERTICAL_BOTTOM, "Distribute bottom", Distribute::Bottom),
+                    (ICON_VERTICAL_DISTRIBUTE, "Distribute spacing vertically", Distribute::SpacingVertical),
+                ] {
+                    if crate::a11y::icon_button(ui, icon.rich_text().size(18.0), tip).clicked() {
+                        commands.push(Command::Distribute(how));
+                    }
+                }
+            });
+        });
+    });
     section(ui, "Order", |ui| {
         ui.horizontal_wrapped(|ui| order_buttons(ui, commands));
     });
@@ -263,6 +286,7 @@ pub fn order_buttons(ui: &mut egui::Ui, commands: &mut Vec<Command>) {
         (ICON_ARROW_UPWARD, "Forward one", Order::Forward),
         (ICON_ARROW_DOWNWARD, "Back one", Order::Backward),
         (ICON_FLIP_TO_BACK, "To back", Order::ToBack),
+        (ICON_SWAP_VERT, "Reverse order", Order::Reverse),
     ] {
         if crate::a11y::icon_button(ui, icon.rich_text().size(18.0), tip).clicked() {
             commands.push(Command::Order(order));

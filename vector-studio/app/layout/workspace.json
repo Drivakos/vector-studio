@@ -140,7 +140,16 @@
           { "cmd": "object.align_bottom", "label": "Align Bottom", "shortcut": "B" },
           { "cmd": "object.align_center_h", "label": "Align Centers Horizontally", "shortcut": "E" },
           { "cmd": "object.align_center_v", "label": "Align Centers Vertically", "shortcut": "C" },
-          { "cmd": "object.center_to_page", "label": "Center to Page", "shortcut": "P" }
+          { "cmd": "object.center_to_page", "label": "Center to Page", "shortcut": "P" },
+          "-",
+          { "cmd": "object.distribute_left", "label": "Distribute Left" },
+          { "cmd": "object.distribute_center_h", "label": "Distribute Centers Horizontally" },
+          { "cmd": "object.distribute_right", "label": "Distribute Right" },
+          { "cmd": "object.distribute_spacing_h", "label": "Distribute Spacing Horizontally" },
+          { "cmd": "object.distribute_top", "label": "Distribute Top" },
+          { "cmd": "object.distribute_center_v", "label": "Distribute Centers Vertically" },
+          { "cmd": "object.distribute_bottom", "label": "Distribute Bottom" },
+          { "cmd": "object.distribute_spacing_v", "label": "Distribute Spacing Vertically" }
         ] },
         { "label": "Order", "items": [
           { "cmd": "object.to_front", "label": "To Front of Layer", "shortcut": "Shift+PageUp" },

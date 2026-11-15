@@ -91,3 +91,38 @@ fn convert_to_curves_from_the_property_bar_and_menu() {
     app.menu(&["Object", "Convert to Curves"]);
     assert!(matches!(app.objects()[1].shape, Shape::Curve { .. }));
 }
+
+#[test]
+fn distribute_from_the_docker_and_menu_and_reverse_order() {
+    let mut app = E2e::new();
+    let a = app.draw_rect(100.0, 100.0, 120.0, 120.0);
+    let b = app.draw_rect(150.0, 300.0, 210.0, 320.0);
+    let c = app.draw_rect(400.0, 200.0, 420.0, 220.0);
+    let x0 = |app: &E2e, id| app.objects().iter().find(|o| o.id == id).unwrap().world_bounds().x0;
+
+    app.click_doc(110.0, 100.0);
+    app.hold(Modifiers::SHIFT);
+    app.click_doc(180.0, 300.0);
+    app.release_mods();
+    app.docker("Align and Distribute");
+    assert!(!app.is_enabled("Distribute left (docker)"), "two objects: nothing to spread");
+    app.hold(Modifiers::SHIFT);
+    app.click_doc(410.0, 200.0);
+    app.release_mods();
+
+    app.click("Distribute left (docker)");
+    assert!(close(x0(&app, a), 100.0) && close(x0(&app, b), 250.0) && close(x0(&app, c), 400.0));
+    // Widths 20 + 60 + 20 across 320: gaps of 110.
+    app.menu(&["Object", "Align and Distribute", "Distribute Spacing Horizontally"]);
+    assert!(close(x0(&app, b), 230.0), "{}", x0(&app, b));
+    app.click("Distribute top (docker)");
+    let y0 = |app: &E2e, id| app.objects().iter().find(|o| o.id == id).unwrap().world_bounds().y0;
+    assert!(close(y0(&app, c), 200.0) && close(y0(&app, a), 100.0) && close(y0(&app, b), 300.0));
+    app.click("Distribute centers vertically (docker)");
+    assert!(close(app.objects()[2].world_bounds().center().y, 210.0));
+
+    app.menu(&["Object", "Order", "Reverse Order"]);
+    assert_eq!(app.ids(), vec![c, b, a]);
+    app.click("Reverse order (docker)");
+    assert_eq!(app.ids(), vec![a, b, c]);
+}

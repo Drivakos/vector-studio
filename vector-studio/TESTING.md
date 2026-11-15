@@ -54,7 +54,7 @@ Names must be unique on screen, or a test cannot tell widgets apart.
 | Pick (select, Shift, marquee, move, Cmd axis, scale, Shift from centre, rotate, double-click to Shape tool); Shape (nodes, handles, node marquee, rounded corners) | `editing.rs` |
 | Palette fill and outline, outline width / style / corners / caps / behind fill / scale with object, multi-object edits, behind fill on the GPU canvas | `style.rs` |
 | X, Y, W, H, rotate, mirror (property bar, toolbar, Transform docker) | `transform.rs` |
-| Align keys and menus, Align docker, order keys / toolbar / docker, Convert to Curves | `arrange.rs` |
+| Align keys and menus, Align docker, Distribute (docker and menu), order keys / toolbar / docker, Reverse Order, Convert to Curves | `arrange.rs` |
 | Cmd+Q Convert to Curves (groups too); Shape tool on ellipses (pie, arc, Change direction), polygons and stars | `nodes.rs` |
 | Undo / redo, copy (SVG on the clipboard), cut, paste, duplicate offset, delete, select all, nudge | `edit.rs` |
 | Objects docker: select, Shift-select, rename, order, delete | `objects.rs` |

@@ -20,6 +20,45 @@ pub enum Order {
     ToBack,
     Forward,
     Backward,
+    /// Turn the stacking order of the objects upside down, in the places they take.
+    Reverse,
+}
+
+/// Spread objects evenly between the two outermost ones.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Distribute {
+    /// Equal distances between left edges.
+    Left,
+    CenterHorizontal,
+    Right,
+    /// Equal gaps between objects, left to right.
+    SpacingHorizontal,
+    Top,
+    CenterVertical,
+    Bottom,
+    SpacingVertical,
+}
+
+impl Distribute {
+    pub const ALL: [Distribute; 8] = [
+        Distribute::Left,
+        Distribute::CenterHorizontal,
+        Distribute::Right,
+        Distribute::SpacingHorizontal,
+        Distribute::Top,
+        Distribute::CenterVertical,
+        Distribute::Bottom,
+        Distribute::SpacingVertical,
+    ];
+
+    fn horizontal(self) -> bool {
+        matches!(self, Distribute::Left | Distribute::CenterHorizontal | Distribute::Right | Distribute::SpacingHorizontal)
+    }
+}
+
+/// The start and end of `r` along x (`horizontal`) or y.
+fn lo_hi(r: &Rect, horizontal: bool) -> (f64, f64) {
+    if horizontal { (r.x0, r.x1) } else { (r.y0, r.y1) }
 }
 
 impl Document {
@@ -78,6 +117,61 @@ impl Document {
                     }
                 }
             }
+            Order::Reverse => {
+                let slots: Vec<usize> = (0..objects.len()).filter(|i| selected(&objects[*i])).collect();
+                for k in 0..slots.len() / 2 {
+                    objects.swap(slots[k], slots[slots.len() - 1 - k]);
+                }
+            }
+        }
+    }
+
+    /// Spread the unlocked objects among `ids` (at least three) so their edges, centres or
+    /// the gaps between them are evenly spaced. The two outermost objects stay put.
+    pub fn distribute_objects(&mut self, ids: &[ObjectId], how: Distribute) {
+        let page = self.active_page();
+        let mut items: Vec<(ObjectId, Rect)> = page
+            .objects
+            .iter()
+            .filter(|o| ids.contains(&o.id) && !o.locked)
+            .map(|o| (o.id, o.world_bounds()))
+            .collect();
+        if items.len() < 3 {
+            return;
+        }
+        let h = how.horizontal();
+        let key = |r: &Rect| {
+            let (a, b) = lo_hi(r, h);
+            match how {
+                Distribute::Left | Distribute::Top => a,
+                Distribute::Right | Distribute::Bottom => b,
+                _ => (a + b) / 2.0,
+            }
+        };
+        items.sort_by(|a, b| key(&a.1).total_cmp(&key(&b.1)));
+        let n = items.len();
+        let mut moves = Vec::new();
+        if matches!(how, Distribute::SpacingHorizontal | Distribute::SpacingVertical) {
+            let (start, _) = lo_hi(&items[0].1, h);
+            let (_, end) = lo_hi(&items[n - 1].1, h);
+            let total: f64 = items.iter().map(|(_, r)| lo_hi(r, h).1 - lo_hi(r, h).0).sum();
+            let gap = (end - start - total) / (n - 1) as f64;
+            let mut at = start;
+            for (id, r) in &items {
+                let (a, b) = lo_hi(r, h);
+                moves.push((*id, at - a));
+                at += b - a + gap;
+            }
+        } else {
+            let (first, last) = (key(&items[0].1), key(&items[n - 1].1));
+            for (i, (id, r)) in items.iter().enumerate() {
+                let want = first + (last - first) * i as f64 / (n - 1) as f64;
+                moves.push((*id, want - key(r)));
+            }
+        }
+        for (id, d) in moves {
+            let delta = if h { Vec2::new(d, 0.0) } else { Vec2::new(0.0, d) };
+            self.move_objects(&[id], delta);
         }
     }
 
@@ -206,6 +300,45 @@ impl Document {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn distribute_spreads_edges_centres_and_gaps() {
+        use super::Distribute;
+        let mut doc = Document::default();
+        let style = Style::default();
+        let rect = |x0: f64, w: f64| Shape::Rectangle { rect: Rect::new(x0, 0.0, x0 + w, 10.0), corner_radius: 0.0 };
+        let a = doc.add_object(rect(0.0, 10.0), style.clone());
+        let b = doc.add_object(rect(15.0, 30.0), style.clone());
+        let c = doc.add_object(rect(90.0, 10.0), style.clone());
+        let ids = [c, a, b];
+        let x0 = |doc: &Document, id| doc.active_page().object(id).unwrap().world_bounds().x0;
+
+        doc.distribute_objects(&ids, Distribute::Left);
+        assert_eq!((x0(&doc, a), x0(&doc, b), x0(&doc, c)), (0.0, 45.0, 90.0));
+
+        doc.distribute_objects(&ids, Distribute::SpacingHorizontal);
+        // Widths 10 + 30 + 10 over 100: two gaps of 25.
+        assert_eq!((x0(&doc, a), x0(&doc, b), x0(&doc, c)), (0.0, 35.0, 90.0));
+
+        doc.distribute_objects(&ids, Distribute::CenterHorizontal);
+        let cx = |doc: &Document, id| doc.active_page().object(id).unwrap().world_bounds().center().x;
+        assert_eq!(cx(&doc, b), 50.0);
+
+        // Two objects: nothing to spread.
+        let before = doc.clone();
+        doc.distribute_objects(&[a, b], Distribute::Left);
+        assert_eq!(doc, before);
+    }
+
+    #[test]
+    fn reverse_order_flips_the_selected_objects_in_their_places() {
+        use super::Order;
+        let mut doc = Document::default();
+        let ids: Vec<_> = (0..4).map(|i| doc.add_object(Shape::Rectangle { rect: Rect::new(0.0, 0.0, 1.0, f64::from(i) + 1.0), corner_radius: 0.0 }, Style::default())).collect();
+        doc.reorder_objects(&[ids[0], ids[1], ids[3]], Order::Reverse);
+        let order: Vec<_> = doc.active_page().objects.iter().map(|o| o.id).collect();
+        assert_eq!(order, vec![ids[3], ids[1], ids[2], ids[0]]);
+    }
+
     use super::*;
     use crate::document::{Rgba, Style};
 

@@ -61,14 +61,14 @@ Phase 1 drawing:
 | Transform | Property bar and Transform docker: X, Y, W, H, rotate, mirror |
 | Shaping | With several objects selected, the property bar and Object > Shaping have Weld, Trim, Intersect, Simplify, Front Minus Back, Back Minus Front and Boundary. The result takes the target's fill and outline: the last object selected, or the bottom-most after a marquee. Curves stay curves. Trim and Intersect keep the other objects; Boundary adds an unfilled outline around the selection. Open curves can't be shaped |
 | Combine, Break Apart | Combine (`Cmd+L`) joins objects into one curve styled like the target; where its paths overlap there are holes. Break Apart (`Cmd+K`) makes each path its own object |
-| Arrange | Align (L R T B E C, P = centre to page): one object aligns to the page, several to the last selected. Order: front, back, forward, backward. Convert to Curves (Cmd+Q / Ctrl+Q), which also converts every member of a group |
+| Arrange | Align (L R T B E C, P = centre to page): one object aligns to the page, several to the last selected. Distribute (three or more objects; Align and Distribute docker and Object menu): left, centres, right or spacing, horizontally or vertically, between the two outermost objects. Order: front, back, forward, backward, reverse order. Convert to Curves (Cmd+Q / Ctrl+Q), which also converts every member of a group |
 | Edit | Undo/redo (every finished gesture is one step), cut/copy/paste (copy also puts SVG on the system clipboard), duplicate (offset set in the property bar), delete, select all, arrow nudge (distance set in the property bar, default 1 mm; Shift ×10) |
 | Objects docker | Every page's objects top-first; click to select, Shift/Cmd-click to add, double-click to rename, order and delete buttons |
 | Files | New, Open, Save, Save As (`.vstudio`), unsaved-changes prompt on New/Open/close, `•` in the title when unsaved. Export: SVG (current page), PNG (current page, dpi, transparent or white), PDF (all pages) |
 
 ## Tests
 
-`cargo test --workspace` runs about 205 tests. The 81 end-to-end tests drive the whole app through its window on a real GPU. Every feature and change ships with one. See [TESTING.md](TESTING.md).
+`cargo test --workspace` runs about 205 tests. The 82 end-to-end tests drive the whole app through its window on a real GPU. Every feature and change ships with one. See [TESTING.md](TESTING.md).
 
 ## Shortcuts
 
