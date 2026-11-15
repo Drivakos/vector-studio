@@ -53,6 +53,10 @@ pub struct AppState {
     pub file_path: Option<PathBuf>,
     /// Selected objects on the active page, in the order they were selected.
     pub selection: Vec<ObjectId>,
+    /// The selection a marquee (or Select All) made, until objects are clicked. While it
+    /// matches `selection`, shaping styles results after the bottom-most object instead of
+    /// the last selected.
+    pub marquee_selection: Option<Vec<ObjectId>>,
     pub viewport: Viewport,
     /// Fit the page to the window on the next frame (new document, startup).
     pub needs_fit: bool,
@@ -92,6 +96,7 @@ impl AppState {
             doc,
             file_path: None,
             selection: Vec::new(),
+            marquee_selection: None,
             viewport: Viewport::default(),
             needs_fit: true,
             tool: Tool::Pick,
@@ -131,6 +136,17 @@ impl AppState {
     pub fn selected_objects(&self) -> impl Iterator<Item = &Object> {
         let page = self.doc.active_page();
         self.selection.iter().filter_map(|id| page.object(*id))
+    }
+
+    /// The object whose fill and outline shaping and Combine results take: the
+    /// last one selected, or the bottom-most after a marquee.
+    pub fn shaping_target(&self) -> Option<ObjectId> {
+        if self.marquee_selection.as_ref() == Some(&self.selection) {
+            let page = self.doc.active_page();
+            page.objects.iter().find(|o| !o.locked && self.selection.contains(&o.id)).map(|o| o.id)
+        } else {
+            self.selected_objects().filter(|o| !o.locked).last().map(|o| o.id)
+        }
     }
 }
 
@@ -246,6 +262,9 @@ impl VectorStudioApp {
             | Command::CenterToPage
             | Command::Order(_) => (selected, None),
             Command::ConvertToCurves => (state.selected_objects().any(vs_core::Object::can_convert_to_curves), None),
+            Command::Shape(_) => (doc.can_shape(&state.selection), None),
+            Command::Combine => (doc.can_combine(&state.selection), None),
+            Command::BreakApart => (doc.can_break_apart(&state.selection), None),
             _ => (true, None),
         }
     }
@@ -310,6 +329,7 @@ impl VectorStudioApp {
             }
             Command::SelectAll => {
                 s.selection = s.doc.all_object_ids();
+                s.marquee_selection = Some(s.selection.clone());
                 Ok(())
             }
             Command::Align(align) => {
@@ -350,6 +370,25 @@ impl VectorStudioApp {
                     }
                     s.selection = next;
                 }
+                Ok(())
+            }
+            Command::Shape(op) => {
+                if let Some(target) = s.shaping_target() {
+                    s.selection = s.doc.shape_objects(&s.selection, target, op);
+                    s.tools.nodes.clear();
+                }
+                Ok(())
+            }
+            Command::Combine => {
+                if let Some(id) = s.shaping_target().and_then(|t| s.doc.combine_objects(&s.selection, t)) {
+                    s.selection = vec![id];
+                    s.tools.nodes.clear();
+                }
+                Ok(())
+            }
+            Command::BreakApart => {
+                s.selection = s.doc.break_apart(&s.selection);
+                s.tools.nodes.clear();
                 Ok(())
             }
             Command::Lock | Command::Unlock => {

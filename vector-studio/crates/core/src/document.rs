@@ -185,7 +185,6 @@ impl Style {
     }
 }
 
-/// Geometry in the object's local space. The object's `transform` maps it to page space.
 /// Whether a cut ellipse is closed through its centre (pie) or left open (arc).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ArcKind {
@@ -221,6 +220,7 @@ impl EllipseArc {
     }
 }
 
+/// Geometry in the object's local space. The object's `transform` maps it to page space.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Shape {
     Rectangle { rect: Rect, corner_radius: f64 },

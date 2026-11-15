@@ -65,7 +65,8 @@ pub fn build_page_scene(
             });
             let draw_fill = |scene: &mut Scene| {
                 if let Some(fill) = fill {
-                    scene.fill(Fill::NonZero, doc, to_color(fill), None, &leaf.path);
+                    // Even-odd: overlaps in a combined curve are holes.
+                    scene.fill(Fill::EvenOdd, doc, to_color(fill), None, &leaf.path);
                 }
             };
             match outline {

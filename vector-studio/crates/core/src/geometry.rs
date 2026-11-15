@@ -171,7 +171,8 @@ impl Object {
             if !leaf.path.bounding_box().inflate(reach, reach).contains(point) {
                 return false;
             }
-            if leaf.fill().is_some() && leaf.path.contains(point) {
+            // Even-odd, like the renderer.
+            if leaf.fill().is_some() && leaf.path.winding(point) % 2 != 0 {
                 return true;
             }
             leaf.path.segments().any(|seg| seg.nearest(point, 1e-6).distance_sq <= reach * reach)

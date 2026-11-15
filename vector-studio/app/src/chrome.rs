@@ -271,11 +271,46 @@ fn selection_bar(ui: &mut egui::Ui, state: &mut AppState, out: &mut Vec<Command>
     }
     outline_controls(ui, state);
     theme::vsep(ui);
+    if shaping_controls(ui, state, out) {
+        theme::vsep(ui);
+    }
     let curves = crate::app::VectorStudioApp::command_state(state, Command::ConvertToCurves).0
         && state.selected_objects().any(vs_core::Object::can_convert_to_curves);
     if icon_button(ui, ICON_TIMELINE, "Convert to Curves", curves).clicked() {
         out.push(Command::ConvertToCurves);
     }
+}
+
+/// Shaping, Combine and Break Apart buttons, shown for several selected
+/// objects (Break Apart for a combined curve). Returns whether anything was shown.
+fn shaping_controls(ui: &mut egui::Ui, state: &AppState, out: &mut Vec<Command>) -> bool {
+    use vs_core::Shaping;
+    let can = |cmd| crate::app::VectorStudioApp::command_state(state, cmd).0;
+    let several = state.selection.len() >= 2;
+    if several {
+        for (icon, tip, op) in [
+            (ICON_JOIN_FULL, "Weld", Shaping::Weld),
+            (ICON_CONTENT_CUT, "Trim", Shaping::Trim),
+            (ICON_JOIN_INNER, "Intersect", Shaping::Intersect),
+            (ICON_JOIN, "Simplify", Shaping::Simplify),
+            (ICON_FLIP_TO_FRONT, "Front minus back", Shaping::FrontMinusBack),
+            (ICON_FLIP_TO_BACK, "Back minus front", Shaping::BackMinusFront),
+            (ICON_BORDER_OUTER, "Create boundary", Shaping::Boundary),
+        ] {
+            if icon_button(ui, icon, tip, can(Command::Shape(op))).clicked() {
+                out.push(Command::Shape(op));
+            }
+        }
+        theme::vsep(ui);
+        if icon_button(ui, ICON_CALL_MERGE, "Combine", can(Command::Combine)).clicked() {
+            out.push(Command::Combine);
+        }
+    }
+    let breakable = can(Command::BreakApart);
+    if breakable && icon_button(ui, ICON_CALL_SPLIT, "Break Apart", true).clicked() {
+        out.push(Command::BreakApart);
+    }
+    several || breakable
 }
 
 /// Whole ellipse / Pie / Arc and Change direction, when every unlocked selected object is

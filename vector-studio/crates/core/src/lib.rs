@@ -6,6 +6,7 @@ pub mod geometry;
 pub mod history;
 pub mod nodes;
 pub mod ops;
+pub mod shaping;
 pub mod units;
 
 pub use document::{
@@ -15,4 +16,5 @@ pub use document::{
 pub use history::History;
 pub use kurbo;
 pub use ops::{Align, Order};
+pub use shaping::Shaping;
 pub use units::Unit;

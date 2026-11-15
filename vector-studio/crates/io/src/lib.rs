@@ -183,7 +183,7 @@ fn write_svg_object(out: &mut String, obj: &Object, parent: vs_core::kurbo::Affi
     let _ = write!(out, r#"{indent}<path d="{}""#, path.to_svg());
     match obj.style.fill.filter(|_| obj.shape.is_closed()) {
         Some(c) => {
-            let _ = write!(out, r#" fill="{}""#, hex(c));
+            let _ = write!(out, r#" fill="{}" fill-rule="evenodd""#, hex(c));
             if c.a < 255 {
                 let _ = write!(out, r#" fill-opacity="{}""#, num(f64::from(c.a) / 255.0));
             }
@@ -335,7 +335,7 @@ pub fn document_to_pdf(doc: &Document) -> Result<Vec<u8>, IoError> {
             let fill = leaf.fill().map(|c| Fill {
                 paint: rgb::Color::new(c.r, c.g, c.b).into(),
                 opacity: opacity(c.a),
-                rule: FillRule::NonZero,
+                rule: FillRule::EvenOdd,
             });
             let outline = leaf.style.outline.as_ref();
             let stroke = outline.map(|o| {
@@ -422,7 +422,7 @@ mod tests {
     fn svg_has_one_path_per_object_and_parses() {
         let svg = page_to_svg(sample().active_page());
         assert_eq!(svg.matches("<path ").count(), 2);
-        assert!(svg.contains(r##"fill="#ff0000""##));
+        assert!(svg.contains(r##"fill="#ff0000" fill-rule="evenodd""##), "even-odd, like the canvas");
         assert!(svg.contains(r#"width="595.276pt""#), "{svg}");
         resvg::usvg::Tree::from_str(&svg, &resvg::usvg::Options::default()).unwrap();
     }

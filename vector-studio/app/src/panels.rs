@@ -332,6 +332,7 @@ pub fn objects_ui(ui: &mut egui::Ui, state: &mut AppState, commands: &mut Vec<Co
                             state.selection.clear();
                         }
                         let add = ui.input(|inp| inp.modifiers.shift || inp.modifiers.command);
+                        state.marquee_selection = None;
                         if add {
                             if let Some(pos) = state.selection.iter().position(|s| *s == id) {
                                 state.selection.remove(pos);

@@ -5,7 +5,7 @@
 
 use serde::Deserialize;
 
-use vs_core::{Align, Order};
+use vs_core::{Align, Order, Shaping};
 
 use crate::dockers::DockerKind;
 
@@ -36,6 +36,9 @@ pub enum Command {
     Lock,
     Unlock,
     UnlockAll,
+    Shape(Shaping),
+    Combine,
+    BreakApart,
     ObjectProperties,
     ZoomIn,
     ZoomOut,
@@ -92,6 +95,15 @@ impl Command {
             "object.lock" => Lock,
             "object.unlock" => Unlock,
             "object.unlock_all" => UnlockAll,
+            "object.weld" => Shape(Shaping::Weld),
+            "object.trim" => Shape(Shaping::Trim),
+            "object.intersect" => Shape(Shaping::Intersect),
+            "object.simplify" => Shape(Shaping::Simplify),
+            "object.front_minus_back" => Shape(Shaping::FrontMinusBack),
+            "object.back_minus_front" => Shape(Shaping::BackMinusFront),
+            "object.boundary" => Shape(Shaping::Boundary),
+            "object.combine" => Combine,
+            "object.break_apart" => BreakApart,
             "object.properties" => ObjectProperties,
             "view.zoom_in" => ZoomIn,
             "view.zoom_out" => ZoomOut,
@@ -153,6 +165,15 @@ impl Command {
         Command::Lock,
         Command::Unlock,
         Command::UnlockAll,
+        Command::Shape(Shaping::Weld),
+        Command::Shape(Shaping::Trim),
+        Command::Shape(Shaping::Intersect),
+        Command::Shape(Shaping::Simplify),
+        Command::Shape(Shaping::FrontMinusBack),
+        Command::Shape(Shaping::BackMinusFront),
+        Command::Shape(Shaping::Boundary),
+        Command::Combine,
+        Command::BreakApart,
         Command::ObjectProperties,
         Command::ZoomIn,
         Command::ZoomOut,

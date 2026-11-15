@@ -7,6 +7,7 @@ mod drawing;
 mod editing;
 mod groups;
 mod nodes;
+mod shaping;
 mod style;
 mod units;
 mod arrange;

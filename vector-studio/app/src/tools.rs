@@ -235,6 +235,7 @@ fn press_pick(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers
     }
     match page.hit_test(p, view.doc_len(HIT)) {
         Some(hit) if mods.shift => {
+            state.marquee_selection = None;
             if let Some(i) = state.selection.iter().position(|id| *id == hit) {
                 state.selection.remove(i);
             } else {
@@ -244,6 +245,7 @@ fn press_pick(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers
         // Double-clicking an object switches to the Shape tool on it.
         Some(hit) if double => {
             state.selection = vec![hit];
+            state.marquee_selection = None;
             state.tools.pick_mode = PickMode::Scale;
             state.tools.nodes.clear();
             state.tool = Tool::Shape;
@@ -253,6 +255,7 @@ fn press_pick(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers
             let was_selected = state.selection.contains(&hit);
             if !was_selected {
                 state.selection = vec![hit];
+                state.marquee_selection = None;
                 state.tools.pick_mode = PickMode::Scale;
             }
             let originals = selection_originals(state);
@@ -614,6 +617,7 @@ fn release(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers) {
                         state.selection.push(id);
                     }
                 }
+                state.marquee_selection = Some(state.selection.clone());
             }
             state.tools.pick_mode = PickMode::Scale;
         }

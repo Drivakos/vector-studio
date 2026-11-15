@@ -61,6 +61,7 @@ Names must be unique on screen, or a test cannot tell widgets apart.
 | Page navigator, Pages docker, page size / orientation / width, Layout menu, PageUp / PageDown | `pages.rs` |
 | Save, Save As, Open, command-line file, damaged file, unsaved-changes prompt, Export SVG / PNG / PDF | `files.rs` |
 | Group, Ungroup, Ungroup All, Lock, Unlock, Unlock All | `groups.rs` |
+| Shaping (Weld, Trim, Intersect, Simplify, Front/Back Minus, Boundary: property bar and Object > Shaping), the target rule (marquee vs Shift-click), Combine (Cmd+L) with even-odd holes, Break Apart (Cmd+K) | `shaping.rs` |
 | The 13 units in the property bar and the Properties docker | `units.rs` |
 | Zoom (keys, toolbar, Zoom tool), Pan tool, rulers, dockers, palette, status bar | `view.rs` |
 
