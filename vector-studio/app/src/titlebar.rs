@@ -134,8 +134,8 @@ fn items(state: &AppState) -> Vec<Vec<Item>> {
             seg_width: 46.0,
             segments: vec![
                 checked(seg(Face::Icon(ICON_STRAIGHTEN), Action::Rulers, "Rulers", true), state.prefs.show_rulers),
-                seg(Face::Icon(ICON_GRID_ON), Action::Grid, "Grid (not available yet)", false),
-                seg(Face::Icon(ICON_GRID_GUIDES), Action::Guidelines, "Guidelines (not available yet)", false),
+                checked(seg(Face::Icon(ICON_GRID_ON), Action::Grid, "Grid", true), state.prefs.show_grid),
+                checked(seg(Face::Icon(ICON_GRID_GUIDES), Action::Guidelines, "Guidelines", true), state.prefs.show_guidelines),
             ],
         }],
         vec![Item {
@@ -363,9 +363,12 @@ fn act(state: &mut AppState, action: Action, resp: &egui::Response, out: &mut Ve
         }
         Action::SnapTo => {
             egui::Popup::menu(resp).show(|ui| {
-                ui.label(egui::RichText::new("Not available yet").weak().small());
-                for label in ["Pixels", "Document Grid", "Guidelines", "Objects", "Page"] {
-                    ui.add_enabled(false, egui::Button::new(label));
+                ui.add_enabled(false, egui::Button::new("Pixels"));
+                for target in crate::commands::SnapTarget::ALL {
+                    let on = *state.prefs.snap_flag(target);
+                    if ui.add(egui::Button::new(target.label()).selected(on)).clicked() {
+                        out.push(Command::ToggleSnap(target));
+                    }
                 }
             });
         }
@@ -378,7 +381,8 @@ fn act(state: &mut AppState, action: Action, resp: &egui::Response, out: &mut Ve
         Action::Ungroup => out.push(Command::Ungroup),
         Action::Lock => out.push(Command::Lock),
         Action::Unlock => out.push(Command::Unlock),
-        Action::Grid | Action::Guidelines => {}
+        Action::Grid => out.push(Command::ToggleGrid),
+        Action::Guidelines => out.push(Command::ToggleGuidelines),
     }
 }
 

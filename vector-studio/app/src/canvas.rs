@@ -170,6 +170,7 @@ pub fn canvas_pane_ui(
         }
     }
 
+    crate::guides::draw(&painter, state, canvas_rect);
     crate::tools::draw_overlay(&painter, state, canvas_rect);
 
     if let Some(start) = state.interaction.zoom_marquee_start
@@ -181,6 +182,11 @@ pub fn canvas_pane_ui(
 
     if state.prefs.show_rulers {
         draw_rulers(ui, state, full, canvas_rect);
+        if !matches!(state.tool, Tool::Zoom | Tool::Pan) {
+            let top = Rect::from_min_max(pos2(canvas_rect.min.x, full.min.y), pos2(canvas_rect.max.x, canvas_rect.min.y));
+            let left = Rect::from_min_max(pos2(full.min.x, canvas_rect.min.y), pos2(canvas_rect.min.x, canvas_rect.max.y));
+            crate::guides::ruler_drag(ui, state, top, left, canvas_rect);
+        }
     }
     page_tabs_ui(ui, state, tabs_rect, commands);
 }

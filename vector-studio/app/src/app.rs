@@ -9,7 +9,7 @@ use vs_render::Viewport;
 
 use crate::canvas::{CanvasInteraction, GpuCanvas, fit_page};
 use crate::chrome;
-use crate::commands::{Command, Layout};
+use crate::commands::{Command, Layout, SnapTarget};
 use crate::dockers::{self, DockerHost, DockerKind};
 use crate::files::{self, ExportDialog};
 use crate::toolbox::{self, GROUPS, Tool, ToolboxState};
@@ -31,6 +31,14 @@ pub struct Prefs {
     pub nudge: f64,
     /// Offset of Edit › Duplicate copies, in points.
     pub duplicate_offset: [f64; 2],
+    pub show_grid: bool,
+    pub show_guidelines: bool,
+    /// Document grid spacing, in points.
+    pub grid_spacing: f64,
+    pub snap_grid: bool,
+    pub snap_guidelines: bool,
+    pub snap_objects: bool,
+    pub snap_page: bool,
 }
 
 impl Default for Prefs {
@@ -42,6 +50,33 @@ impl Default for Prefs {
             show_palette: true,
             nudge: Unit::Millimeters.to_points(1.0),
             duplicate_offset: [18.0, 18.0],
+            show_grid: false,
+            show_guidelines: true,
+            grid_spacing: Unit::Millimeters.to_points(5.0),
+            snap_grid: false,
+            snap_guidelines: true,
+            snap_objects: false,
+            snap_page: false,
+        }
+    }
+}
+
+impl Prefs {
+    pub fn snap_flag(&self, target: SnapTarget) -> &bool {
+        match target {
+            SnapTarget::Grid => &self.snap_grid,
+            SnapTarget::Guidelines => &self.snap_guidelines,
+            SnapTarget::Objects => &self.snap_objects,
+            SnapTarget::Page => &self.snap_page,
+        }
+    }
+
+    pub fn snap_flag_mut(&mut self, target: SnapTarget) -> &mut bool {
+        match target {
+            SnapTarget::Grid => &mut self.snap_grid,
+            SnapTarget::Guidelines => &mut self.snap_guidelines,
+            SnapTarget::Objects => &mut self.snap_objects,
+            SnapTarget::Page => &mut self.snap_page,
         }
     }
 }
@@ -121,6 +156,17 @@ impl AppState {
             nodes_owner: None,
             window_title: String::new(),
             close_confirmed: false,
+        }
+    }
+
+    /// What dragging snaps to now. Grid and guidelines snap only while they are shown.
+    pub fn snap_options(&self) -> vs_core::SnapOptions {
+        let p = &self.prefs;
+        vs_core::SnapOptions {
+            grid: (p.snap_grid && p.show_grid).then_some(p.grid_spacing),
+            guides: p.snap_guidelines && p.show_guidelines,
+            objects: p.snap_objects,
+            page: p.snap_page,
         }
     }
 
@@ -239,6 +285,9 @@ impl VectorStudioApp {
             Command::PreviousPage => (doc.active_page_index() > 0, None),
             Command::NextPage => (doc.active_page_index() + 1 < doc.page_count(), None),
             Command::ToggleRulers => (true, Some(state.prefs.show_rulers)),
+            Command::ToggleGrid => (true, Some(state.prefs.show_grid)),
+            Command::ToggleGuidelines => (true, Some(state.prefs.show_guidelines)),
+            Command::ToggleSnap(target) => (true, Some(*state.prefs.snap_flag(target))),
             Command::ToggleStatusBar => (true, Some(state.prefs.show_status_bar)),
             Command::TogglePalette => (true, Some(state.prefs.show_palette)),
             Command::ToggleDocker(kind) => (true, Some(state.dockers.is_shown(kind))),
@@ -427,6 +476,18 @@ impl VectorStudioApp {
                 let _: () = s.prefs.show_rulers ^= true;
                 Ok(())
             },
+            Command::ToggleGrid => {
+                let _: () = s.prefs.show_grid ^= true;
+                Ok(())
+            }
+            Command::ToggleGuidelines => {
+                let _: () = s.prefs.show_guidelines ^= true;
+                Ok(())
+            }
+            Command::ToggleSnap(target) => {
+                let _: () = *s.prefs.snap_flag_mut(target) ^= true;
+                Ok(())
+            }
             Command::ToggleStatusBar => {
                 let _: () = s.prefs.show_status_bar ^= true;
                 Ok(())

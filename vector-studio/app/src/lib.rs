@@ -8,6 +8,7 @@ pub mod chrome;
 pub mod commands;
 pub mod dockers;
 pub mod files;
+pub mod guides;
 #[cfg(target_os = "macos")]
 pub mod native_menu;
 pub mod outline;

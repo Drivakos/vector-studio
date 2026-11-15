@@ -17,6 +17,8 @@ const HIT: f64 = 5.0;
 /// Pointer travel that turns a press into a drag, in screen points.
 const DRAG_START: f64 = 3.0;
 const HANDLE_SIZE: f32 = 7.0;
+/// Snap distance, in screen points.
+const SNAP: f64 = 6.0;
 /// Handles sit this far outside the selection bounds, in screen points.
 const HANDLE_GAP: f64 = 5.0;
 const ACCENT: Color32 = Color32::from_rgb(0x1E, 0x6F, 0xD9);
@@ -62,6 +64,8 @@ enum Drag {
     Corner { object: ObjectId, corner: Point },
     /// An ellipse, polygon or star node; `shape` and `transform` are as they were on press.
     Control { object: ObjectId, control: Control, shape: Shape, transform: Affine },
+    /// A guideline of the active page, by index.
+    Guide { index: usize },
 }
 
 /// A Bézier or Pen path being drawn, in document space.
@@ -101,13 +105,14 @@ impl ToolState {
 #[derive(Clone, Copy)]
 struct View {
     origin: Pos2,
+    canvas: Rect,
     to_screen: Affine,
     zoom: f64,
 }
 
 impl View {
     fn new(state: &AppState, canvas: Rect) -> Self {
-        Self { origin: canvas.min, to_screen: state.viewport.transform(), zoom: state.viewport.zoom() }
+        Self { origin: canvas.min, canvas, to_screen: state.viewport.transform(), zoom: state.viewport.zoom() }
     }
     fn doc(&self, p: Pos2) -> Point {
         self.to_screen.inverse() * Point::new((p.x - self.origin.x) as f64, (p.y - self.origin.y) as f64)
@@ -152,9 +157,15 @@ pub fn tool_input(ui: &egui::Ui, state: &mut AppState, response: &egui::Response
     let (pressed, released, pos, mods, time) = ui.input(|i| {
         (i.pointer.primary_pressed(), i.pointer.primary_released(), i.pointer.latest_pos(), i.modifiers, i.time)
     });
-    state.tools.pointer = pos.map(|p| view.doc(p));
-    let Some(pos) = pos else { return };
-    let p = view.doc(pos);
+    let Some(pos) = pos else {
+        state.tools.pointer = None;
+        return;
+    };
+    let mut p = view.doc(pos);
+    if snaps_pointer(state.tool) {
+        p = snapper(state, &view, &[]).point(p);
+    }
+    state.tools.pointer = Some(p);
 
     if pressed && response.hovered() {
         let double = state.tools.last_press.is_some_and(|(t, at)| time - t < 0.4 && at.distance(pos) < 4.0);
@@ -166,6 +177,16 @@ pub fn tool_input(ui: &egui::Ui, state: &mut AppState, response: &egui::Response
             release(state, &view, p, mods);
         }
     }
+}
+
+/// Snap targets for a gesture that moves or edits `exclude`.
+fn snapper(state: &AppState, view: &View, exclude: &[ObjectId]) -> vs_core::Snapper {
+    vs_core::Snapper::new(state.doc.active_page(), &state.snap_options(), exclude, view.doc_len(SNAP))
+}
+
+/// Tools whose every click and drag position snaps.
+fn snaps_pointer(tool: Tool) -> bool {
+    is_shape_tool(tool) || matches!(tool, Tool::Bezier | Tool::Pen | Tool::Text)
 }
 
 fn constrain(mods: egui::Modifiers) -> bool {
@@ -238,6 +259,10 @@ fn press_pick(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers
             });
             return;
         }
+    }
+    if let Some(index) = guide_at(state, view, p) {
+        state.tools.drag = Some(Drag::Guide { index });
+        return;
     }
     match page.hit_test(p, view.doc_len(HIT)) {
         Some(hit) if mods.shift => {
@@ -453,11 +478,23 @@ fn drag_to(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers) {
                     delta = vs_core::geometry::constrain_to_axis(delta);
                 }
                 apply(state, &originals, Affine::translate(delta));
+                let ids: Vec<ObjectId> = originals.iter().map(|o| o.0).collect();
+                if let Some(bounds) = state.doc.active_page().bounds_of(&ids) {
+                    let mut snap = snapper(state, view, &state.selection).delta(bounds);
+                    if constrain(mods) {
+                        // Stay on the axis the move is constrained to.
+                        snap = if delta.x == 0.0 { Vec2::new(0.0, snap.y) } else { Vec2::new(snap.x, 0.0) };
+                    }
+                    if snap != Vec2::ZERO {
+                        apply(state, &originals, Affine::translate(delta + snap));
+                    }
+                }
             }
             Drag::Move { press, start, originals, moved, was_selected }
         }
         Drag::Scale { handle, bounds, grab, originals } => {
-            let t = scale_transform(handle, bounds, p - grab, mods);
+            let at = snapper(state, view, &state.selection).point(p - grab);
+            let t = scale_transform(handle, bounds, at, mods);
             apply(state, &originals, t);
             Drag::Scale { handle, bounds, grab, originals }
         }
@@ -500,6 +537,12 @@ fn drag_to(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers) {
                 let mut delta = p - start;
                 if constrain(mods) {
                     delta = vs_core::geometry::constrain_to_axis(delta);
+                } else if let Some(first) = state.tools.nodes.first()
+                    && let Some(node) = nodes::nodes(&original).into_iter().find(|n| n.elem == *first)
+                {
+                    // The first selected node snaps; the others keep their distance to it.
+                    let at = obj.transform * node.point + delta;
+                    delta += snapper(state, view, &[object]).point(at) - at;
                 }
                 let local = (inv * (start + delta)) - (inv * start);
                 let mut path = original.clone();
@@ -511,6 +554,7 @@ fn drag_to(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers) {
             Drag::Nodes { object, start, original }
         }
         Drag::Handle { object, handle } => {
+            let p = snapper(state, view, &[object]).point(p);
             if let Some(obj) = state.doc.active_page_mut().object_mut(object) {
                 let local = obj.transform.inverse() * p;
                 if let Shape::Curve { path } = &mut obj.shape {
@@ -532,7 +576,7 @@ fn drag_to(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers) {
             Drag::Corner { object, corner }
         }
         Drag::Control { object, control, shape, transform } => {
-            let local = transform.inverse() * p;
+            let local = transform.inverse() * snapper(state, view, &[object]).point(p);
             if let Some((edited, turn)) = controls::drag(&shape, control, local, constrain(mods))
                 && let Some(obj) = state.doc.active_page_mut().object_mut(object)
             {
@@ -540,6 +584,18 @@ fn drag_to(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers) {
                 obj.transform = transform * turn;
             }
             Drag::Control { object, control, shape, transform }
+        }
+        Drag::Guide { index } => {
+            let mut options = state.snap_options();
+            options.guides = false;
+            let snap = vs_core::Snapper::new(state.doc.active_page(), &options, &[], view.doc_len(SNAP)).point(p);
+            if let Some(g) = state.doc.active_page_mut().guides.get_mut(index) {
+                g.position = match g.axis {
+                    vs_core::GuideAxis::Horizontal => snap.y,
+                    vs_core::GuideAxis::Vertical => snap.x,
+                };
+            }
+            Drag::Guide { index }
         }
         other => other,
     };
@@ -686,8 +742,40 @@ fn release(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers) {
             }
         }
         Drag::PenHandle { .. } => {}
+        Drag::Guide { index } => {
+            // Dropped back on a ruler or outside the drawing window: the guideline goes.
+            if !view.canvas.contains(view.screen(p)) {
+                let guides = &mut state.doc.active_page_mut().guides;
+                if index < guides.len() {
+                    guides.remove(index);
+                }
+            }
+        }
         _ => {}
     }
+}
+
+/// The guideline within reach of `p`, topmost (last added) first.
+fn guide_at(state: &AppState, view: &View, p: Point) -> Option<usize> {
+    if !state.prefs.show_guidelines {
+        return None;
+    }
+    let reach = view.doc_len(HIT);
+    state.doc.active_page().guides.iter().rposition(|g| match g.axis {
+        vs_core::GuideAxis::Horizontal => (g.position - p.y).abs() <= reach,
+        vs_core::GuideAxis::Vertical => (g.position - p.x).abs() <= reach,
+    })
+}
+
+/// Start dragging a new guideline out of a ruler.
+pub fn start_guide(state: &mut AppState, axis: vs_core::GuideAxis, at: Point) {
+    let position = match axis {
+        vs_core::GuideAxis::Horizontal => at.y,
+        vs_core::GuideAxis::Vertical => at.x,
+    };
+    let guides = &mut state.doc.active_page_mut().guides;
+    guides.push(vs_core::Guide { axis, position });
+    state.tools.drag = Some(Drag::Guide { index: guides.len() - 1 });
 }
 
 // ---------------------------------------------------------------------------------------

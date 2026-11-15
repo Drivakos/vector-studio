@@ -245,6 +245,18 @@ fn properties_ui(ui: &mut egui::Ui, state: &mut AppState) {
             ui.label("Pages");
             ui.label(state.doc.page_count().to_string());
             ui.end_row();
+            ui.label("Grid spacing");
+            let unit = state.doc.display_unit;
+            let mut g = unit.from_points(state.prefs.grid_spacing);
+            let field = egui::DragValue::new(&mut g)
+                .speed(unit.step() / 2.0)
+                .range(unit.from_points(0.5)..=f64::MAX)
+                .max_decimals(unit.decimals())
+                .suffix(format!(" {}", unit.suffix()));
+            if crate::a11y::add(ui, field, "Grid spacing (document)").changed() {
+                state.prefs.grid_spacing = unit.to_points(g);
+            }
+            ui.end_row();
         });
     });
 }

@@ -349,6 +349,8 @@ pub struct Page {
     pub size: Size,
     /// Bottom of the stack first.
     pub objects: Vec<Object>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub guides: Vec<crate::snap::Guide>,
 }
 
 impl Page {
@@ -470,6 +472,7 @@ impl Document {
             name: String::new(),
             size,
             objects: Vec::new(),
+            guides: Vec::new(),
         }
     }
 

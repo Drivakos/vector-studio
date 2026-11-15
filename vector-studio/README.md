@@ -41,7 +41,7 @@ Dark theme, laid out as follows:
 | Canvas | Grey desk (#5a5a5a), white page without border or shadow; page navigator with + on both sides and page tabs |
 | Off by default | Rulers and status bar; View toolbar and View menu turn them on |
 
-Not yet available (shown disabled): Grid, Guidelines, Snap To options, view modes other than Enhanced. Icons are Material Symbols (outline).
+Not yet available (shown disabled): Snap To Pixels, view modes other than Enhanced. Icons are Material Symbols (outline).
 
 Phase 1 drawing:
 
@@ -53,6 +53,7 @@ Phase 1 drawing:
 | Freehand | Drag; the stroke is fitted to Béziers; ending on the start closes it |
 | Bézier, Pen | Click for corners, drag for smooth nodes, click the first node to close, Enter / Esc / click the last node to finish. Pen previews the next segment |
 | Text | Text tool (`F8`): click the page and type artistic text; Enter starts a new line, arrows/Home/End move the caret, Backspace/Delete remove, Esc or another tool finishes. Click text to edit it, or double-click it with the Pick tool. Property bar: font family and style (the bundled Ubuntu Light plus the system's fonts), size in points, left/centre/right alignment; with nothing selected they set up new text. New text is black with no outline. Text moves, scales, shapes and converts to curves like any object, and exports as outlines. Glyphs are placed by their advance widths only: no kerning, ligatures or complex scripts |
+| Grid, guidelines, snapping | View toolbar or View menu: Grid (every 5 mm by default; spacing in the Properties docker with nothing selected, thinned out when zoomed far out) and Guidelines. Drag from a ruler to add a guideline; drag one with the Pick tool to move it, back onto a ruler to remove it. Guidelines belong to the page, are saved and undoable. Snap To (View menu or toolbar magnet): Document Grid, Guidelines (on by default), Objects (edges and centres), Page (edges and centre). New shapes, Bézier/Pen nodes, text, moved objects (by their edges and centre), scale handles and Shape-tool nodes snap within 6 screen points, per axis. The grid and guidelines snap only while shown. Which targets are on by default and the 5 mm grid are this app's choice |
 | Fill and outline | Palette: click = fill, right-click = outline, crossed swatch removes. Property bar (with a selection): outline width with presets (None, Hairline, 0.25–36 pt) and line style. Properties docker: fill colour; outline width, colour, line style (solid, dotted, dashed, long dash, dash dot, dash dot dot), corners (miter, round, bevel), line caps (butt, round, square), behind fill, scale with object; corner radius, sides, points, sharpness, name. Edits to several objects change only the setting you touched. Fills use the even-odd rule on the canvas and in every export |
 | Group and lock | Group (`Cmd+G`), Ungroup (`Cmd+U`), Ungroup All, Lock, Unlock, Unlock All: title bar buttons and the Object menu. A group moves, scales and takes colours as one; SVG export writes it as `<g>`. Locked objects can be selected (padlocks instead of handles) but not moved, edited, restyled, grouped or deleted |
 | Units | 13 units: inches, millimeters, picas, points, pixels (96 dpi), ciceros, didots, feet, yards, miles, centimeters, meters, kilometers. Steppers move about 1 mm in any unit |
@@ -66,7 +67,7 @@ Phase 1 drawing:
 
 ## Tests
 
-`cargo test --workspace` runs about 190 tests. The 74 end-to-end tests drive the whole app through its window on a real GPU. Every feature and change ships with one. See [TESTING.md](TESTING.md).
+`cargo test --workspace` runs about 195 tests. The 77 end-to-end tests drive the whole app through its window on a real GPU. Every feature and change ships with one. See [TESTING.md](TESTING.md).
 
 ## Shortcuts
 

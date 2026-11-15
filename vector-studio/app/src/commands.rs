@@ -11,6 +11,29 @@ use crate::dockers::DockerKind;
 
 pub const DEFAULT_LAYOUT_JSON: &str = include_str!("../layout/workspace.json");
 
+/// What View › Snap To turns on and off.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum SnapTarget {
+    Grid,
+    Guidelines,
+    Objects,
+    Page,
+}
+
+impl SnapTarget {
+    pub const ALL: [SnapTarget; 4] = [SnapTarget::Grid, SnapTarget::Guidelines, SnapTarget::Objects, SnapTarget::Page];
+
+    /// The View › Snap To label.
+    pub fn label(self) -> &'static str {
+        match self {
+            SnapTarget::Grid => "Document Grid",
+            SnapTarget::Guidelines => "Guidelines",
+            SnapTarget::Objects => "Objects",
+            SnapTarget::Page => "Page",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Command {
     NewDocument,
@@ -45,6 +68,9 @@ pub enum Command {
     ZoomToPage,
     ZoomActualSize,
     ToggleRulers,
+    ToggleGrid,
+    ToggleGuidelines,
+    ToggleSnap(SnapTarget),
     ToggleStatusBar,
     TogglePalette,
     InsertPage,
@@ -110,6 +136,12 @@ impl Command {
             "view.zoom_page" => ZoomToPage,
             "view.zoom_actual" => ZoomActualSize,
             "view.rulers" => ToggleRulers,
+            "view.grid" => ToggleGrid,
+            "view.guidelines" => ToggleGuidelines,
+            "view.snap_grid" => ToggleSnap(SnapTarget::Grid),
+            "view.snap_guidelines" => ToggleSnap(SnapTarget::Guidelines),
+            "view.snap_objects" => ToggleSnap(SnapTarget::Objects),
+            "view.snap_page" => ToggleSnap(SnapTarget::Page),
             "view.status_bar" => ToggleStatusBar,
             "view.color_palette" => TogglePalette,
             "layout.insert_page" => InsertPage,
@@ -180,6 +212,12 @@ impl Command {
         Command::ZoomToPage,
         Command::ZoomActualSize,
         Command::ToggleRulers,
+        Command::ToggleGrid,
+        Command::ToggleGuidelines,
+        Command::ToggleSnap(SnapTarget::Grid),
+        Command::ToggleSnap(SnapTarget::Guidelines),
+        Command::ToggleSnap(SnapTarget::Objects),
+        Command::ToggleSnap(SnapTarget::Page),
         Command::ToggleStatusBar,
         Command::TogglePalette,
         Command::InsertPage,
