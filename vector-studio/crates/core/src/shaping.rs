@@ -204,13 +204,13 @@ impl Document {
         out
     }
 
-    fn unlocked<'a>(&'a self, ids: &'a [ObjectId]) -> impl Iterator<Item = &'a Object> + 'a {
+    pub(crate) fn unlocked<'a>(&'a self, ids: &'a [ObjectId]) -> impl Iterator<Item = &'a Object> + 'a {
         self.active_page().objects.iter().filter(|o| ids.contains(&o.id) && !o.locked)
     }
 }
 
 /// Turn `obj` into a page-space curve, keeping how its fill and outline look.
-fn make_curve(obj: &mut Object, path: BezPath) {
+pub(crate) fn make_curve(obj: &mut Object, path: BezPath) {
     obj.style = page_style(obj);
     obj.shape = Shape::Curve { path };
     obj.transform = Affine::IDENTITY;
@@ -219,7 +219,7 @@ fn make_curve(obj: &mut Object, path: BezPath) {
 /// The object's style (its first member's, for a group) with any outline that scales with
 /// the object fixed at the width it shows now, and any fountain fill placed on the page,
 /// since the result has no transform.
-fn page_style(obj: &Object) -> Style {
+pub(crate) fn page_style(obj: &Object) -> Style {
     let leaves = obj.leaves();
     let (mut style, transform) = match leaves.first() {
         Some(leaf) => (leaf.style.clone(), leaf.transform),
@@ -258,11 +258,11 @@ fn boolean(a: &BezPath, b: &BezPath, op: BinaryOp) -> Option<BezPath> {
 }
 
 /// Lengths (pt) and areas (pt²) below this are rounding left over from the booleans.
-const TINY: f64 = 1e-6;
+pub(crate) const TINY: f64 = 1e-6;
 
 /// `path` without zero-length segments and with straight runs joined into one line, so
 /// the result has only the nodes it needs.
-fn tidy(path: &BezPath) -> BezPath {
+pub(crate) fn tidy(path: &BezPath) -> BezPath {
     let mut out: Vec<PathEl> = Vec::new();
     let mut start = Point::ZERO;
     let mut last = Point::ZERO;
@@ -309,7 +309,7 @@ fn closed(path: &BezPath) -> BezPath {
 }
 
 /// One path per subpath of `path`.
-fn subpaths(path: &BezPath) -> Vec<BezPath> {
+pub(crate) fn subpaths(path: &BezPath) -> Vec<BezPath> {
     let mut out: Vec<BezPath> = Vec::new();
     for el in path.iter() {
         match (el, out.last_mut()) {

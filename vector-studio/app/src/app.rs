@@ -316,6 +316,8 @@ impl VectorStudioApp {
             Command::Distribute(_) => (state.selected_objects().filter(|o| !o.locked).count() >= 3, None),
             Command::Combine => (doc.can_combine(&state.selection), None),
             Command::BreakApart => (doc.can_break_apart(&state.selection), None),
+            Command::JoinCurves => (doc.can_join_curves(&state.selection, vs_core::curves::JOIN_TOLERANCE), None),
+            Command::ConvertOutline => (doc.can_convert_outline(&state.selection), None),
             _ => (true, None),
         }
     }
@@ -447,6 +449,22 @@ impl VectorStudioApp {
             Command::BreakApart => {
                 s.selection = s.doc.break_apart(&s.selection);
                 s.tools.nodes.clear();
+                Ok(())
+            }
+            Command::JoinCurves => {
+                let tolerance = vs_core::curves::JOIN_TOLERANCE;
+                if let Some(id) = s.shaping_target().and_then(|t| s.doc.join_curves(&s.selection, t, tolerance)) {
+                    s.selection = vec![id];
+                    s.tools.nodes.clear();
+                }
+                Ok(())
+            }
+            Command::ConvertOutline => {
+                let made = s.doc.convert_outline(&s.selection);
+                if !made.is_empty() {
+                    s.selection = made;
+                    s.tools.nodes.clear();
+                }
                 Ok(())
             }
             Command::Lock | Command::Unlock => {

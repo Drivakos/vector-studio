@@ -8,6 +8,7 @@ mod editing;
 mod fills;
 mod groups;
 mod nodes;
+mod curves;
 mod shaping;
 mod snapping;
 mod style;

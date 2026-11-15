@@ -1,6 +1,7 @@
 //! Document model for Vector Studio. No UI or GPU dependencies.
 
 pub mod controls;
+pub mod curves;
 pub mod document;
 pub mod fill;
 pub mod geometry;
