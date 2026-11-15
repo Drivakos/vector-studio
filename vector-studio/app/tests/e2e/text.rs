@@ -42,7 +42,7 @@ fn text_tool_types_lines_edits_at_the_caret_and_esc_finishes() {
     assert_eq!(app.objects().len(), 1);
     assert_eq!(text(&app, 0).content, "Hello");
     assert_eq!(app.selection(), vec![app.ids()[0]]);
-    assert_eq!(app.objects()[0].style.fill, Some(vs_core::Rgba::BLACK), "new text is filled black");
+    assert_eq!(app.objects()[0].style.fill, Some(vs_core::Rgba::BLACK.into()), "new text is filled black");
     let b = app.bounds(0);
     assert!(close(b.x0, 100.0) && b.y0 < 200.0 && b.y1 > 200.0, "first baseline starts at the click: {b:?}");
 

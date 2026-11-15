@@ -2,6 +2,7 @@
 
 pub mod controls;
 pub mod document;
+pub mod fill;
 pub mod geometry;
 pub mod history;
 pub mod nodes;
@@ -15,6 +16,7 @@ pub use document::{
     ArcKind, Document, DocumentError, EllipseArc, LineCap, LineJoin, LineStyle, Object, ObjectId, Orientation, Outline,
     PAGE_PRESETS, Page, PageId, PagePreset, Rgba, Shape, Style,
 };
+pub use fill::{Fill, Gradient, GradientKind, GradientStop};
 pub use history::History;
 pub use kurbo;
 pub use ops::{Align, Order};

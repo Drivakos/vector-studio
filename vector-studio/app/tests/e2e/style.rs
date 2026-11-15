@@ -16,7 +16,7 @@ fn palette_click_fills_right_click_outlines_and_no_color_removes() {
     let mut app = E2e::new();
     app.draw_rect(100.0, 100.0, 200.0, 200.0);
     app.click("Swatch Yellow");
-    assert_eq!(app.objects()[0].style.fill, Some(YELLOW), "click sets the fill");
+    assert_eq!(app.objects()[0].style.fill, Some(YELLOW.into()), "click sets the fill");
     app.right_click("Swatch Blue");
     assert_eq!(outline(&app, 0).color, BLUE, "right-click sets the outline colour");
 
@@ -68,7 +68,7 @@ fn properties_docker_sets_every_outline_option() {
     assert_eq!(o.cap, LineCap::Square);
     assert!(o.behind_fill && o.scale_with_object);
 
-    app.click("Uniform fill");
+    app.click("Uniform fill (docker)");
     assert!(app.objects()[0].style.fill.is_some(), "Uniform fill turns the fill on");
 }
 

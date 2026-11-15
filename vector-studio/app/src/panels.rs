@@ -2,18 +2,10 @@
 
 use egui_material_icons::icons::*;
 use vs_core::kurbo::{Affine, Vec2};
-use vs_core::{Align, Order, Rgba, Shape, Style};
+use vs_core::{Align, Order, Shape, Style};
 
 use crate::app::AppState;
 use crate::commands::Command;
-
-fn to_arr(c: Rgba) -> [u8; 4] {
-    [c.r, c.g, c.b, c.a]
-}
-
-fn from_arr([r, g, b, a]: [u8; 4]) -> Rgba {
-    Rgba { r, g, b, a }
-}
 
 fn grid(ui: &mut egui::Ui, id: &str, add: impl FnOnce(&mut egui::Ui)) {
     egui::Grid::new(id).num_columns(2).spacing([8.0, 6.0]).show(ui, add);
@@ -47,23 +39,13 @@ pub fn object_properties_ui(ui: &mut egui::Ui, state: &mut AppState) {
     let closed = !matches!(first.shape, Shape::Curve { .. }) || first.shape.is_closed();
     ui.add_enabled_ui(!locked, |ui| {
         section(ui, "Fill", |ui| {
-            ui.horizontal(|ui| {
-                let mut on = style.fill.is_some();
-                if ui.checkbox(&mut on, "Uniform fill").changed() {
-                    style.fill = on.then_some(Rgba::BLACK);
-                }
-                if let Some(fill) = &mut style.fill {
-                    let mut c = to_arr(*fill);
-                    if ui.color_edit_button_srgba_unmultiplied(&mut c).changed() {
-                        *fill = from_arr(c);
-                    }
-                }
-            });
+            ui.horizontal_wrapped(|ui| crate::fill_ui::fill_controls(ui, state, "(docker)"));
             if !closed {
                 ui.label(egui::RichText::new("Open curves are not filled.").weak().small());
             }
         });
         section(ui, "Outline", |ui| crate::outline::outline_editor(ui, &mut style));
+        section(ui, "Transparency", |ui| crate::fill_ui::transparency_controls(ui, state, "Transparency (docker)"));
     });
     if let Some(change) = crate::outline::style_change(&before, &style) {
         state.doc.restyle_objects(&ids, change);

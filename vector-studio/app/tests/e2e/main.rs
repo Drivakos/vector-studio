@@ -5,6 +5,7 @@ mod support;
 
 mod drawing;
 mod editing;
+mod fills;
 mod groups;
 mod nodes;
 mod shaping;

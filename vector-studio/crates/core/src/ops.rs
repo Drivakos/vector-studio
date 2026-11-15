@@ -93,6 +93,13 @@ impl Document {
         }
     }
 
+    /// Like [`Document::restyle_objects`], also passing each object's local frame.
+    pub fn restyle_objects_framed(&mut self, ids: &[ObjectId], mut f: impl FnMut(&mut Style, kurbo::Rect)) {
+        for obj in self.active_page_mut().objects.iter_mut().filter(|o| ids.contains(&o.id) && !o.locked) {
+            obj.restyle_framed(&mut f);
+        }
+    }
+
     pub fn set_locked(&mut self, ids: &[ObjectId], locked: bool) {
         for obj in self.active_page_mut().objects.iter_mut().filter(|o| ids.contains(&o.id)) {
             obj.locked = locked;
@@ -204,7 +211,7 @@ mod tests {
 
     fn doc_with(rects: &[Rect]) -> (Document, Vec<ObjectId>) {
         let mut doc = Document::default();
-        let style = Style { fill: Some(Rgba::BLACK), outline: None };
+        let style = Style::filled(Rgba::BLACK);
         let ids = rects
             .iter()
             .map(|r| doc.add_object(Shape::Rectangle { rect: *r, corner_radius: 0.0 }, style.clone()))
@@ -327,9 +334,9 @@ mod tests {
         let r = Rect::new(0.0, 0.0, 1.0, 1.0);
         let (mut doc, ids) = doc_with(&[r, r]);
         let group = doc.group_objects(&ids).unwrap();
-        doc.restyle_objects(&[group], |s| s.fill = Some(crate::Rgba::WHITE));
+        doc.restyle_objects(&[group], |s| s.fill = Some(crate::Fill::Solid(crate::Rgba::WHITE)));
         let obj = doc.active_page().object(group).unwrap().clone();
-        assert!(obj.leaves().iter().all(|l| l.style.fill == Some(crate::Rgba::WHITE)));
+        assert!(obj.leaves().iter().all(|l| l.style.fill == Some(crate::Fill::Solid(crate::Rgba::WHITE))));
         let copy = doc.duplicate_objects(&[group], Vec2::ZERO)[0];
         let copied = doc.active_page().object(copy).unwrap().all_ids();
         assert!(copied.iter().all(|id| !obj.all_ids().contains(id)));

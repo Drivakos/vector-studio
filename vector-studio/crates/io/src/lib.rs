@@ -6,7 +6,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use vs_core::kurbo::{BezPath, PathEl};
 use vs_core::geometry::Leaf;
-use vs_core::{Document, LineCap, LineJoin, Object, Outline, Page, Rgba, Shape};
+use vs_core::{Document, Fill, Gradient, GradientKind, LineCap, LineJoin, Object, Outline, Page, Rgba, Shape};
 
 /// Extension of the native format (JSON).
 pub const FILE_EXTENSION: &str = "vstudio";
@@ -180,26 +180,69 @@ fn write_svg_object(out: &mut String, obj: &Object, parent: vs_core::kurbo::Affi
     let transform = parent * obj.transform;
     path.apply_affine(transform);
     round_path(&mut path);
+    let opacity = obj.style.opacity();
+    let fill = obj.style.fill.as_ref().filter(|_| obj.shape.is_closed());
+    if let Some(Fill::Gradient(g)) = fill {
+        write_svg_gradient(out, &indent, obj.id.0, g, transform, opacity);
+    }
     let _ = write!(out, r#"{indent}<path d="{}""#, path.to_svg());
-    match obj.style.fill.filter(|_| obj.shape.is_closed()) {
-        Some(c) => {
-            let _ = write!(out, r#" fill="{}" fill-rule="evenodd""#, hex(c));
-            if c.a < 255 {
-                let _ = write!(out, r#" fill-opacity="{}""#, num(f64::from(c.a) / 255.0));
+    match fill {
+        Some(Fill::Solid(c)) => {
+            let _ = write!(out, r#" fill="{}" fill-rule="evenodd""#, hex(*c));
+            let a = f64::from(c.a) / 255.0 * opacity;
+            if a < 1.0 {
+                let _ = write!(out, r#" fill-opacity="{}""#, num(a));
             }
+        }
+        Some(Fill::Gradient(_)) => {
+            let _ = write!(out, r#" fill="url(#fill{})" fill-rule="evenodd""#, obj.id.0);
         }
         None => out.push_str(r#" fill="none""#),
     }
     if let Some(o) = &obj.style.outline {
-        write_svg_stroke(out, o, o.page_width(transform));
+        write_svg_stroke(out, o, o.page_width(transform), opacity);
     }
     out.push_str("/>\n");
 }
 
-fn write_svg_stroke(out: &mut String, o: &Outline, width: f64) {
+/// A `<linearGradient>` or `<radialGradient>` with id `fill{id}`. Its points are in the
+/// object's local space, placed on the page by `gradientTransform`.
+fn write_svg_gradient(out: &mut String, indent: &str, id: u64, g: &Gradient, transform: vs_core::kurbo::Affine, opacity: f64) {
+    let [a, b, c, d, e, f] = transform.as_coeffs();
+    let matrix = [a, b, c, d, e, f].map(num).join(" ");
+    match g.kind {
+        GradientKind::Linear => {
+            let _ = writeln!(
+                out,
+                r#"{indent}<linearGradient id="fill{id}" gradientUnits="userSpaceOnUse" x1="{}" y1="{}" x2="{}" y2="{}" gradientTransform="matrix({matrix})">"#,
+                num(g.start.x), num(g.start.y), num(g.end.x), num(g.end.y)
+            );
+        }
+        GradientKind::Radial => {
+            let _ = writeln!(
+                out,
+                r#"{indent}<radialGradient id="fill{id}" gradientUnits="userSpaceOnUse" cx="{}" cy="{}" r="{}" gradientTransform="matrix({matrix})">"#,
+                num(g.start.x), num(g.start.y), num((g.end - g.start).hypot())
+            );
+        }
+    }
+    for stop in &g.stops {
+        let _ = write!(out, r#"{indent}  <stop offset="{}" stop-color="{}""#, num(stop.offset), hex(stop.color));
+        let a = f64::from(stop.color.a) / 255.0 * opacity;
+        if a < 1.0 {
+            let _ = write!(out, r#" stop-opacity="{}""#, num(a));
+        }
+        out.push_str("/>\n");
+    }
+    let tag = if g.kind == GradientKind::Linear { "linearGradient" } else { "radialGradient" };
+    let _ = writeln!(out, "{indent}</{tag}>");
+}
+
+fn write_svg_stroke(out: &mut String, o: &Outline, width: f64, opacity: f64) {
     let _ = write!(out, r#" stroke="{}" stroke-width="{}" stroke-miterlimit="{}""#, hex(o.color), num(width), num(Outline::MITER_LIMIT));
-    if o.color.a < 255 {
-        let _ = write!(out, r#" stroke-opacity="{}""#, num(f64::from(o.color.a) / 255.0));
+    let a = f64::from(o.color.a) / 255.0 * opacity;
+    if a < 1.0 {
+        let _ = write!(out, r#" stroke-opacity="{}""#, num(a));
     }
     match o.join {
         LineJoin::Miter => {}
@@ -289,6 +332,43 @@ pub fn page_to_png(page: &Page, options: &ExportOptions) -> Result<Vec<u8>, IoEr
     pixmap.encode_png().map_err(|e| IoError::Png(e.to_string()))
 }
 
+/// A PDF gradient paint for `g`, whose points are in the space `transform` maps to the page.
+fn pdf_gradient(g: &Gradient, transform: vs_core::kurbo::Affine, alpha: f64) -> krilla::paint::Paint {
+    use krilla::color::rgb;
+    use krilla::num::NormalizedF32;
+    use krilla::paint::{LinearGradient, RadialGradient, SpreadMethod, Stop};
+    let [a, b, c, d, e, f] = transform.as_coeffs().map(|v| v as f32);
+    let transform = krilla::geom::Transform::from_row(a, b, c, d, e, f);
+    let stops: Vec<Stop> = g
+        .stops
+        .iter()
+        .map(|s| Stop {
+            offset: NormalizedF32::new(s.offset as f32).unwrap_or(NormalizedF32::ZERO),
+            color: rgb::Color::new(s.color.r, s.color.g, s.color.b).into(),
+            opacity: NormalizedF32::new(f32::from(s.color.faded(alpha).a) / 255.0).unwrap_or(NormalizedF32::ONE),
+        })
+        .collect();
+    let (x1, y1, x2, y2) = (g.start.x as f32, g.start.y as f32, g.end.x as f32, g.end.y as f32);
+    match g.kind {
+        GradientKind::Linear => {
+            LinearGradient { x1, y1, x2, y2, transform, spread_method: SpreadMethod::Pad, stops, anti_alias: false }.into()
+        }
+        GradientKind::Radial => RadialGradient {
+            fx: x1,
+            fy: y1,
+            fr: 0.0,
+            cx: x1,
+            cy: y1,
+            cr: (g.end - g.start).hypot() as f32,
+            transform,
+            spread_method: SpreadMethod::Pad,
+            stops,
+            anti_alias: false,
+        }
+        .into(),
+    }
+}
+
 fn pdf_path(leaf: &Leaf<'_>) -> Option<krilla::geom::Path> {
     let mut pb = krilla::geom::PathBuilder::new();
     let f = |p: vs_core::kurbo::Point| (p.x as f32, p.y as f32);
@@ -332,10 +412,14 @@ pub fn document_to_pdf(doc: &Document) -> Result<Vec<u8>, IoError> {
         let mut surface = pdf_page.surface();
         for leaf in page.objects.iter().flat_map(Object::leaves) {
             let Some(path) = pdf_path(&leaf) else { continue };
-            let fill = leaf.fill().map(|c| Fill {
-                paint: rgb::Color::new(c.r, c.g, c.b).into(),
-                opacity: opacity(c.a),
-                rule: FillRule::EvenOdd,
+            let alpha = leaf.style.opacity();
+            let fill = leaf.fill().map(|f| match f {
+                vs_core::Fill::Solid(c) => Fill {
+                    paint: rgb::Color::new(c.r, c.g, c.b).into(),
+                    opacity: opacity(c.faded(alpha).a),
+                    rule: FillRule::EvenOdd,
+                },
+                vs_core::Fill::Gradient(g) => Fill { paint: pdf_gradient(g, leaf.transform, alpha), opacity: NormalizedF32::ONE, rule: FillRule::EvenOdd },
             });
             let outline = leaf.style.outline.as_ref();
             let stroke = outline.map(|o| {
@@ -355,7 +439,7 @@ pub fn document_to_pdf(doc: &Document) -> Result<Vec<u8>, IoError> {
                         LineJoin::Round => krilla::paint::LineJoin::Round,
                         LineJoin::Bevel => krilla::paint::LineJoin::Bevel,
                     },
-                    opacity: opacity(o.color.a),
+                    opacity: opacity(o.color.faded(alpha).a),
                     dash: (!dashes.is_empty()).then(|| StrokeDash { array: dashes.iter().map(|d| *d as f32).collect(), offset: 0.0 }),
                 }
             });
@@ -391,7 +475,7 @@ mod tests {
         let mut doc = Document::new("Logo");
         let id = doc.add_object(
             Shape::Star { rect: Rect::new(100.0, 100.0, 300.0, 300.0), points: 5, inner_ratio: 0.5 },
-            Style { fill: Some(Rgba::rgb(255, 0, 0)), outline: Some(Outline::new(Rgba::BLACK, 2.0)) },
+            Style { fill: Some(Rgba::rgb(255, 0, 0).into()), outline: Some(Outline::new(Rgba::BLACK, 2.0)), transparency: 0.0 },
         );
         doc.transform_objects(&[id], Affine::rotate_about(0.2, vs_core::kurbo::Point::new(200.0, 200.0)));
         doc.add_object(Shape::Ellipse { rect: Rect::new(10.0, 10.0, 60.0, 40.0), arc: None }, Style::new_object());
@@ -459,6 +543,38 @@ mod tests {
         let centre = pixmap.pixel(200, 200).unwrap();
         assert_eq!((centre.red(), centre.green(), centre.blue(), centre.alpha()), (255, 0, 0, 255));
         assert_eq!(pixmap.pixel(500, 700).unwrap().alpha(), 0, "background stays transparent");
+    }
+
+    #[test]
+    fn fountain_fills_and_transparency_export() {
+        use vs_core::{Fill, Gradient, GradientKind};
+        let mut doc = Document::new("Fills");
+        let rect = Rect::new(0.0, 0.0, 100.0, 50.0);
+        let mut style = Style::filled(Rgba::rgb(255, 0, 0));
+        style.fill = Some(Fill::Gradient(Gradient::across(GradientKind::Linear, rect, Rgba::rgb(255, 0, 0), Rgba::WHITE)));
+        let id = doc.add_object(Shape::Rectangle { rect, corner_radius: 0.0 }, style);
+        doc.transform_objects(&[id], Affine::translate((100.0, 100.0)));
+        let mut faded = Style::filled(Rgba::rgb(0, 0, 255));
+        faded.transparency = 0.5;
+        doc.add_object(Shape::Rectangle { rect: Rect::new(300.0, 100.0, 400.0, 150.0), corner_radius: 0.0 }, faded);
+
+        let svg = page_to_svg(doc.active_page());
+        assert!(svg.contains(r#"<linearGradient id="fill"#), "{svg}");
+        assert!(svg.contains(r#"gradientTransform="matrix(1 0 0 1 100 100)""#), "{svg}");
+        assert!(svg.contains(r#"fill="url(#fill"#));
+        assert!(svg.contains(r#"fill-opacity="0.5""#), "{svg}");
+
+        let png = page_to_png(doc.active_page(), &ExportOptions { dpi: 72.0, background: Some(Rgba::WHITE) }).unwrap();
+        let pixmap = resvg::tiny_skia::Pixmap::decode_png(&png).unwrap();
+        let px = |x, y| {
+            let p = pixmap.pixel(x, y).unwrap();
+            (p.red(), p.green(), p.blue())
+        };
+        assert!(px(102, 125).1 < 20, "red at the start: {:?}", px(102, 125));
+        assert!(px(198, 125).1 > 235, "white at the end: {:?}", px(198, 125));
+        let half = px(350, 125);
+        assert!(half.0.abs_diff(127) < 4 && half.2 == 255, "half see-through blue: {half:?}");
+        assert!(document_to_pdf(&doc).unwrap().starts_with(b"%PDF-"));
     }
 
     #[test]

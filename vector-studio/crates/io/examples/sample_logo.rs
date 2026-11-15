@@ -10,7 +10,7 @@ use vs_io::ExportOptions;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let dir = PathBuf::from(std::env::args().nth(1).unwrap_or_else(|| ".".into()));
     let mut doc = Document::new("Sample Logo");
-    let fill = |c: Rgba| Style { fill: Some(c), outline: None };
+    let fill = |c: Rgba| Style::filled(c);
 
     doc.add_object(
         Shape::Rectangle { rect: Rect::new(147.6, 270.9, 447.6, 570.9), corner_radius: 48.0 },
@@ -18,7 +18,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     let ring = doc.add_object(
         Shape::Ellipse { rect: Rect::new(197.6, 320.9, 397.6, 520.9), arc: None },
-        Style { fill: None, outline: Some(Outline::new(Rgba::rgb(255, 237, 0), 12.0)) },
+        Style::outlined(Outline::new(Rgba::rgb(255, 237, 0), 12.0)),
     );
     let star = doc.add_object(
         Shape::Star { rect: Rect::new(232.6, 355.9, 362.6, 485.9), points: 5, inner_ratio: 0.45 },
@@ -29,8 +29,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     doc.add_object(
         Shape::Polygon { rect: Rect::new(160.0, 600.0, 220.0, 660.0), sides: 6 },
         Style {
-            fill: Some(Rgba::rgb(0, 150, 64)),
+            fill: Some(Rgba::rgb(0, 150, 64).into()),
             outline: Some(Outline { join: LineJoin::Round, behind_fill: true, ..Outline::new(Rgba::BLACK, 6.0) }),
+            transparency: 0.0,
         },
     );
     let mut swoosh = BezPath::new();
@@ -41,6 +42,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Style {
             fill: None,
             outline: Some(Outline { style: LineStyle::Dash, cap: LineCap::Round, ..Outline::new(Rgba::rgb(243, 146, 0), 6.0) }),
+            transparency: 0.0,
         },
     );
 

@@ -3,6 +3,7 @@
 use kurbo::{Affine, BezPath, Rect, Size};
 use serde::{Deserialize, Serialize};
 
+use crate::fill::Fill;
 use crate::text::Text;
 use crate::units::Unit;
 
@@ -27,6 +28,11 @@ impl Rgba {
 
     pub const fn rgb(r: u8, g: u8, b: u8) -> Self {
         Self { r, g, b, a: 255 }
+    }
+
+    /// This colour with its alpha multiplied by `opacity` (0..=1).
+    pub fn faded(self, opacity: f64) -> Self {
+        Self { a: (f64::from(self.a) * opacity.clamp(0.0, 1.0)).round() as u8, ..self }
     }
 }
 
@@ -172,22 +178,41 @@ impl Outline {
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Style {
-    pub fill: Option<Rgba>,
+    pub fill: Option<Fill>,
     pub outline: Option<Outline>,
+    /// Uniform transparency of the whole object: 0 is opaque, 1 invisible.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub transparency: f64,
+}
+
+fn is_zero(v: &f64) -> bool {
+    *v == 0.0
 }
 
 impl Style {
     /// Style for newly drawn objects: no fill, black 0.5 pt outline.
     pub fn new_object() -> Self {
-        Self {
-            fill: None,
-            outline: Some(Outline::new(Rgba::BLACK, 0.5)),
-        }
+        Self::outlined(Outline::new(Rgba::BLACK, 0.5))
     }
 
     /// Style for new text: black fill, no outline.
     pub fn new_text() -> Self {
-        Self { fill: Some(Rgba::BLACK), outline: None }
+        Self::filled(Rgba::BLACK)
+    }
+
+    /// A uniform fill and no outline.
+    pub fn filled(color: Rgba) -> Self {
+        Self { fill: Some(Fill::Solid(color)), outline: None, transparency: 0.0 }
+    }
+
+    /// An outline and no fill.
+    pub fn outlined(outline: Outline) -> Self {
+        Self { fill: None, outline: Some(outline), transparency: 0.0 }
+    }
+
+    /// How opaque the object is: 1 − transparency.
+    pub fn opacity(&self) -> f64 {
+        1.0 - self.transparency.clamp(0.0, 1.0)
     }
 }
 
@@ -323,6 +348,17 @@ impl Object {
         match &mut self.shape {
             Shape::Group { children } => children.iter_mut().for_each(|c| c.restyle(f)),
             _ => f(&mut self.style),
+        }
+    }
+
+    /// Like [`Object::restyle`], also passing each object's local frame (for fills that
+    /// are placed on the object, like fountain fills).
+    pub fn restyle_framed(&mut self, f: &mut impl FnMut(&mut Style, Rect)) {
+        if let Shape::Group { children } = &mut self.shape {
+            children.iter_mut().for_each(|c| c.restyle_framed(f));
+        } else {
+            let frame = self.shape.frame();
+            f(&mut self.style, frame);
         }
     }
 

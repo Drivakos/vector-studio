@@ -126,6 +126,9 @@ pub fn property_bar_ui(ui: &mut egui::Ui, state: &mut AppState, out: &mut Vec<Co
                 }
             }
             Tool::Text => crate::text_tool::controls(ui, state),
+            Tool::InteractiveFill | Tool::Transparency | Tool::ColorEyedropper | Tool::AttributesEyedropper => {
+                crate::paint_tools::property_bar(ui, state);
+            }
             Tool::Shape if state.selection.len() == 1 => {
                 let curve = state.selected_objects().any(|o| matches!(o.shape, vs_core::Shape::Curve { .. }));
                 if curve {
@@ -640,7 +643,7 @@ pub fn palette_ui(ui: &mut egui::Ui, state: &mut AppState) {
         let resp = resp.on_hover_text(format!("{name}\nClick: fill · Right-click: outline"));
         let color = vs_core::Rgba::rgb(*r, *g, *b);
         if resp.clicked() {
-            set_style(state, |s| s.fill = Some(color));
+            set_style(state, |s| s.fill = Some(color.into()));
         }
         if resp.secondary_clicked() {
             set_style(state, |s| match &mut s.outline {

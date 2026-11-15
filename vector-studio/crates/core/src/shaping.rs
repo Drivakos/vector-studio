@@ -217,7 +217,8 @@ fn make_curve(obj: &mut Object, path: BezPath) {
 }
 
 /// The object's style (its first member's, for a group) with any outline that scales with
-/// the object fixed at the width it shows now, since the result has no transform.
+/// the object fixed at the width it shows now, and any fountain fill placed on the page,
+/// since the result has no transform.
 fn page_style(obj: &Object) -> Style {
     let leaves = obj.leaves();
     let (mut style, transform) = match leaves.first() {
@@ -226,6 +227,11 @@ fn page_style(obj: &Object) -> Style {
     };
     if let Some(o) = style.outline.as_mut().filter(|o| o.scale_with_object && o.width > 0.0) {
         o.width = o.page_width(transform);
+    }
+    // Fountain fills are in local space; the result has none, so move them to the page.
+    if let Some(crate::Fill::Gradient(g)) = style.fill.as_mut() {
+        g.start = transform * g.start;
+        g.end = transform * g.end;
     }
     style
 }
@@ -323,7 +329,7 @@ mod tests {
     use crate::document::Rgba;
 
     fn style(c: Rgba) -> Style {
-        Style { fill: Some(c), outline: None }
+        Style::filled(c)
     }
 
     fn rect(doc: &mut Document, r: Rect, c: Rgba) -> ObjectId {
@@ -358,7 +364,7 @@ mod tests {
         assert_eq!(doc.all_object_ids(), vec![back], "the other object is gone");
         let welded = obj(&doc, back);
         assert!(matches!(welded.shape, Shape::Curve { .. }));
-        assert_eq!(welded.style.fill, Some(Rgba::rgb(255, 0, 0)));
+        assert_eq!(welded.style.fill, Some(crate::Fill::Solid(Rgba::rgb(255, 0, 0))));
         assert!(near(area(&doc, back), 150.0), "{}", area(&doc, back));
         assert_eq!(welded.world_bounds(), Rect::new(0.0, 0.0, 15.0, 10.0));
     }
@@ -431,7 +437,7 @@ mod tests {
         let new = sel[0];
         assert_eq!(doc.all_object_ids(), vec![back, front, new]);
         assert!(near(area(&doc, new), 50.0));
-        assert_eq!(obj(&doc, new).style.fill, Some(Rgba::rgb(255, 0, 0)), "the target's colour");
+        assert_eq!(obj(&doc, new).style.fill, Some(crate::Fill::Solid(Rgba::rgb(255, 0, 0))), "the target's colour");
 
         let mut apart = Document::default();
         let a = rect(&mut apart, Rect::new(0.0, 0.0, 1.0, 1.0), Rgba::BLACK);
@@ -509,7 +515,7 @@ mod tests {
         assert_eq!(doc.combine_objects(&[big, small], small), Some(small));
         assert_eq!(doc.all_object_ids(), vec![small], "in the target's place");
         let combined = obj(&doc, small);
-        assert_eq!(combined.style.fill, Some(Rgba::WHITE));
+        assert_eq!(combined.style.fill, Some(crate::Fill::Solid(Rgba::WHITE)));
         assert!(combined.hit(kurbo::Point::new(5.0, 5.0), 0.1));
         assert!(!combined.hit(kurbo::Point::new(15.0, 15.0), 0.1), "the overlap is a hole");
 
@@ -519,7 +525,7 @@ mod tests {
         assert_eq!(pieces[0], small);
         assert_eq!(doc.all_object_ids(), pieces);
         assert!(near(area(&doc, pieces[0]), 900.0) && near(area(&doc, pieces[1]), 100.0));
-        assert!(pieces.iter().all(|id| obj(&doc, *id).style.fill == Some(Rgba::WHITE)));
+        assert!(pieces.iter().all(|id| obj(&doc, *id).style.fill == Some(crate::Fill::Solid(Rgba::WHITE))));
         assert!(!doc.can_break_apart(&pieces));
     }
 

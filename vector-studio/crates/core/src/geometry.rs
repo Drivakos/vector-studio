@@ -127,9 +127,9 @@ pub struct Leaf<'a> {
 }
 
 impl Leaf<'_> {
-    /// Fill colour, if the leaf is closed and has one.
-    pub fn fill(&self) -> Option<crate::Rgba> {
-        self.style.fill.filter(|_| self.closed)
+    /// The fill, if the leaf is closed and has one.
+    pub fn fill(&self) -> Option<&crate::Fill> {
+        self.style.fill.as_ref().filter(|_| self.closed)
     }
 }
 
@@ -209,7 +209,38 @@ impl Object {
     }
 }
 
+/// The colour shown at a point, as the Color Eyedropper picks it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PaintHit {
+    /// The top-level object that shows the colour.
+    pub id: ObjectId,
+    pub color: crate::Rgba,
+    /// The colour is the outline's, not the fill's.
+    pub outline: bool,
+}
+
 impl Page {
+    /// The topmost fill or outline colour at `point`, within `tolerance` of outlines.
+    pub fn paint_at(&self, point: Point, tolerance: f64) -> Option<PaintHit> {
+        for obj in self.objects.iter().rev() {
+            for leaf in obj.leaves().iter().rev() {
+                if let Some(o) = &leaf.style.outline {
+                    let reach = tolerance + o.page_width(leaf.transform) / 2.0;
+                    if leaf.path.segments().any(|seg| seg.nearest(point, 1e-6).distance_sq <= reach * reach) {
+                        return Some(PaintHit { id: obj.id, color: o.color, outline: true });
+                    }
+                }
+                if let Some(fill) = leaf.fill()
+                    && leaf.path.winding(point) % 2 != 0
+                {
+                    let color = fill.color_at(leaf.transform.inverse() * point);
+                    return Some(PaintHit { id: obj.id, color, outline: false });
+                }
+            }
+        }
+        None
+    }
+
     pub fn object(&self, id: ObjectId) -> Option<&Object> {
         self.objects.iter().find(|o| o.id == id)
     }
@@ -260,7 +291,7 @@ mod tests {
     use kurbo::Affine;
 
     fn filled() -> Style {
-        Style { fill: Some(Rgba::BLACK), outline: None }
+        Style::filled(Rgba::BLACK)
     }
 
     #[test]
@@ -301,7 +332,7 @@ mod tests {
         assert_eq!(page.hit_test(Point::new(50.0, 50.0), 1.0), Some(filled_id));
 
         let mut doc = Document::default();
-        let outline = Style { fill: None, outline: Some(Outline::new(Rgba::BLACK, 2.0)) };
+        let outline = Style::outlined(Outline::new(Rgba::BLACK, 2.0));
         let id = doc.add_object(Shape::Ellipse { rect, arc: None }, outline);
         let page = doc.active_page();
         assert_eq!(page.hit_test(Point::new(50.0, 50.0), 1.0), None);
@@ -323,6 +354,27 @@ mod tests {
         let a = doc.add_object(Shape::Ellipse { rect: Rect::new(10.0, 10.0, 20.0, 20.0), arc: None }, filled());
         doc.add_object(Shape::Ellipse { rect: Rect::new(40.0, 40.0, 80.0, 80.0), arc: None }, filled());
         assert_eq!(doc.active_page().objects_inside(Rect::new(0.0, 0.0, 50.0, 50.0)), vec![a]);
+    }
+
+    #[test]
+    fn paint_at_finds_fill_gradient_and_outline_colours() {
+        use crate::{Fill, Gradient, GradientKind};
+        let mut doc = Document::default();
+        let rect = Rect::new(0.0, 0.0, 100.0, 100.0);
+        let red = Rgba::rgb(255, 0, 0);
+        let mut style = Style::filled(red);
+        style.outline = Some(Outline::new(Rgba::rgb(0, 0, 255), 4.0));
+        let id = doc.add_object(Shape::Rectangle { rect, corner_radius: 0.0 }, style);
+        let page = doc.active_page();
+        assert_eq!(page.paint_at(Point::new(50.0, 50.0), 1.0), Some(PaintHit { id, color: red, outline: false }));
+        assert_eq!(page.paint_at(Point::new(1.0, 50.0), 1.0).map(|h| h.outline), Some(true));
+        assert_eq!(page.paint_at(Point::new(150.0, 50.0), 1.0), None);
+
+        let g = Gradient::across(GradientKind::Linear, rect, Rgba::BLACK, Rgba::WHITE);
+        doc.restyle_objects(&[id], |s| s.fill = Some(Fill::Gradient(g.clone())));
+        doc.transform_objects(&[id], Affine::translate((100.0, 0.0)));
+        let hit = doc.active_page().paint_at(Point::new(175.0, 50.0), 1.0).unwrap();
+        assert_eq!(hit.color, Rgba::rgb(191, 191, 191), "three quarters along the local gradient");
     }
 
     #[test]

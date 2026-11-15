@@ -645,6 +645,7 @@ impl VectorStudioApp {
             if s.tool != Tool::Text {
                 crate::text_tool::finish(s);
             }
+            s.tools.eyedropper.applying = false;
             tools::cancel(s);
             s.last_tool = s.tool;
         }

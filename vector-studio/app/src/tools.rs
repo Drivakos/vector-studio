@@ -66,6 +66,10 @@ enum Drag {
     Control { object: ObjectId, control: Control, shape: Shape, transform: Affine },
     /// A guideline of the active page, by index.
     Guide { index: usize },
+    /// Interactive Fill: dragging out a fountain fill on `object` from `start`.
+    FillVector { object: ObjectId, start: Point },
+    /// Interactive Fill: a fountain fill's start or end handle.
+    FillHandle { object: ObjectId, end: bool },
 }
 
 /// A Bézier or Pen path being drawn, in document space.
@@ -84,6 +88,7 @@ pub struct ToolState {
     pub settings: ToolSettings,
     /// Text being typed into with the Text tool.
     pub text: Option<crate::text_tool::TextEdit>,
+    pub eyedropper: crate::paint_tools::Eyedropper,
     drag: Option<Drag>,
     pen: Option<PenPath>,
     pointer: Option<Point>,
@@ -137,6 +142,7 @@ fn is_shape_tool(tool: Tool) -> bool {
 pub fn is_implemented(tool: Tool) -> bool {
     is_shape_tool(tool)
         || matches!(tool, Tool::Pick | Tool::Shape | Tool::Zoom | Tool::Pan | Tool::Freehand | Tool::Bezier | Tool::Pen | Tool::Text)
+        || matches!(tool, Tool::InteractiveFill | Tool::Transparency | Tool::ColorEyedropper | Tool::AttributesEyedropper)
 }
 
 pub fn cursor(tool: Tool) -> egui::CursorIcon {
@@ -144,6 +150,7 @@ pub fn cursor(tool: Tool) -> egui::CursorIcon {
         Tool::Pick => egui::CursorIcon::Default,
         Tool::Shape => egui::CursorIcon::PointingHand,
         Tool::Text => egui::CursorIcon::Text,
+        Tool::ColorEyedropper | Tool::AttributesEyedropper | Tool::Transparency => egui::CursorIcon::PointingHand,
         _ => egui::CursorIcon::Crosshair,
     }
 }
@@ -187,6 +194,7 @@ fn snapper(state: &AppState, view: &View, exclude: &[ObjectId]) -> vs_core::Snap
 /// Tools whose every click and drag position snaps.
 fn snaps_pointer(tool: Tool) -> bool {
     is_shape_tool(tool) || matches!(tool, Tool::Bezier | Tool::Pen | Tool::Text)
+        || matches!(tool, Tool::InteractiveFill | Tool::Transparency | Tool::ColorEyedropper | Tool::AttributesEyedropper)
 }
 
 fn constrain(mods: egui::Modifiers) -> bool {
@@ -215,8 +223,29 @@ fn press(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers, dou
         Tool::Freehand => state.tools.drag = Some(Drag::Freehand { points: vec![p] }),
         Tool::Bezier | Tool::Pen => press_pen(state, view, p),
         Tool::Text => crate::text_tool::press(state, p, view.doc_len(HIT)),
+        Tool::InteractiveFill => press_fill(state, view, p),
+        Tool::Transparency => {
+            crate::paint_tools::select_at(state, p, view.doc_len(HIT));
+        }
+        Tool::ColorEyedropper | Tool::AttributesEyedropper => crate::paint_tools::press_eyedropper(state, p, view.doc_len(HIT)),
         t if is_shape_tool(t) => state.tools.drag = Some(Drag::Create { start: p }),
         _ => {}
+    }
+}
+
+/// Interactive Fill: grab a fountain handle of the selected object, or select the object
+/// under the pointer and drag out a new fountain on it.
+fn press_fill(state: &mut AppState, view: &View, p: Point) {
+    if let Some((object, g, t)) = crate::paint_tools::selected_gradient(state) {
+        for (end, at) in [(true, g.end), (false, g.start)] {
+            if view.screen_dist(t * at, p) <= HIT {
+                state.tools.drag = Some(Drag::FillHandle { object, end });
+                return;
+            }
+        }
+    }
+    if let Some(object) = crate::paint_tools::select_at(state, p, view.doc_len(HIT)) {
+        state.tools.drag = Some(Drag::FillVector { object, start: p });
     }
 }
 
@@ -585,6 +614,18 @@ fn drag_to(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers) {
             }
             Drag::Control { object, control, shape, transform }
         }
+        Drag::FillVector { object, start } => {
+            if view.screen_dist(start, p) > DRAG_START {
+                let end = snapper(state, view, &[]).point(p);
+                crate::paint_tools::drag_fountain(state, object, start, end);
+            }
+            Drag::FillVector { object, start }
+        }
+        Drag::FillHandle { object, end } => {
+            let at = snapper(state, view, &[]).point(p);
+            crate::paint_tools::move_fountain_handle(state, object, end, at);
+            Drag::FillHandle { object, end }
+        }
         Drag::Guide { index } => {
             let mut options = state.snap_options();
             options.guides = false;
@@ -847,6 +888,14 @@ pub fn draw_overlay(painter: &egui::Painter, state: &AppState, canvas: Rect) {
     let page = state.doc.active_page();
     let thin = Stroke::new(1.0, ACCENT);
     crate::text_tool::draw_caret(painter, state, |p| view.screen(p));
+    if state.tool == Tool::InteractiveFill
+        && let Some((_, g, t)) = crate::paint_tools::selected_gradient(state)
+    {
+        let (a, b) = (view.screen(t * g.start), view.screen(t * g.end));
+        painter.line_segment([a, b], Stroke::new(1.0, ACCENT));
+        square(painter, a, false);
+        square(painter, b, true);
+    }
 
     if state.tool == Tool::Shape {
         if let Some(obj) = shape_target(state).and_then(|id| page.object(id)) {
@@ -1019,6 +1068,14 @@ pub fn hint(state: &AppState) -> String {
         }
         Tool::Text if state.tools.text.is_some() => "Type the text · Enter starts a new line · Esc or another tool finishes".into(),
         Tool::Text => "Click the page to add text, or click text to edit it".into(),
+        Tool::InteractiveFill => "Click an object, then drag across it for a fountain fill · drag the ends to move it".into(),
+        Tool::Transparency => "Click an object, then set its transparency in the property bar".into(),
+        Tool::ColorEyedropper if state.tools.eyedropper.applying => {
+            "Click an object's fill or outline to apply the color · Select color picks another".into()
+        }
+        Tool::ColorEyedropper => "Click a color on the page to pick it".into(),
+        Tool::AttributesEyedropper if state.tools.eyedropper.applying => "Click an object to give it the picked fill, outline and transparency".into(),
+        Tool::AttributesEyedropper => "Click an object to pick its fill, outline and transparency".into(),
         Tool::Zoom => "Click to zoom in; Shift-click to zoom out".into(),
         Tool::Pan => "Drag to move the view".into(),
         _ => "This tool is not available yet".into(),
@@ -1351,7 +1408,7 @@ mod tests {
     fn filled_objects_hit_inside() {
         let mut h = Harness::new(Tool::Pick);
         draw_rect(&mut h, 100.0, 100.0, 200.0, 200.0);
-        h.state.doc.active_page_mut().objects[0].style.fill = Some(Rgba::BLACK);
+        h.state.doc.active_page_mut().objects[0].style.fill = Some(Rgba::BLACK.into());
         h.state.selection.clear();
         let inside = h.at(150.0, 150.0);
         h.click(inside);

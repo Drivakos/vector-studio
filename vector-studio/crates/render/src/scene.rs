@@ -2,8 +2,8 @@
 
 use kurbo::{Affine, Rect, Stroke};
 use vello::Scene;
-use vello::peniko::{Color, Fill};
-use vs_core::{Page, Rgba};
+use vello::peniko::{Brush, Color, Fill, Gradient};
+use vs_core::{GradientKind, Page, Rgba};
 
 use crate::viewport::Viewport;
 
@@ -32,6 +32,21 @@ pub fn to_color(c: Rgba) -> Color {
     Color::from_rgba8(c.r, c.g, c.b, c.a)
 }
 
+/// The brush for `fill` at `opacity`, in the fill's (object-local) space.
+pub fn to_brush(fill: &vs_core::Fill, opacity: f64) -> Brush {
+    match fill {
+        vs_core::Fill::Solid(c) => Brush::Solid(to_color(c.faded(opacity))),
+        vs_core::Fill::Gradient(g) => {
+            let gradient = match g.kind {
+                GradientKind::Linear => Gradient::new_linear(g.start, g.end),
+                GradientKind::Radial => Gradient::new_radial(g.start, (g.end - g.start).hypot() as f32),
+            };
+            let stops: Vec<(f32, Color)> = g.stops.iter().map(|s| (s.offset as f32, to_color(s.color.faded(opacity)))).collect();
+            Brush::Gradient(gradient.with_stops(stops.as_slice()))
+        }
+    }
+}
+
 /// Append `page` to `scene`.
 ///
 /// `pixels_per_point` converts the viewport's logical screen points to the
@@ -58,15 +73,17 @@ pub fn build_page_scene(
     let hairline = 1.0 / (viewport.zoom() * pixels_per_point);
     for object in &page.objects {
         for leaf in object.leaves() {
-            let fill = leaf.fill();
+            let opacity = leaf.style.opacity();
+            let fill = leaf.fill().map(|f| to_brush(f, opacity));
             let outline = leaf.style.outline.as_ref().map(|o| {
                 let width = if o.width > 0.0 { o.page_width(leaf.transform) } else { hairline };
-                (o.stroke(width), to_color(o.color), o.behind_fill)
+                (o.stroke(width), to_color(o.color.faded(opacity)), o.behind_fill)
             });
             let draw_fill = |scene: &mut Scene| {
-                if let Some(fill) = fill {
+                if let Some(brush) = &fill {
                     // Even-odd: overlaps in a combined curve are holes.
-                    scene.fill(Fill::EvenOdd, doc, to_color(fill), None, &leaf.path);
+                    // Fountain fills are in local space; the path is already on the page.
+                    scene.fill(Fill::EvenOdd, doc, brush, Some(leaf.transform), &leaf.path);
                 }
             };
             match outline {

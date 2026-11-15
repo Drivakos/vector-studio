@@ -217,7 +217,10 @@ pub fn style_change(before: &Style, after: &Style) -> Option<impl Fn(&mut Style)
     let (before, after) = (before.clone(), after.clone());
     Some(move |s: &mut Style| {
         if before.fill != after.fill {
-            s.fill = after.fill;
+            s.fill.clone_from(&after.fill);
+        }
+        if before.transparency != after.transparency {
+            s.transparency = after.transparency;
         }
         match (&before.outline, &after.outline, &mut s.outline) {
             (Some(b), Some(a), Some(o)) => {
@@ -255,14 +258,14 @@ mod tests {
 
     #[test]
     fn style_change_only_touches_what_changed() {
-        let before = Style { fill: Some(Rgba::WHITE), outline: Some(Outline::new(Rgba::BLACK, 1.0)) };
+        let before = Style { outline: Some(Outline::new(Rgba::BLACK, 1.0)), ..Style::filled(Rgba::WHITE) };
         let mut after = before.clone();
         after.outline.as_mut().unwrap().style = LineStyle::Dash;
         let change = style_change(&before, &after).expect("differs");
 
-        let mut other = Style { fill: Some(Rgba::rgb(1, 2, 3)), outline: Some(Outline::new(Rgba::rgb(9, 9, 9), 4.0)) };
+        let mut other = Style { outline: Some(Outline::new(Rgba::rgb(9, 9, 9), 4.0)), ..Style::filled(Rgba::rgb(1, 2, 3)) };
         change(&mut other);
-        assert_eq!(other.fill, Some(Rgba::rgb(1, 2, 3)));
+        assert_eq!(other.fill, Some(Rgba::rgb(1, 2, 3).into()));
         let o = other.outline.unwrap();
         assert_eq!((o.width, o.color, o.style), (4.0, Rgba::rgb(9, 9, 9), LineStyle::Dash));
 

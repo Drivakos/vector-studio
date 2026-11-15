@@ -19,7 +19,7 @@ fn two_squares(app: &mut E2e) -> (ObjectId, ObjectId) {
 }
 
 fn fill(app: &E2e, id: ObjectId) -> Option<Rgba> {
-    app.objects().iter().find(|o| o.id == id).expect("object exists").style.fill
+    app.objects().iter().find(|o| o.id == id).expect("object exists").style.fill.as_ref().and_then(vs_core::Fill::solid)
 }
 
 fn bounds(app: &E2e, id: ObjectId) -> vs_core::kurbo::Rect {

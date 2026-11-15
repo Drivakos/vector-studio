@@ -8,10 +8,12 @@ pub mod chrome;
 pub mod commands;
 pub mod dockers;
 pub mod files;
+pub mod fill_ui;
 pub mod guides;
 #[cfg(target_os = "macos")]
 pub mod native_menu;
 pub mod outline;
+pub mod paint_tools;
 pub mod panels;
 pub mod text_tool;
 pub mod theme;
