@@ -43,11 +43,13 @@ pub struct ToolSettings {
     pub text: vs_core::Text,
     /// Eraser tip diameter, in points.
     pub eraser_size: f64,
+    /// How many times a new spiral turns.
+    pub spiral_turns: u32,
 }
 
 impl Default for ToolSettings {
     fn default() -> Self {
-        Self { polygon_sides: 5, star_points: 5, star_inner_ratio: 0.5, text: vs_core::Text::new(""), eraser_size: DEFAULT_ERASER_SIZE }
+        Self { polygon_sides: 5, star_points: 5, star_inner_ratio: 0.5, text: vs_core::Text::new(""), eraser_size: DEFAULT_ERASER_SIZE, spiral_turns: 4 }
     }
 }
 
@@ -82,10 +84,19 @@ enum Drag {
     Erase { points: Vec<Point> },
     /// Text tool: dragging out a paragraph text frame (a click makes artistic text).
     TextFrame { start: Point },
+    /// 2-Point Line tool: dragging the line.
+    Line { start: Point },
+    /// 3-point tools: dragging the first edge (or axis); a click then sets the third point.
+    FirstEdge { start: Point },
+    /// Spiral tool: dragging out its box.
+    Spiral { start: Point },
 }
 
 /// A Bézier or Pen path being drawn, in document space.
 struct PenPath {
+    /// The tool drawing it: Bézier and Pen make the path as drawn, Polyline straight
+    /// segments, B-Spline a spline with these nodes as control points.
+    kind: Tool,
     path: BezPath,
     /// Outgoing handle of the last node.
     out_handle: Option<Point>,
@@ -105,6 +116,8 @@ pub struct ToolState {
     pub eyedropper: crate::paint_tools::Eyedropper,
     drag: Option<Drag>,
     pen: Option<PenPath>,
+    /// 3-point tools: the first edge, waiting for the click that sets the third point.
+    first_edge: Option<(Point, Point)>,
     pointer: Option<Point>,
     /// Time and place of the last press, to spot double-clicks at press time.
     last_press: Option<(f64, Pos2)>,
@@ -117,6 +130,11 @@ impl ToolState {
 
     pub fn has_open_path(&self) -> bool {
         self.pen.is_some()
+    }
+
+    /// A 3-point tool is waiting for its third point.
+    pub fn has_first_edge(&self) -> bool {
+        self.first_edge.is_some()
     }
 }
 
@@ -158,6 +176,12 @@ pub fn is_implemented(tool: Tool) -> bool {
         || matches!(tool, Tool::Pick | Tool::Shape | Tool::Zoom | Tool::Pan | Tool::Freehand | Tool::Bezier | Tool::Pen | Tool::Text)
         || matches!(tool, Tool::InteractiveFill | Tool::Transparency | Tool::ColorEyedropper | Tool::AttributesEyedropper)
         || matches!(tool, Tool::Crop | Tool::Knife | Tool::Eraser)
+        || matches!(tool, Tool::TwoPointLine | Tool::Polyline | Tool::BSpline | Tool::Spiral)
+        || is_three_point(tool)
+}
+
+fn is_three_point(tool: Tool) -> bool {
+    matches!(tool, Tool::ThreePointCurve | Tool::ThreePointRectangle | Tool::ThreePointEllipse)
 }
 
 pub fn cursor(tool: Tool) -> egui::CursorIcon {
@@ -212,7 +236,7 @@ fn snapper(state: &AppState, view: &View, exclude: &[ObjectId]) -> vs_core::Snap
 
 /// Tools whose every click and drag position snaps.
 fn snaps_pointer(tool: Tool) -> bool {
-    is_shape_tool(tool) || matches!(tool, Tool::Bezier | Tool::Pen | Tool::Text)
+    is_shape_tool(tool) || is_three_point(tool) || matches!(tool, Tool::Bezier | Tool::Pen | Tool::Text | Tool::TwoPointLine | Tool::Polyline | Tool::BSpline | Tool::Spiral)
         || matches!(tool, Tool::InteractiveFill | Tool::Transparency | Tool::ColorEyedropper | Tool::AttributesEyedropper)
 }
 
@@ -241,6 +265,19 @@ fn press(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers, dou
         Tool::Shape => press_shape(state, view, p, mods, double),
         Tool::Freehand => state.tools.drag = Some(Drag::Freehand { points: vec![p] }),
         Tool::Bezier | Tool::Pen => press_pen(state, view, p),
+        // Clicks only: no curve handles.
+        Tool::Polyline | Tool::BSpline => {
+            press_pen(state, view, p);
+            if matches!(state.tools.drag, Some(Drag::PenHandle { .. })) {
+                state.tools.drag = None;
+            }
+        }
+        Tool::TwoPointLine => state.tools.drag = Some(Drag::Line { start: p }),
+        Tool::Spiral => state.tools.drag = Some(Drag::Spiral { start: p }),
+        t if is_three_point(t) => match state.tools.first_edge.take() {
+            Some((a, b)) => finish_three_point(state, a, b, p),
+            None => state.tools.drag = Some(Drag::FirstEdge { start: p }),
+        },
         // On text: edit it. Elsewhere: a drag makes paragraph text, a click artistic text.
         Tool::Text if crate::text_tool::text_at(state, p, view.doc_len(HIT)).is_some() => crate::text_tool::press(state, p, view.doc_len(HIT)),
         Tool::Text => {
@@ -478,7 +515,7 @@ fn press_pen(state: &mut AppState, view: &View, p: Point) {
     let Some(pen) = state.tools.pen.as_mut() else {
         let mut path = BezPath::new();
         path.move_to(p);
-        state.tools.pen = Some(PenPath { path, out_handle: None });
+        state.tools.pen = Some(PenPath { kind: state.tool, path, out_handle: None });
         state.tools.drag = Some(Drag::PenHandle { node: p });
         return;
     };
@@ -522,9 +559,47 @@ pub fn finish_pen(state: &mut AppState) {
         state.tools.drag = None;
     }
     if pen_node_count(&pen.path) >= 2 {
-        let id = state.doc.add_object(Shape::Curve { path: pen.path }, Style::new_object());
+        let path = if pen.kind == Tool::BSpline {
+            let nodes: Vec<Point> = pen.path.elements().iter().filter_map(|e| match e {
+                PathEl::MoveTo(p) | PathEl::LineTo(p) => Some(*p),
+                _ => None,
+            }).collect();
+            let closed = pen.path.elements().iter().any(|e| matches!(e, PathEl::ClosePath));
+            vs_core::construct::bspline(&nodes, closed)
+        } else {
+            pen.path
+        };
+        let id = state.doc.add_object(Shape::Curve { path }, Style::new_object());
         state.selection = vec![id];
     }
+}
+
+/// A 3-point tool's third click: make the curve, rectangle or ellipse on edge `a` → `b`.
+fn finish_three_point(state: &mut AppState, a: Point, b: Point, c: Point) {
+    let Some((shape, transform)) = three_point_shape(state.tool, a, b, c) else { return };
+    let id = state.doc.add_object(shape, Style::new_object());
+    if let Some(obj) = state.doc.active_page_mut().object_mut(id) {
+        obj.transform = transform;
+    }
+    state.selection = vec![id];
+    state.marquee_selection = None;
+}
+
+/// The shape a 3-point tool makes from edge `a` → `b` and third point `c`, with its
+/// transform. Rectangles and ellipses keep their kind, turned along the edge.
+fn three_point_shape(tool: Tool, a: Point, b: Point, c: Point) -> Option<(Shape, Affine)> {
+    let w = (b - a).hypot();
+    let place = Affine::translate(a.to_vec2()) * Affine::rotate((b - a).atan2());
+    let h = vs_core::construct::side_distance(a, b, c);
+    if w < 1e-9 {
+        return None;
+    }
+    Some(match tool {
+        Tool::ThreePointCurve => (Shape::Curve { path: vs_core::construct::three_point_curve(a, b, c) }, Affine::IDENTITY),
+        Tool::ThreePointRectangle if h.abs() > 1e-9 => (Shape::Rectangle { rect: kurbo::Rect::new(0.0, h.min(0.0), w, h.max(0.0)), corner_radius: 0.0 }, place),
+        Tool::ThreePointEllipse if h.abs() > 1e-9 => (Shape::Ellipse { rect: kurbo::Rect::new(0.0, -h.abs(), w, h.abs()), arc: None }, place),
+        _ => return None,
+    })
 }
 
 fn drag_to(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers) {
@@ -836,6 +911,29 @@ fn release(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers) {
                 }
             }
         }
+        Drag::Line { start } => {
+            if view.screen_dist(start, p) > DRAG_START {
+                let end = if constrain(mods) { start + snap_angle(p - start) } else { p };
+                let mut path = BezPath::new();
+                path.move_to(start);
+                path.line_to(end);
+                let id = state.doc.add_object(Shape::Curve { path }, Style::new_object());
+                state.selection = vec![id];
+            }
+        }
+        Drag::FirstEdge { start } => {
+            if view.screen_dist(start, p) > DRAG_START {
+                state.tools.first_edge = Some((start, p));
+            }
+        }
+        Drag::Spiral { start } => {
+            let rect = creation_rect(start, p, mods);
+            if rect.width() * view.zoom >= 2.0 && rect.height() * view.zoom >= 2.0 {
+                let path = vs_core::construct::spiral(rect, state.tools.settings.spiral_turns);
+                let id = state.doc.add_object(Shape::Curve { path }, Style::new_object());
+                state.selection = vec![id];
+            }
+        }
         Drag::TextFrame { start } => {
             let frame = kurbo::Rect::from_points(start, p);
             if frame.width() * view.zoom > DRAG_START && frame.height() * view.zoom > DRAG_START {
@@ -953,6 +1051,14 @@ fn crop_frame(painter: &egui::Painter, view: &View, area: kurbo::Rect) {
 
 pub fn cancel(state: &mut AppState) {
     state.tools.drag = None;
+    state.tools.first_edge = None;
+}
+
+/// `d` turned to the nearest multiple of 15°, same length.
+fn snap_angle(d: Vec2) -> Vec2 {
+    let step = 15f64.to_radians();
+    let angle = (d.atan2() / step).round() * step;
+    Vec2::from_angle(angle) * d.hypot()
 }
 
 // ---------------------------------------------------------------------------------------
@@ -1104,6 +1210,18 @@ pub fn draw_overlay(painter: &egui::Painter, state: &AppState, canvas: Rect) {
                 crop_frame(painter, &view, kurbo::Rect::from_points(*start, p));
             }
         }
+        Some(Drag::Line { start } | Drag::FirstEdge { start }) => {
+            if let Some(p) = state.tools.pointer {
+                painter.line_segment([view.screen(*start), view.screen(p)], thin);
+            }
+        }
+        Some(Drag::Spiral { start }) => {
+            if let Some(p) = state.tools.pointer {
+                let mods = painter.ctx().input(|i| i.modifiers);
+                let path = vs_core::construct::spiral(creation_rect(*start, p, mods), state.tools.settings.spiral_turns);
+                path_to_screen(painter, &path, &view, thin);
+            }
+        }
         Some(Drag::TextFrame { start }) => {
             if let Some(p) = state.tools.pointer {
                 let r = Rect::from_two_pos(view.screen(*start), view.screen(p));
@@ -1133,12 +1251,33 @@ pub fn draw_overlay(painter: &egui::Painter, state: &AppState, canvas: Rect) {
         crop_frame(painter, &view, area);
     }
 
+    if let (Some((a, b)), Some(c)) = (state.tools.first_edge, state.tools.pointer) {
+        painter.line_segment([view.screen(a), view.screen(b)], thin);
+        if let Some((shape, t)) = three_point_shape(state.tool, a, b, c) {
+            let mut path = shape.to_path();
+            path.apply_affine(t);
+            path_to_screen(painter, &path, &view, thin);
+        }
+    }
+
     if let Some(pen) = &state.tools.pen {
-        path_to_screen(painter, &pen.path, &view, Stroke::new(1.0, Color32::BLACK));
+        let line = if pen.kind == Tool::BSpline { thin } else { Stroke::new(1.0, Color32::BLACK) };
+        path_to_screen(painter, &pen.path, &view, line);
         let els = pen.path.elements();
         let last = els.last().and_then(|e| e.end_point());
+        if pen.kind == Tool::BSpline
+            && let Some(cursor) = state.tools.pointer
+        {
+            // The spline the points make so far, with the pointer as the next one.
+            let mut nodes: Vec<Point> = els.iter().filter_map(|e| match e {
+                PathEl::MoveTo(p) | PathEl::LineTo(p) => Some(*p),
+                _ => None,
+            }).collect();
+            nodes.push(cursor);
+            path_to_screen(painter, &vs_core::construct::bspline(&nodes, false), &view, Stroke::new(1.5, ACCENT));
+        }
         if let (Some(last), Some(cursor)) = (last, state.tools.pointer)
-            && state.tool == Tool::Pen
+            && matches!(pen.kind, Tool::Pen | Tool::Polyline | Tool::BSpline)
             && state.tools.drag.is_none()
         {
             let mut preview = BezPath::new();
@@ -1216,6 +1355,14 @@ pub fn hint(state: &AppState) -> String {
         Tool::Bezier | Tool::Pen => {
             "Click for corners, drag for curves · click the first node to close · Enter or click the last node to finish".into()
         }
+        Tool::TwoPointLine => "Drag to draw a straight line · Ctrl/Cmd keeps it to 15° steps".into(),
+        Tool::Polyline => "Click to add straight segments · double-click, Enter or the first node finishes".into(),
+        Tool::BSpline => "Click to place control points · double-click or Enter finishes; clicking the first point closes it".into(),
+        Tool::Spiral => "Drag to draw a spiral · turns are on the property bar".into(),
+        t if is_three_point(t) && state.tools.first_edge.is_some() => "Click to set the third point · Esc cancels".into(),
+        Tool::ThreePointCurve => "Drag from start to end, then click to set the curve".into(),
+        Tool::ThreePointRectangle => "Drag one side, then click to set the height".into(),
+        Tool::ThreePointEllipse => "Drag one axis, then click to set the other".into(),
         Tool::Text if state.tools.text.is_some() => "Type the text · Enter starts a new line · Esc or another tool finishes".into(),
         Tool::Text => "Click to add artistic text, drag a frame for paragraph text, or click text to edit it".into(),
         Tool::InteractiveFill => "Click an object, then drag across it for a fountain fill · drag the ends to move it".into(),

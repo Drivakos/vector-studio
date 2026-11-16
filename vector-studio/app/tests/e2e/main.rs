@@ -21,6 +21,7 @@ mod edit;
 mod objects;
 mod layers;
 mod powerclip;
+mod lines;
 mod files;
 mod pages;
 mod view;

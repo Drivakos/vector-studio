@@ -134,6 +134,12 @@ pub fn property_bar_ui(ui: &mut egui::Ui, state: &mut AppState, out: &mut Vec<Co
                 }
             }
             Tool::Text => crate::text_tool::controls(ui, state),
+            Tool::Spiral => {
+                let mut turns = f64::from(state.tools.settings.spiral_turns);
+                if number_row(ui, Some(ICON_CYCLONE), "Spiral turns", &mut turns, "", 1.0..=100.0, 1.0, 0) {
+                    state.tools.settings.spiral_turns = turns as u32;
+                }
+            }
             Tool::Crop => {
                 let pending = state.tools.crop.is_some();
                 if icon_button(ui, ICON_CROP, "Crop", pending).clicked() {

@@ -790,7 +790,7 @@ impl VectorStudioApp {
                 s.tools.crop = None;
             } else if s.tools.has_open_path() {
                 tools::finish_pen(s);
-            } else if s.tools.is_dragging() {
+            } else if s.tools.is_dragging() || s.tools.has_first_edge() {
                 tools::cancel(s);
             } else if s.has_selection() {
                 s.selection.clear();

@@ -52,6 +52,7 @@ Names must be unique on screen, or a test cannot tell widgets apart.
 | Feature | Test module (`app/tests/e2e/`) |
 |---|---|
 | Rectangle, Ellipse, Polygon, Star, Freehand, Bézier, Pen; Esc behaviour | `drawing.rs` |
+| 2-Point Line (with 15° snap), Polyline, B-Spline, 3-Point Curve, 3-Point Rectangle and Ellipse (Esc drops the first edge), Spiral turns | `lines.rs` |
 | Pick (select, Shift, marquee, move, Cmd axis, scale, Shift from centre, rotate, double-click to Shape tool); Shape (nodes, handles, node marquee, rounded corners) | `editing.rs` |
 | Palette fill and outline, outline width / style / corners / caps / behind fill / scale with object, multi-object edits, behind fill on the GPU canvas | `style.rs` |
 | X, Y, W, H, rotate, mirror (property bar, toolbar, Transform docker) | `transform.rs` |

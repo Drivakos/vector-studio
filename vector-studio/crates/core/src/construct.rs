@@ -1,0 +1,142 @@
+//! Paths the drawing tools build from a few points: B-splines, 3-point curves, spirals.
+
+use std::f64::consts::TAU;
+
+use kurbo::{BezPath, Point, Rect, Vec2};
+
+/// A cubic B-spline with `points` as its control points, as Bézier curves. Open splines
+/// start and end on their first and last points; closed ones loop through every point's
+/// neighbourhood. Fewer than two points make an empty path.
+pub fn bspline(points: &[Point], closed: bool) -> BezPath {
+    let mut path = BezPath::new();
+    if points.len() < 2 {
+        return path;
+    }
+    let padded: Vec<Point> = if closed {
+        let n = points.len();
+        (0..n + 3).map(|i| points[(i + n - 1) % n]).collect()
+    } else {
+        // The end points repeated three times pin the curve to them.
+        let (first, last) = (points[0], points[points.len() - 1]);
+        [first, first].into_iter().chain(points.iter().copied()).chain([last, last]).collect()
+    };
+    let lerp = |a: Point, b: Point, w: f64| a + (b - a) * w;
+    for (k, w) in padded.windows(4).enumerate() {
+        let (a, b, c, d) = (w[0], w[1], w[2], w[3]);
+        let start = lerp(lerp(a, b, 2.0 / 3.0), lerp(b, c, 1.0 / 3.0), 0.5);
+        let end = lerp(lerp(b, c, 2.0 / 3.0), lerp(c, d, 1.0 / 3.0), 0.5);
+        if k == 0 {
+            path.move_to(start);
+        }
+        path.curve_to(lerp(b, c, 1.0 / 3.0), lerp(b, c, 2.0 / 3.0), end);
+    }
+    if closed {
+        path.close_path();
+    }
+    path
+}
+
+/// A curve from `a` to `b` that passes through `through` halfway along, as one cubic.
+pub fn three_point_curve(a: Point, b: Point, through: Point) -> BezPath {
+    // The quadratic whose midpoint is `through`, raised to a cubic.
+    let q = through + (through - a.midpoint(b));
+    let mut path = BezPath::new();
+    path.move_to(a);
+    path.curve_to(a + (q - a) * (2.0 / 3.0), b + (q - b) * (2.0 / 3.0), b);
+    path
+}
+
+/// The signed distance of `p` from the line through `a` and `b` (positive to the right
+/// of a → b on screen, where y points down).
+pub fn side_distance(a: Point, b: Point, p: Point) -> f64 {
+    let d = b - a;
+    let len = d.hypot();
+    if len < 1e-12 {
+        return 0.0;
+    }
+    d.cross(p - a) / len
+}
+
+/// Segments per turn of a spiral.
+const SPIRAL_STEPS: usize = 8;
+
+/// An even (Archimedean) spiral from the centre of `rect` out to its edge, `turns` times
+/// round, clockwise on screen.
+pub fn spiral(rect: Rect, turns: u32) -> BezPath {
+    let turns = turns.max(1);
+    let c = rect.center();
+    let (rx, ry) = (rect.width() / 2.0, rect.height() / 2.0);
+    let end = TAU * f64::from(turns);
+    // Radius grows evenly with the angle, from 0 at the centre to 1 at the edge.
+    let at = |t: f64| {
+        let r = t / end;
+        Point::new(c.x + rx * r * t.cos(), c.y + ry * r * t.sin())
+    };
+    let tangent = |t: f64| {
+        let (r, dr) = (t / end, 1.0 / end);
+        Vec2::new(rx * (dr * t.cos() - r * t.sin()), ry * (dr * t.sin() + r * t.cos()))
+    };
+    let steps = SPIRAL_STEPS * turns as usize;
+    let dt = end / steps as f64;
+    let mut path = BezPath::new();
+    path.move_to(at(0.0));
+    for i in 0..steps {
+        let (t0, t1) = (i as f64 * dt, (i + 1) as f64 * dt);
+        path.curve_to(at(t0) + tangent(t0) * (dt / 3.0), at(t1) - tangent(t1) * (dt / 3.0), at(t1));
+    }
+    path
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kurbo::{ParamCurve, Shape as _};
+
+    #[test]
+    fn open_bsplines_start_and_end_on_their_end_points() {
+        let pts = [Point::new(0.0, 0.0), Point::new(50.0, 100.0), Point::new(100.0, 0.0)];
+        let path = bspline(&pts, false);
+        let segs: Vec<_> = path.segments().collect();
+        assert_eq!(segs.first().unwrap().eval(0.0), pts[0]);
+        assert!((segs.last().unwrap().eval(1.0) - pts[2]).hypot() < 1e-9);
+        let b = path.bounding_box();
+        assert!(b.y1 > 30.0 && b.y1 < 100.0, "pulled towards, not through, the middle point: {b:?}");
+        assert!(bspline(&pts[..1], false).is_empty());
+    }
+
+    #[test]
+    fn closed_bsplines_close_and_stay_inside_their_points() {
+        let pts = [Point::new(0.0, 0.0), Point::new(100.0, 0.0), Point::new(100.0, 100.0), Point::new(0.0, 100.0)];
+        let path = bspline(&pts, true);
+        assert!(path.elements().iter().any(|e| matches!(e, kurbo::PathEl::ClosePath)));
+        let b = path.bounding_box();
+        assert!(b.x0 > 0.0 && b.x1 < 100.0 && b.y0 > 0.0 && b.y1 < 100.0, "{b:?}");
+        let first = path.segments().next().unwrap().eval(0.0);
+        let last = path.segments().last().unwrap().eval(1.0);
+        assert!((first - last).hypot() < 1e-9, "the loop meets itself");
+    }
+
+    #[test]
+    fn three_point_curves_pass_through_the_third_point() {
+        let (a, b, c) = (Point::new(0.0, 0.0), Point::new(100.0, 0.0), Point::new(50.0, 40.0));
+        let path = three_point_curve(a, b, c);
+        let seg = path.segments().next().unwrap();
+        assert_eq!(seg.eval(0.0), a);
+        assert!((seg.eval(1.0) - b).hypot() < 1e-9);
+        assert!((seg.eval(0.5) - c).hypot() < 1e-9);
+        assert!((side_distance(a, b, c) - 40.0).abs() < 1e-9, "below the line is positive");
+        assert!((side_distance(a, b, Point::new(10.0, -5.0)) + 5.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn spirals_grow_from_the_centre_to_the_edge() {
+        let rect = Rect::new(0.0, 0.0, 200.0, 100.0);
+        let path = spiral(rect, 3);
+        assert_eq!(path.segments().count(), 24);
+        assert_eq!(path.segments().next().unwrap().eval(0.0), rect.center());
+        let end = path.segments().last().unwrap().eval(1.0);
+        assert!((end - Point::new(200.0, 50.0)).hypot() < 1e-9, "ends at the right edge: {end:?}");
+        let b = path.bounding_box();
+        assert!(b.x0 > -1.0 && b.x1 < 201.0 && b.y0 > -1.0 && b.y1 < 101.0, "{b:?}");
+    }
+}
