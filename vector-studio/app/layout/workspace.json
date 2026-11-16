@@ -64,7 +64,7 @@
         { "cmd": "view.mode_pixels", "label": "Pixels" },
         "-",
         { "cmd": "view.full_screen_preview", "label": "Full-Screen Preview", "shortcut": "F9" },
-        { "cmd": "view.page_sorter", "label": "Page Sorter View" },
+        { "cmd": "view.page_sorter", "label": "Page Sorter View", "checkable": true },
         "-",
         { "cmd": "view.zoom_in", "label": "Zoom In", "shortcut": "CmdOrCtrl+=" },
         { "cmd": "view.zoom_out", "label": "Zoom Out", "shortcut": "CmdOrCtrl+-" },

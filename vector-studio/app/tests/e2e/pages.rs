@@ -204,3 +204,43 @@ fn page_background_shows_exports_when_asked_and_undoes() {
     assert_eq!(undo(&mut app), None, "each change is an undo step");
     assert_eq!(&app.pixel(300.0, 400.0)[..3], &[0xff, 0xff, 0xff]);
 }
+
+#[test]
+fn page_sorter_shows_pages_picks_moves_and_goes_back_to_one() {
+    let mut app = E2e::new();
+    app.draw_rect(100.0, 100.0, 300.0, 300.0);
+    app.click("Swatch Red");
+    app.click("Insert page after");
+    app.click("Insert page after");
+    let ids: Vec<_> = app.doc().pages().iter().map(|p| p.id).collect();
+
+    app.menu(&["View", "Page Sorter View"]);
+    assert!(app.state().page_sorter.open);
+    assert!(!app.exists("Page tab Page 1"), "the drawing window is replaced");
+    assert!(app.is_selected("Page thumbnail Page 3"), "the active page");
+    let thumb = app.rect_of("Page thumbnail Page 1");
+    let ppp = app.h.ctx.pixels_per_point();
+    let img = app.h.render().unwrap();
+    let red = (0..thumb.width() as u32).any(|dx| {
+        let px = img.get_pixel(((thumb.min.x + dx as f32) * ppp) as u32, ((thumb.min.y + 6.0 + thumb.width() * 0.25) * ppp) as u32).0;
+        px[0] > 200 && px[1] < 60
+    });
+    assert!(red, "page 1's thumbnail shows its red square");
+
+    app.click("Page thumbnail Page 1");
+    assert_eq!(active(&app), 0);
+    assert!(app.state().page_sorter.open, "a click only picks the page");
+
+    // Drag page 1 onto page 3's place.
+    let (from, to) = (app.rect_of("Page thumbnail Page 1").center(), app.rect_of("Page thumbnail Page 3").center());
+    app.drag_screen(from, to);
+    assert_eq!(app.doc().pages().iter().map(|p| p.id).collect::<Vec<_>>(), vec![ids[1], ids[2], ids[0]]);
+    assert_eq!(active(&app), 2, "the moved page stays active");
+    app.shortcut(egui::Modifiers::COMMAND, Key::Z);
+    assert_eq!(app.doc().pages()[0].id, ids[0], "moving is undoable");
+
+    app.double_click("Page thumbnail Page 2");
+    assert!(!app.state().page_sorter.open, "a double-click goes back to drawing");
+    assert_eq!(active(&app), 1);
+    assert!(app.exists("Page tab Page 1"));
+}

@@ -210,6 +210,11 @@ impl E2e {
         self.run();
     }
 
+    /// Where the widget named `name` is in the window.
+    pub fn rect_of(&self, name: &str) -> egui::Rect {
+        self.h.get_by_label(name).rect()
+    }
+
     /// The value shown by the field named `name`.
     pub fn value(&self, name: &str) -> String {
         self.h.get_by_label(name).value().unwrap_or_default()

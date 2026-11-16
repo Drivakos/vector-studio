@@ -16,6 +16,7 @@ pub mod guides;
 pub mod native_menu;
 pub mod outline;
 pub mod page_dialogs;
+pub mod page_sorter;
 pub mod paint_tools;
 pub mod panels;
 pub mod paste_special;

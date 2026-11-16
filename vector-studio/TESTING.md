@@ -87,6 +87,7 @@ Names must be unique on screen, or a test cannot tell widgets apart.
 | Zoom (keys, toolbar, Zoom tool), Pan tool, rulers, dockers, palette, status bar | `view.rs` |
 | Pixels view mode: one colour per export-resolution pixel on screen, back to Enhanced | `view.rs` |
 | Full-Screen Preview: F9 and the View menu, page pixels on black, no chrome, a key or a click ends it without acting | `view.rs` |
+| Page Sorter View: thumbnails (pixels), click to pick, drag to move a page, undo, double-click back to drawing | `pages.rs` |
 | View modes: Wireframe from the View menu (pixels: no fill, grey outline), Enhanced from the View Modes dropdown | `view.rs` |
 
 Not covered end to end:

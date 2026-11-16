@@ -133,6 +133,7 @@ pub struct AppState {
     pub view_mode: vs_render::ViewMode,
     /// Full-Screen Preview is on.
     pub preview: Option<Preview>,
+    pub page_sorter: crate::page_sorter::PageSorter,
     /// What Edit > Repeat does again.
     pub last_action: Option<Repeatable>,
     /// Last status message (e.g. "Exported …").
@@ -251,6 +252,7 @@ impl AppState {
             powerclip: Default::default(),
             view_mode: Default::default(),
             preview: None,
+            page_sorter: Default::default(),
             last_action: None,
             status: None,
             clipboard: Vec::new(),
@@ -400,6 +402,7 @@ impl VectorStudioApp {
             Command::Repeat => (state.has_selection() && state.last_action.is_some(), None),
             Command::Clone => (doc.can_clone(&state.selection), None),
             Command::ViewMode(mode) => (true, Some(state.view_mode == mode)),
+            Command::PageSorter => (true, Some(state.page_sorter.open)),
             Command::ToggleGuidelines => (true, Some(state.prefs.show_guidelines)),
             Command::ToggleSnap(target) => (true, Some(*state.prefs.snap_flag(target))),
             Command::ToggleStatusBar => (true, Some(state.prefs.show_status_bar)),
@@ -737,6 +740,13 @@ impl VectorStudioApp {
                 s.view_mode = mode;
                 Ok(())
             }
+            Command::PageSorter => {
+                crate::text_tool::finish(s);
+                tools::cancel(s);
+                s.page_sorter.open ^= true;
+                s.needs_fit |= !s.page_sorter.open;
+                Ok(())
+            }
             Command::FullScreenPreview => {
                 crate::text_tool::finish(s);
                 tools::cancel(s);
@@ -883,7 +893,10 @@ impl VectorStudioApp {
         });
 
         if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
-            if s.copy_properties.picking {
+            if s.page_sorter.open {
+                s.page_sorter.open = false;
+                s.needs_fit = true;
+            } else if s.copy_properties.picking {
                 s.copy_properties.picking = false;
             } else if s.powerclip.picking {
                 s.powerclip.picking = false;
@@ -1119,6 +1132,7 @@ impl eframe::App for VectorStudioApp {
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(theme::BAR))
             .show(ui, |ui| match self.canvas.as_mut() {
+                _ if self.state.page_sorter.open => crate::page_sorter::page_sorter_ui(ui, &mut self.state),
                 Some(canvas) => crate::canvas::canvas_pane_ui(ui, &mut self.state, canvas, &mut commands),
                 None => {
                     ui.centered_and_justified(|ui| {

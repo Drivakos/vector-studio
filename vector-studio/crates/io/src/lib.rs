@@ -412,6 +412,11 @@ fn round_path(path: &mut BezPath) {
 
 /// Render one page to PNG at `options.dpi`.
 pub fn page_to_png(page: &Page, options: &ExportOptions) -> Result<Vec<u8>, IoError> {
+    render_page(page, options)?.encode_png().map_err(|e| IoError::Png(e.to_string()))
+}
+
+/// A page drawn at `options.dpi`, on `options.background` or transparent.
+fn render_page(page: &Page, options: &ExportOptions) -> Result<resvg::tiny_skia::Pixmap, IoError> {
     use resvg::{tiny_skia, usvg};
     let svg = page_to_svg(page);
     let tree = usvg::Tree::from_str(&svg, &usvg::Options::default()).map_err(|e| IoError::Png(e.to_string()))?;
@@ -426,7 +431,17 @@ pub fn page_to_png(page: &Page, options: &ExportOptions) -> Result<Vec<u8>, IoEr
     // Map the SVG's own size (whatever px it resolved pt to) onto the page at `dpi`.
     let k = (page.size.width * scale) as f32 / tree.size().width();
     resvg::render(&tree, tiny_skia::Transform::from_scale(k, k), &mut pixmap.as_mut());
-    pixmap.encode_png().map_err(|e| IoError::Png(e.to_string()))
+    Ok(pixmap)
+}
+
+/// A small picture of a page on `paper`, its longer side `longest` pixels: width,
+/// height and premultiplied RGBA bytes.
+pub fn page_thumbnail(page: &Page, paper: Rgba, longest: u32) -> Result<(u32, u32, Vec<u8>), IoError> {
+    let side = page.size.width.max(page.size.height).max(1.0);
+    // A hair under, so rounding up to whole pixels lands on `longest`, not one more.
+    let dpi = (f64::from(longest.max(1)) - 1e-6) / side * 72.0;
+    let pixmap = render_page(page, &ExportOptions { dpi, background: Some(paper) })?;
+    Ok((pixmap.width(), pixmap.height(), pixmap.take()))
 }
 
 /// A PDF gradient paint for `g`, whose points are in the space `transform` maps to the page.
@@ -903,6 +918,18 @@ mod tests {
         let count = |pdf: Vec<u8>| String::from_utf8_lossy(&pdf).contains("/Count 2");
         assert!(count(pages_to_pdf(&doc, &[0, 2]).unwrap()));
         assert!(count(pages_to_pdf(&doc, &[1, 2, 9]).unwrap()), "pages that do not exist are skipped");
+    }
+
+    #[test]
+    fn thumbnails_fit_the_longer_side_and_show_the_page() {
+        let doc = sample();
+        let (w, h, rgba) = page_thumbnail(doc.active_page(), Rgba::WHITE, 120).unwrap();
+        assert_eq!(h, 120, "A4 is taller than wide");
+        assert_eq!(w, 85);
+        assert_eq!(rgba.len(), (w * h * 4) as usize);
+        let at = |x: u32, y: u32| &rgba[((y * w + x) * 4) as usize..][..4];
+        assert_eq!(at(80, 115), &[255, 255, 255, 255], "paper");
+        assert!(at(28, 28)[0] > 200 && at(28, 28)[1] < 80, "the red star: {:?}", at(28, 28));
     }
 
     #[test]

@@ -688,6 +688,22 @@ impl Document {
         Ok(index + 1)
     }
 
+    /// Move page `from` so it becomes page `to`; the others close up. The active page
+    /// stays the same page.
+    pub fn move_page(&mut self, from: usize, to: usize) -> Result<(), DocumentError> {
+        let n = self.pages.len();
+        for i in [from, to] {
+            if i >= n {
+                return Err(DocumentError::PageOutOfRange(i));
+            }
+        }
+        let active = self.pages[self.active_page].id;
+        let page = self.pages.remove(from);
+        self.pages.insert(to, page);
+        self.active_page = self.pages.iter().position(|p| p.id == active).unwrap_or(0);
+        Ok(())
+    }
+
     pub fn delete_page(&mut self, index: usize) -> Result<Page, DocumentError> {
         if index >= self.pages.len() {
             return Err(DocumentError::PageOutOfRange(index));
@@ -836,6 +852,21 @@ mod tests {
         assert_eq!(copy.objects.len(), 1);
         assert_ne!(copy.objects[0].id, original);
         assert_ne!(copy.id, doc.pages()[0].id);
+    }
+
+    #[test]
+    fn moving_a_page_keeps_the_active_page() {
+        let mut doc = Document::default();
+        doc.insert_page_after(0).unwrap();
+        doc.insert_page_after(1).unwrap();
+        let ids: Vec<PageId> = doc.pages().iter().map(|p| p.id).collect();
+        doc.set_active_page(1).unwrap();
+        doc.move_page(0, 2).unwrap();
+        assert_eq!(doc.pages().iter().map(|p| p.id).collect::<Vec<_>>(), vec![ids[1], ids[2], ids[0]]);
+        assert_eq!(doc.active_page_index(), 0, "still the same page");
+        doc.move_page(2, 0).unwrap();
+        assert_eq!(doc.pages()[0].id, ids[0]);
+        assert_eq!(doc.move_page(0, 3), Err(DocumentError::PageOutOfRange(3)));
     }
 
     #[test]
