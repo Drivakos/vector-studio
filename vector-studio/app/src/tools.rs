@@ -385,9 +385,11 @@ fn press_pick(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers
         }
     }
     if let Some(index) = guide_at(state, view, p) {
+        select_guide(state, index, mods.shift);
         state.tools.drag = Some(Drag::Guide { index });
         return;
     }
+    state.guide_selection = None;
     match page.hit_test(p, view.doc_len(HIT)) {
         Some(hit) if mods.shift => {
             state.marquee_selection = None;
@@ -1101,10 +1103,26 @@ fn release(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers) {
                 if index < guides.len() {
                     guides.remove(index);
                 }
+                state.guide_selection = None;
             }
         }
         _ => {}
     }
+}
+
+/// Select guideline `index` of the active page; with `add` (Shift), add it to the
+/// selected guidelines or take it out. Selecting a guideline deselects objects.
+fn select_guide(state: &mut AppState, index: usize, add: bool) {
+    let page = state.doc.active_page().id;
+    let mut indices = if add { state.selected_guides() } else { Vec::new() };
+    if let Some(i) = indices.iter().position(|g| *g == index) {
+        indices.remove(i);
+    } else {
+        indices.push(index);
+    }
+    state.guide_selection = Some((page, indices));
+    state.selection.clear();
+    state.marquee_selection = None;
 }
 
 /// The guideline within reach of `p`, topmost (last added) first.

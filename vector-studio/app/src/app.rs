@@ -92,6 +92,8 @@ pub struct AppState {
     /// matches `selection`, shaping styles results after the bottom-most object instead of
     /// the last selected.
     pub marquee_selection: Option<Vec<ObjectId>>,
+    /// Selected guidelines: the page they are on and their indices in its guide list.
+    pub guide_selection: Option<(vs_core::PageId, Vec<usize>)>,
     pub viewport: Viewport,
     /// Fit the page to the window on the next frame (new document, startup).
     pub needs_fit: bool,
@@ -222,6 +224,7 @@ impl AppState {
             file_path: None,
             selection: Vec::new(),
             marquee_selection: None,
+            guide_selection: None,
             viewport: Viewport::default(),
             needs_fit: true,
             tool: Tool::Pick,
@@ -279,6 +282,15 @@ impl AppState {
 
     pub fn has_selection(&self) -> bool {
         !self.selection.is_empty()
+    }
+
+    /// Indices of the selected guidelines of the active page.
+    pub fn selected_guides(&self) -> Vec<usize> {
+        let page = self.doc.active_page();
+        match &self.guide_selection {
+            Some((id, indices)) if *id == page.id => indices.iter().copied().filter(|i| *i < page.guides.len()).collect(),
+            _ => Vec::new(),
+        }
     }
 
     /// The SVG text the last copy put on the system clipboard.
@@ -414,6 +426,11 @@ impl VectorStudioApp {
             Command::Paste => (!state.clipboard.is_empty(), None),
             Command::SelectAll => (!doc.active_page().objects.is_empty(), None),
             Command::SelectAllNodes => (crate::edit_tools::can_select_all_nodes(state), None),
+            Command::SelectAllText => {
+                let page = doc.active_page();
+                (page.objects.iter().any(|o| page.is_selectable(o) && matches!(o.shape, vs_core::Shape::Text(_))), None)
+            }
+            Command::SelectAllGuidelines => (state.prefs.show_guidelines && !doc.active_page().guides.is_empty(), None),
             Command::CopyProperties => (state.selected_objects().any(|o| !o.locked), None),
             Command::Group => (state.selected_objects().filter(|o| !o.locked).count() >= 2, None),
             Command::Ungroup | Command::UngroupAll => {
@@ -425,11 +442,11 @@ impl VectorStudioApp {
             Command::Order(vs_core::Order::Reverse) => (state.selected_objects().count() >= 2, None),
             Command::Cut
             | Command::Copy
-            | Command::Delete
             | Command::Duplicate
             | Command::Align(_)
             | Command::CenterToPage
             | Command::Order(_) => (selected, None),
+            Command::Delete => (selected || !state.selected_guides().is_empty(), None),
             Command::ConvertToCurves => (state.selected_objects().any(vs_core::Object::can_convert_to_curves), None),
             Command::Shape(_) => (doc.can_shape(&state.selection), None),
             Command::Distribute(_) => (state.selected_objects().filter(|o| !o.locked).count() >= 3, None),
@@ -538,7 +555,14 @@ impl VectorStudioApp {
                 Ok(())
             }
             Command::Delete => {
-                if !tools::delete_selected_nodes(s) {
+                let guides = s.selected_guides();
+                if !guides.is_empty() {
+                    let page = s.doc.active_page_mut();
+                    for i in guides.into_iter().rev() {
+                        page.guides.remove(i);
+                    }
+                    s.guide_selection = None;
+                } else if !tools::delete_selected_nodes(s) {
                     s.doc.delete_objects(&s.selection);
                     keep_surviving(s);
                 }
@@ -577,6 +601,21 @@ impl VectorStudioApp {
             Command::SelectAll => {
                 s.selection = s.doc.all_object_ids();
                 s.marquee_selection = Some(s.selection.clone());
+                s.guide_selection = None;
+                Ok(())
+            }
+            Command::SelectAllText => {
+                let page = s.doc.active_page();
+                s.selection = page.objects.iter().filter(|o| page.is_selectable(o) && matches!(o.shape, vs_core::Shape::Text(_))).map(|o| o.id).collect();
+                s.marquee_selection = Some(s.selection.clone());
+                s.guide_selection = None;
+                Ok(())
+            }
+            Command::SelectAllGuidelines => {
+                let page = s.doc.active_page();
+                s.guide_selection = Some((page.id, (0..page.guides.len()).collect()));
+                s.selection.clear();
+                s.marquee_selection = None;
                 Ok(())
             }
             Command::Align(align) => {

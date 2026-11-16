@@ -9,6 +9,8 @@ use crate::app::AppState;
 
 const GRID: Color32 = Color32::from_rgba_premultiplied(0, 0, 0, 0x30);
 pub const GUIDE: Color32 = Color32::from_rgb(0x00, 0x8C, 0xFF);
+/// A selected guideline.
+pub const GUIDE_SELECTED: Color32 = Color32::from_rgb(0xE5, 0x1C, 0x23);
 /// Grid lines closer than this on screen are thinned out.
 const MIN_GRID_GAP: f64 = 8.0;
 
@@ -44,8 +46,9 @@ pub fn draw(painter: &egui::Painter, state: &AppState, canvas: Rect) {
         }
     }
     if state.prefs.show_guidelines {
-        let stroke = Stroke::new(1.0, GUIDE);
-        for g in &page.guides {
+        let selected = state.selected_guides();
+        for (i, g) in page.guides.iter().enumerate() {
+            let stroke = Stroke::new(1.0, if selected.contains(&i) { GUIDE_SELECTED } else { GUIDE });
             match g.axis {
                 GuideAxis::Horizontal => {
                     let y = screen(state, canvas, Point::new(0.0, g.position)).y;

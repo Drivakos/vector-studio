@@ -63,6 +63,7 @@ Names must be unique on screen, or a test cannot tell widgets apart.
 | Align keys and menus, Align docker, Distribute (docker and menu), order keys / toolbar / docker, Reverse Order, Convert to Curves | `arrange.rs` |
 | Cmd+Q Convert to Curves (groups too); Shape tool on ellipses (pie, arc, Change direction), polygons and stars | `nodes.rs` |
 | Undo / redo, copy (SVG on the clipboard), cut, paste, duplicate offset, delete, select all, nudge, Step and Repeat docker (spacing and offset), Copy Properties From (choices, pick, Esc), Select All Nodes (menu and Cmd+A in the Shape tool) | `edit.rs` |
+| Select All Text | `text.rs` |
 | Repeat: a drag, a rotate button, Duplicate | `edit.rs` |
 | Paste Special: empty clipboard, our objects in place, SVG as curves centred, plain text as artistic text, undo (the system clipboard is scripted) | `edit.rs` |
 | Clone: linked copy, master's fill shows on the clone (pixels), clone's own fill breaks the link | `edit.rs` |
@@ -84,7 +85,7 @@ Names must be unique on screen, or a test cannot tell widgets apart.
 | Edit Text window: Cmd+Shift+T and the Text menu, Cancel, OK, undo | `text.rs` |
 | Find and Replace: Cmd+F, Enter, Find next across pages and round, Match case, not found, Replace one, Replace all, undo | `find.rs` |
 | Fit Text to Path: along an ellipse, pixels on the curve, edit in Properties, Straighten Text | `text.rs` |
-| Grid (toolbar, menu, drawn on the canvas, spacing in the docker), guidelines (dragged from both rulers, drawn, moved with Pick, removed on the ruler, undo, hidden), snapping to grid, guidelines, objects and page, Snap To on/off | `snapping.rs` |
+| Grid (toolbar, menu, drawn on the canvas, spacing in the docker), guidelines (dragged from both rulers, drawn, moved with Pick, removed on the ruler, undo, hidden, Select All Guidelines, click and Shift-click selection, Delete), snapping to grid, guidelines, objects and page, Snap To on/off | `snapping.rs` |
 | Fountain fill from the docker (linear, elliptical, rendered colours), uniform / no fill, transparency (docker and Transparency tool, rendered), Interactive Fill drag and end handles, property bar fill type, fill moving with the object, Color Eyedropper pick/apply to fill and outline, Attributes Eyedropper | `fills.rs` |
 | The 13 units in the property bar and the Properties docker | `units.rs` |
 | Zoom (keys, toolbar, Zoom tool), Pan tool, rulers, dockers, palette, status bar | `view.rs` |

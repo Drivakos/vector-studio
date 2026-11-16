@@ -307,3 +307,22 @@ fn resizing_paragraph_text_rewraps_it_instead_of_stretching_it() {
     app.shortcut(Modifiers::COMMAND, Key::Z);
     assert!(close(text(&app, 0).frame.unwrap().width, 240.0), "undo");
 }
+
+#[test]
+fn select_all_text_selects_only_the_text_objects() {
+    let mut app = E2e::new();
+    app.draw_rect(100.0, 100.0, 200.0, 150.0);
+    app.key(Key::F8);
+    app.click_doc(100.0, 300.0);
+    app.type_text("one");
+    app.key(Key::Escape);
+    app.click_doc(100.0, 400.0);
+    app.type_text("two");
+    app.key(Key::Escape);
+    app.pick_tool();
+    app.click_doc(500.0, 800.0);
+    assert!(app.selection().is_empty());
+    app.menu(&["Edit", "Select All", "Text"]);
+    let ids = app.ids();
+    assert_eq!(app.selection(), vec![ids[1], ids[2]]);
+}

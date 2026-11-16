@@ -121,3 +121,34 @@ fn snap_to_objects_and_page() {
     let e = app.bounds(2);
     assert!(close(e.x0, 0.0) && close(e.y0, 0.0), "starts at the page corner: {e:?}");
 }
+
+#[test]
+fn select_all_guidelines_selects_them_in_red_and_delete_removes_them() {
+    let mut app = E2e::new();
+    app.click("Rulers");
+    for x in [300.0, 500.0] {
+        let (a, b) = (top_ruler(&app, x), app.at(x, 200.0 + x));
+        app.drag_screen(a, b);
+    }
+    let r = app.draw_rect(100.0, 100.0, 200.0, 150.0);
+    assert_eq!(app.selection(), vec![r]);
+
+    app.menu(&["Edit", "Select All", "Guidelines"]);
+    assert_eq!(app.state().selected_guides(), vec![0, 1]);
+    assert!(app.selection().is_empty(), "objects are deselected");
+    let px = app.pixel(450.0, 500.0);
+    assert!(px[0] > px[2] + 60, "a selected guideline is red: {px:?}");
+
+    // Clicking one guideline selects only it; clicking empty space deselects.
+    app.click_doc(450.0, 700.0);
+    assert_eq!(app.state().selected_guides(), vec![1]);
+    app.click_doc(450.0, 800.0);
+    assert!(app.state().selected_guides().is_empty());
+
+    app.menu(&["Edit", "Select All", "Guidelines"]);
+    app.key(Key::Delete);
+    assert!(guides(&app).is_empty(), "Delete removes the selected guidelines");
+    assert_eq!(app.objects().len(), 1, "and leaves the objects");
+    app.shortcut(Modifiers::COMMAND, Key::Z);
+    assert_eq!(guides(&app).len(), 2, "undo brings them back");
+}
