@@ -51,11 +51,14 @@ pub struct ToolSettings {
     pub graph_rows: u32,
     /// The outline the Common Shapes tool draws.
     pub common_shape: vs_core::construct::CommonShape,
+    /// Smart Fill: the fill colour of new areas, and whether they get the default outline.
+    pub smart_fill: vs_core::Rgba,
+    pub smart_fill_outline: bool,
 }
 
 impl Default for ToolSettings {
     fn default() -> Self {
-        Self { polygon_sides: 5, star_points: 5, star_inner_ratio: 0.5, text: vs_core::Text::new(""), eraser_size: DEFAULT_ERASER_SIZE, spiral_turns: 4, graph_columns: 4, graph_rows: 3, common_shape: Default::default() }
+        Self { polygon_sides: 5, star_points: 5, star_inner_ratio: 0.5, text: vs_core::Text::new(""), eraser_size: DEFAULT_ERASER_SIZE, spiral_turns: 4, graph_columns: 4, graph_rows: 3, common_shape: Default::default(), smart_fill: vs_core::Rgba::rgb(0xC0, 0xC0, 0xC0), smart_fill_outline: false }
     }
 }
 
@@ -191,7 +194,7 @@ fn is_shape_tool(tool: Tool) -> bool {
 pub fn is_implemented(tool: Tool) -> bool {
     is_shape_tool(tool)
         || matches!(tool, Tool::Pick | Tool::FreehandPick | Tool::FreeTransform | Tool::Shape | Tool::Zoom | Tool::Pan | Tool::Freehand | Tool::Bezier | Tool::Pen | Tool::Text)
-        || matches!(tool, Tool::InteractiveFill | Tool::Transparency | Tool::ColorEyedropper | Tool::AttributesEyedropper)
+        || matches!(tool, Tool::InteractiveFill | Tool::SmartFill | Tool::Transparency | Tool::ColorEyedropper | Tool::AttributesEyedropper)
         || matches!(tool, Tool::Crop | Tool::Knife | Tool::VirtualSegmentDelete | Tool::Eraser)
         || matches!(tool, Tool::TwoPointLine | Tool::Polyline | Tool::BSpline | Tool::Spiral | Tool::GraphPaper)
         || is_three_point(tool)
@@ -206,7 +209,7 @@ pub fn cursor(tool: Tool) -> egui::CursorIcon {
         Tool::Pick | Tool::FreehandPick => egui::CursorIcon::Default,
         Tool::Shape => egui::CursorIcon::PointingHand,
         Tool::Text => egui::CursorIcon::Text,
-        Tool::ColorEyedropper | Tool::AttributesEyedropper | Tool::Transparency => egui::CursorIcon::PointingHand,
+        Tool::ColorEyedropper | Tool::AttributesEyedropper | Tool::Transparency | Tool::SmartFill => egui::CursorIcon::PointingHand,
         _ => egui::CursorIcon::Crosshair,
     }
 }
@@ -376,6 +379,17 @@ fn press(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers, dou
             }
         }
         Tool::Eraser => state.tools.drag = Some(Drag::Erase { points: vec![p] }),
+        Tool::SmartFill => {
+            let s = &state.tools.settings;
+            let mut style = vs_core::Style::filled(s.smart_fill);
+            if s.smart_fill_outline {
+                style.outline = Style::new_object().outline;
+            }
+            if let Some(id) = state.doc.smart_fill(p, style) {
+                state.selection = vec![id];
+                state.marquee_selection = None;
+            }
+        }
         t if is_shape_tool(t) => state.tools.drag = Some(Drag::Create { start: p }),
         _ => {}
     }
@@ -1643,6 +1657,7 @@ pub fn hint(state: &AppState) -> String {
             "Click an object's fill or outline to apply the color · Select color picks another".into()
         }
         Tool::ColorEyedropper => "Click a color on the page to pick it".into(),
+        Tool::SmartFill => "Click inside an area that outlines enclose to fill it as a new object · colour and outline are on the property bar".into(),
         Tool::AttributesEyedropper if state.tools.eyedropper.applying => "Click an object to give it the picked fill, outline and transparency".into(),
         Tool::AttributesEyedropper => "Click an object to pick its fill, outline and transparency".into(),
         Tool::Crop if state.tools.crop.is_some() => "Enter or double-click inside to crop · Esc clears the area · drag again to redraw it".into(),

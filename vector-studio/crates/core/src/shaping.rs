@@ -245,6 +245,36 @@ pub(crate) fn page_style(obj: &Object) -> Style {
     style
 }
 
+impl Document {
+    /// Smart Fill: the area around `at` that the outlines of the active page's shown
+    /// objects enclose, as a new curve with `style` on top of the active layer. The area
+    /// is inside every closed object around `at` and outside every other one; open curves
+    /// do not bound it. `None` (and no change) when no closed object is around `at`.
+    pub fn smart_fill(&mut self, at: Point, style: Style) -> Option<ObjectId> {
+        let inside = |path: &BezPath| path.winding(at) % 2 != 0;
+        let regions: Vec<BezPath> = self.active_page().shown_objects().filter_map(region).filter(|r| !r.is_empty()).collect();
+        let (around, others): (Vec<&BezPath>, Vec<&BezPath>) = regions.iter().partition(|r| inside(r));
+        let mut area = around.first().map(|r| (*r).clone())?;
+        for r in &around[1..] {
+            area = boolean(&area, r, BinaryOp::Intersection)?;
+        }
+        let reach = area.bounding_box();
+        for r in others.iter().filter(|r| r.bounding_box().intersect(reach).area() > 0.0) {
+            area = boolean(&area, r, BinaryOp::Difference)?;
+        }
+        // Keep only the piece `at` is in: the innermost outline around it, with any holes.
+        let piece = subpaths(&area)
+            .into_iter()
+            .filter(|c| inside(&closed(c)))
+            .min_by(|a, b| a.area().abs().total_cmp(&b.area().abs()))?;
+        let path = boolean(&area, &closed(&piece), BinaryOp::Intersection)?;
+        if path.is_empty() {
+            return None;
+        }
+        Some(self.add_object(Shape::Curve { path }, style))
+    }
+}
+
 /// The page-space area `obj` fills (every member of a group), as non-overlapping
 /// contours. `None` if part of it is open or the geometry is invalid.
 fn region(obj: &Object) -> Option<BezPath> {
@@ -359,6 +389,37 @@ mod tests {
 
     fn area(doc: &Document, id: ObjectId) -> f64 {
         obj(doc, id).world_path().area().abs()
+    }
+
+    #[test]
+    fn smart_fill_takes_the_area_the_outlines_enclose_around_the_click() {
+        let (mut doc, _, _) = two();
+        let fill = style(Rgba::rgb(0, 0, 255));
+        // The overlap of the two squares.
+        let id = doc.smart_fill(Point::new(7.0, 5.0), fill.clone()).expect("an area");
+        assert!((area(&doc, id) - 50.0).abs() < 1e-6, "{}", area(&doc, id));
+        assert_eq!(obj(&doc, id).style, fill);
+        assert_eq!(doc.active_page().objects.last().map(|o| o.id), Some(id), "on top");
+        // The part of the back square left of the front one.
+        let left = doc.smart_fill(Point::new(2.0, 5.0), fill.clone()).unwrap();
+        assert!((area(&doc, left) - 50.0).abs() < 1e-6);
+        assert!(obj(&doc, left).world_path().bounding_box().x1 <= 5.0 + 1e-6);
+        // Outside every closed shape: nothing.
+        assert!(doc.smart_fill(Point::new(50.0, 50.0), fill.clone()).is_none());
+    }
+
+    #[test]
+    fn smart_fill_leaves_holes_and_other_pieces_out() {
+        let mut doc = Document::default();
+        rect(&mut doc, Rect::new(0.0, 0.0, 30.0, 10.0), Rgba::WHITE);
+        // A bar across the middle splits the long rectangle into two pieces; a small
+        // square sits inside the left one.
+        rect(&mut doc, Rect::new(14.0, -5.0, 16.0, 15.0), Rgba::WHITE);
+        rect(&mut doc, Rect::new(4.0, 4.0, 6.0, 6.0), Rgba::WHITE);
+        let id = doc.smart_fill(Point::new(2.0, 2.0), style(Rgba::BLACK)).unwrap();
+        let b = obj(&doc, id).world_path().bounding_box();
+        assert!(b.x1 <= 14.0 + 1e-6, "only the left piece: {b:?}");
+        assert!((area(&doc, id) - (140.0 - 4.0)).abs() < 1e-6, "with the small square's hole: {}", area(&doc, id));
     }
 
     fn near(a: f64, b: f64) -> bool {

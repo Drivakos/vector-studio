@@ -6,7 +6,7 @@ use vector_studio::toolbox::Tool;
 use vs_core::kurbo::Point;
 use vs_core::{Fill, GradientKind, Rgba};
 
-use crate::support::{E2e, close};
+use crate::support::{E2e, close, rect_close};
 
 const RED: Rgba = Rgba::rgb(0xE3, 0x06, 0x13);
 const BLUE: Rgba = Rgba::rgb(0x00, 0x71, 0xBC);
@@ -156,4 +156,30 @@ fn eyedroppers_pick_and_apply_colours_and_attributes() {
     let s = &app.objects()[1].style;
     assert_eq!(s.fill, Some(RED.into()));
     assert!(close(s.transparency, 0.4));
+}
+
+#[test]
+fn smart_fill_fills_the_area_the_outlines_enclose() {
+    let mut app = E2e::new();
+    app.draw_rect(100.0, 100.0, 200.0, 200.0);
+    app.draw_rect(150.0, 100.0, 250.0, 200.0);
+    app.flyout_tool("Interactive Fill", "Smart Fill");
+    app.click_doc(175.0, 150.0);
+    assert_eq!(app.objects().len(), 3);
+    let made = &app.objects()[2];
+    assert_eq!(app.selection(), vec![made.id]);
+    assert!(rect_close(made.world_bounds(), 150.0, 100.0, 200.0, 200.0), "the overlap: {:?}", made.world_bounds());
+    assert!(made.style.outline.is_none(), "no outline unless asked");
+    let px = app.pixel(162.0, 125.0);
+    assert!(px[0] > 150 && px[0] < 230 && px[0] == px[1], "grey fill: {px:?}");
+
+    // Outside every shape: nothing.
+    app.click_doc(500.0, 600.0);
+    assert_eq!(app.objects().len(), 3);
+
+    app.click("Smart Fill outline");
+    app.click_doc(120.0, 150.0);
+    let left = &app.objects()[3];
+    assert!(left.style.outline.is_some());
+    assert!(rect_close(left.world_bounds(), 100.0, 100.0, 150.0, 200.0), "{:?}", left.world_bounds());
 }

@@ -99,6 +99,7 @@ Names must be unique on screen, or a test cannot tell widgets apart.
 | Fit Text to Path: along an ellipse, pixels on the curve, edit in Properties, Straighten Text | `text.rs` |
 | Grid (toolbar, menu, drawn on the canvas, spacing in the docker), guidelines (dragged from both rulers, drawn, moved with Pick, removed on the ruler, undo, hidden, Select All Guidelines, click and Shift-click selection, Delete), snapping to pixels, grid, guidelines, objects and page, alignment guides (move and draw), dynamic guides (draw), Snap To on/off | `snapping.rs` |
 | Fountain fill from the docker (linear, elliptical, rendered colours), uniform / no fill, transparency (docker and Transparency tool, rendered), Interactive Fill drag and end handles, property bar fill type, fill moving with the object, Color Eyedropper pick/apply to fill and outline, Attributes Eyedropper | `fills.rs` |
+| Smart Fill (overlap of two shapes, fill colour drawn, outside does nothing, outline option) | `fills.rs` |
 | The 13 units in the property bar and the Properties docker | `units.rs` |
 | Zoom (keys, toolbar, Zoom tool), Pan tool, rulers, dockers, palette, status bar | `view.rs` |
 | Pixels view mode: one colour per export-resolution pixel on screen, back to Enhanced | `view.rs` |

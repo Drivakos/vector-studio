@@ -149,6 +149,17 @@ pub fn property_bar_ui(ui: &mut egui::Ui, state: &mut AppState, out: &mut Vec<Co
                     state.tools.settings.spiral_turns = turns as u32;
                 }
             }
+            Tool::SmartFill => {
+                let s = &mut state.tools.settings;
+                ui.label("Fill:");
+                let mut c = [s.smart_fill.r, s.smart_fill.g, s.smart_fill.b];
+                let button = ui.color_edit_button_srgb(&mut c);
+                crate::a11y::name(&button, "Smart Fill colour");
+                if button.changed() {
+                    s.smart_fill = vs_core::Rgba::rgb(c[0], c[1], c[2]);
+                }
+                crate::a11y::add(ui, egui::Checkbox::new(&mut s.smart_fill_outline, "Outline"), "Smart Fill outline");
+            }
             Tool::CommonShapes => {
                 let current = state.tools.settings.common_shape;
                 let combo = egui::ComboBox::from_id_salt("common_shape").selected_text(current.label()).height(400.0).show_ui(ui, |ui| {
