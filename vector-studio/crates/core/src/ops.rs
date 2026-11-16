@@ -210,6 +210,7 @@ impl Document {
         }
         let top = page.objects.iter().rposition(picked)?;
         let below_top = page.objects[..top].iter().filter(|o| picked(o)).count();
+        let layer = page.objects[top].layer;
         let id = self.alloc_object_id();
         let objects = &mut self.active_page_mut().objects;
         let (children, rest): (Vec<_>, Vec<_>) = objects.drain(..).partition(picked);
@@ -221,6 +222,7 @@ impl Document {
             style: Style::default(),
             transform: Affine::IDENTITY,
             locked: false,
+            layer,
         };
         objects.insert(top - below_top, group);
         Some(id)
@@ -248,6 +250,7 @@ impl Document {
             let n = children.len();
             for (k, mut child) in children.into_iter().enumerate() {
                 child.transform = group.transform * child.transform;
+                child.layer = group.layer;
                 out.push(child.id);
                 objects.insert(i + k, child);
             }
@@ -266,16 +269,28 @@ impl Document {
             .collect()
     }
 
-    /// Add copies of `objects` on top with fresh ids, moved by `offset`. Returns the new ids.
+    /// Add copies of `objects` on top of the active layer with fresh ids, moved by
+    /// `offset`. Returns the new ids.
     pub fn paste_objects(&mut self, objects: &[Object], offset: Vec2) -> Vec<ObjectId> {
+        let layer = self.active_page().active_layer();
+        self.add_copies(objects, offset, Some(layer))
+    }
+
+    /// Copies of `objects` with fresh ids, moved by `offset`, on top of layer `onto` or
+    /// else of each original's own layer.
+    fn add_copies(&mut self, objects: &[Object], offset: Vec2, onto: Option<crate::LayerId>) -> Vec<ObjectId> {
         let mut new_ids = Vec::with_capacity(objects.len());
         for obj in objects {
             let mut copy = obj.clone();
             self.renumber(&mut copy);
             copy.transform = Affine::translate(offset) * copy.transform;
+            if let Some(layer) = onto {
+                copy.layer = layer;
+            }
             new_ids.push(copy.id);
             self.active_page_mut().objects.push(copy);
         }
+        self.active_page_mut().settle_layers();
         new_ids
     }
 
@@ -283,12 +298,12 @@ impl Document {
     /// n × `step`. Returns the new objects, first copy first.
     pub fn step_and_repeat(&mut self, ids: &[ObjectId], copies: u32, step: Vec2) -> Vec<ObjectId> {
         let originals = self.copy_objects(ids);
-        (1..=copies).flat_map(|n| self.paste_objects(&originals, step * f64::from(n))).collect()
+        (1..=copies).flat_map(|n| self.add_copies(&originals, step * f64::from(n), None)).collect()
     }
 
     pub fn duplicate_objects(&mut self, ids: &[ObjectId], offset: Vec2) -> Vec<ObjectId> {
         let copies = self.copy_objects(ids);
-        self.paste_objects(&copies, offset)
+        self.add_copies(&copies, offset, None)
     }
 
     /// Replace analytic shapes with editable curves (transform kept). Groups and locked
@@ -299,9 +314,10 @@ impl Document {
         }
     }
 
-    /// All object ids on the active page, bottom first.
+    /// The ids of every object on the active page that can be selected, bottom first.
     pub fn all_object_ids(&self) -> Vec<ObjectId> {
-        self.active_page().objects.iter().map(|o| o.id).collect()
+        let page = self.active_page();
+        page.objects.iter().filter(|o| page.is_selectable(o)).map(|o| o.id).collect()
     }
 }
 

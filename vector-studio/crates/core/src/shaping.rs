@@ -118,6 +118,7 @@ impl Document {
                     Style::new_object()
                 };
                 let id = self.alloc_object_id();
+                let layer = self.active_page().objects[picked[last]].layer;
                 let obj = Object {
                     id,
                     name: None,
@@ -125,6 +126,7 @@ impl Document {
                     style,
                     transform: Affine::IDENTITY,
                     locked: false,
+                    layer,
                 };
                 // On top of the selection, so the new object shows.
                 self.active_page_mut().objects.insert(picked[last] + 1, obj);

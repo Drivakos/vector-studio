@@ -107,8 +107,9 @@ impl Document {
             );
             let Some(path) = nonzero_region(&stroked).filter(|p| !p.is_empty()) else { continue };
             let style = Style { fill: Some(Fill::Solid(outline.color)), outline: None, transparency: obj.style.transparency };
+            let layer = obj.layer;
             let id = self.alloc_object_id();
-            let curve = Object { id, name: None, shape: Shape::Curve { path }, style, transform: Affine::IDENTITY, locked: false };
+            let curve = Object { id, name: None, shape: Shape::Curve { path }, style, transform: Affine::IDENTITY, locked: false, layer };
             let at = i - 1;
             let objects = &mut self.active_page_mut().objects;
             if !shows_fill {

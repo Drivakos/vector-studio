@@ -313,7 +313,7 @@ pub fn page_to_svg(page: &Page) -> String {
         r#"<svg xmlns="http://www.w3.org/2000/svg" version="1.1" width="{}pt" height="{}pt" viewBox="0 0 {} {}">"#,
         num(w), num(h), num(w), num(h)
     );
-    for obj in &page.objects {
+    for obj in page.shown_objects() {
         write_svg_object(&mut out, obj, vs_core::kurbo::Affine::IDENTITY, 1);
     }
     out.push_str("</svg>\n");
@@ -463,7 +463,7 @@ pub fn document_to_pdf(doc: &Document) -> Result<Vec<u8>, IoError> {
             .ok_or_else(|| IoError::Pdf("invalid page size".into()))?;
         let mut pdf_page = pdf.start_page_with(settings);
         let mut surface = pdf_page.surface();
-        for leaf in page.objects.iter().flat_map(Object::leaves) {
+        for leaf in page.shown_objects().flat_map(Object::leaves) {
             if let Shape::Image(b) = leaf.shape {
                 pdf_image(&mut surface, b, leaf.transform, leaf.style.opacity())?;
             }
@@ -569,6 +569,21 @@ mod tests {
         assert_eq!(back, doc);
         let new = back.add_object(Shape::Ellipse { rect: Rect::ZERO, arc: None }, Style::default());
         assert!(doc.active_page().objects.iter().all(|o| o.id != new));
+    }
+
+    #[test]
+    fn layers_survive_save_and_hidden_layers_are_not_exported() {
+        let mut doc = sample();
+        let page = doc.active_page_mut();
+        let top = page.add_layer();
+        page.rename_layer(top, "Notes").unwrap();
+        doc.add_object(Shape::Rectangle { rect: Rect::new(0.0, 0.0, 10.0, 10.0), corner_radius: 0.0 }, Style::default());
+        let reopened = document_from_str(&document_to_string(&doc).unwrap()).unwrap();
+        assert_eq!(reopened.active_page().layers(), doc.active_page().layers());
+        assert_eq!(reopened.active_page().objects, doc.active_page().objects);
+        assert_eq!(page_to_svg(doc.active_page()).matches("<path ").count(), 3);
+        doc.active_page_mut().set_layer_visible(top, false).unwrap();
+        assert_eq!(page_to_svg(doc.active_page()).matches("<path ").count(), 2, "the hidden layer is left out");
     }
 
     #[test]

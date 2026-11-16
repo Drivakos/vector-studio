@@ -2,7 +2,7 @@
 
 use egui_material_icons::icons::*;
 use vs_core::kurbo::{Affine, Vec2};
-use vs_core::{Align, Distribute, Order, Shape, Style};
+use vs_core::{Align, Distribute, Layer, LayerId, Order, Shape, Style};
 
 use crate::app::AppState;
 use crate::commands::Command;
@@ -305,7 +305,8 @@ pub fn order_buttons(ui: &mut egui::Ui, commands: &mut Vec<Command>) {
     }
 }
 
-/// Every page's objects, top of the stack first. Click selects on the active page.
+/// Every page's layers and their objects, top of the stack first. Click selects on the
+/// active page; clicking a layer makes it the active one.
 pub fn objects_ui(ui: &mut egui::Ui, state: &mut AppState, commands: &mut Vec<Command>) {
     ui.horizontal(|ui| {
         ui.add_enabled_ui(state.has_selection(), |ui| {
@@ -315,6 +316,7 @@ pub fn objects_ui(ui: &mut egui::Ui, state: &mut AppState, commands: &mut Vec<Co
             }
         });
     });
+    layer_buttons(ui, state);
     ui.separator();
     let active = state.doc.active_page_index();
     for i in 0..state.doc.page_count() {
@@ -325,58 +327,161 @@ pub fn objects_ui(ui: &mut egui::Ui, state: &mut AppState, commands: &mut Vec<Co
             .id_salt(("objects_page", page_id.0))
             .default_open(i == active)
             .show(ui, |ui| {
-                let objects: Vec<_> = state.doc.pages()[i].objects.iter().rev().map(|o| {
-                    let label = if o.locked { format!("{}  {}", o.label(), <&str>::from(ICON_LOCK)) } else { o.label() };
-                    (o.id, label)
-                }).collect();
-                if objects.is_empty() {
-                    ui.label(egui::RichText::new("No objects").weak());
-                }
-                for (id, label) in objects {
-                    if let Some((rid, name)) = &mut state.renaming_object
-                        && *rid == id
-                    {
-                        let resp = crate::a11y::add(ui, egui::TextEdit::singleline(name), "Object name");
-                        if resp.lost_focus() {
-                            let new = name.trim().to_owned();
-                            if let Some(page) = state.doc.page_mut(i)
-                                && let Some(o) = page.object_mut(id)
-                            {
-                                o.name = (!new.is_empty()).then_some(new);
-                            }
-                            state.renaming_object = None;
-                        } else {
-                            resp.request_focus();
-                        }
-                        continue;
-                    }
-                    let selected = i == active && state.selection.contains(&id);
-                    let resp = ui.selectable_label(selected, &label);
-                    crate::a11y::name(&resp, &format!("Object {label}"));
-                    let resp = resp.on_hover_text("Double-click to rename");
-                    if resp.clicked() {
-                        if i != active {
-                            let _ = state.doc.set_active_page(i);
-                            state.selection.clear();
-                        }
-                        let add = ui.input(|inp| inp.modifiers.shift || inp.modifiers.command);
-                        state.marquee_selection = None;
-                        if add {
-                            if let Some(pos) = state.selection.iter().position(|s| *s == id) {
-                                state.selection.remove(pos);
-                            } else {
-                                state.selection.push(id);
-                            }
-                        } else {
-                            state.selection = vec![id];
-                        }
-                    }
-                    if resp.double_clicked() {
-                        let current = state.doc.pages()[i].object(id).and_then(|o| o.name.clone()).unwrap_or_default();
-                        state.renaming_object = Some((id, current));
-                    }
+                let layers: Vec<Layer> = state.doc.pages()[i].layers().iter().rev().cloned().collect();
+                for layer in layers {
+                    layer_row(ui, state, i, &layer);
+                    ui.indent(("layer_objects", page_id.0, layer.id.0), |ui| objects_of_layer(ui, state, i, layer.id));
                 }
             });
+    }
+}
+
+/// New, delete and restack layers of the active page; move the selection to its
+/// active layer.
+fn layer_buttons(ui: &mut egui::Ui, state: &mut AppState) {
+    ui.horizontal(|ui| {
+        let page = state.doc.active_page();
+        let layer = page.active_layer();
+        let index = page.layers().iter().position(|l| l.id == layer).unwrap_or(0);
+        let count = page.layers().len();
+        if crate::a11y::icon_button(ui, ICON_NOTE_STACK_ADD.rich_text().size(18.0), "New layer").clicked() {
+            state.doc.active_page_mut().add_layer();
+        }
+        let delete = ui.add_enabled_ui(count > 1, |ui| crate::a11y::icon_button(ui, ICON_LAYERS_CLEAR.rich_text().size(18.0), "Delete layer")).inner;
+        if delete.clicked() {
+            let _ = state.doc.active_page_mut().delete_layer(layer);
+        }
+        let up = ui.add_enabled_ui(index + 1 < count, |ui| crate::a11y::icon_button(ui, ICON_ARROW_UPWARD.rich_text().size(18.0), "Move layer up")).inner;
+        if up.clicked() {
+            let _ = state.doc.active_page_mut().move_layer(layer, true);
+        }
+        let down = ui.add_enabled_ui(index > 0, |ui| crate::a11y::icon_button(ui, ICON_ARROW_DOWNWARD.rich_text().size(18.0), "Move layer down")).inner;
+        if down.clicked() {
+            let _ = state.doc.active_page_mut().move_layer(layer, false);
+        }
+        let any = state.has_selection();
+        let to = ui.add_enabled_ui(any, |ui| crate::a11y::icon_button(ui, ICON_MOVE_DOWN.rich_text().size(18.0), "Move to active layer")).inner;
+        if to.clicked() {
+            let ids = state.selection.clone();
+            let _ = state.doc.active_page_mut().move_objects_to_layer(&ids, layer);
+        }
+    });
+}
+
+/// One layer: show and lock toggles, then its name (click: make active; double-click:
+/// rename).
+fn layer_row(ui: &mut egui::Ui, state: &mut AppState, page: usize, layer: &Layer) {
+    let is_active = page == state.doc.active_page_index() && state.doc.active_page().active_layer() == layer.id;
+    ui.horizontal(|ui| {
+        let eye = if layer.visible { ICON_VISIBILITY } else { ICON_VISIBILITY_OFF };
+        let resp = ui.add(egui::Button::new(eye.rich_text().size(16.0)).frame(false)).on_hover_text("Show or hide");
+        crate::a11y::toggle(&resp, true, layer.visible, &format!("Visible: {}", layer.name));
+        if resp.clicked()
+            && let Some(p) = state.doc.page_mut(page)
+        {
+            let _ = p.set_layer_visible(layer.id, !layer.visible);
+        }
+        let lock = if layer.locked { ICON_LOCK } else { ICON_LOCK_OPEN };
+        let resp = ui.add(egui::Button::new(lock.rich_text().size(16.0)).frame(false)).on_hover_text("Lock or unlock");
+        crate::a11y::toggle(&resp, true, layer.locked, &format!("Locked: {}", layer.name));
+        if resp.clicked()
+            && let Some(p) = state.doc.page_mut(page)
+        {
+            let _ = p.set_layer_locked(layer.id, !layer.locked);
+        }
+        if let Some((rp, rid, name)) = &mut state.renaming_layer
+            && *rp == page
+            && *rid == layer.id
+        {
+            let resp = crate::a11y::add(ui, egui::TextEdit::singleline(name), "Layer name");
+            if resp.lost_focus() {
+                let new = name.clone();
+                if let Some(p) = state.doc.page_mut(page) {
+                    let _ = p.rename_layer(layer.id, &new);
+                }
+                state.renaming_layer = None;
+            } else {
+                resp.request_focus();
+            }
+            return;
+        }
+        let text = egui::RichText::new(&layer.name);
+        let text = if is_active { text.strong() } else { text };
+        let resp = ui.selectable_label(is_active, text);
+        crate::a11y::name(&resp, &format!("Layer {}", layer.name));
+        let resp = resp.on_hover_text("Click to draw on this layer; double-click to rename");
+        if resp.clicked() {
+            if page != state.doc.active_page_index() {
+                let _ = state.doc.set_active_page(page);
+                state.selection.clear();
+            }
+            let _ = state.doc.active_page_mut().set_active_layer(layer.id);
+        }
+        if resp.double_clicked() {
+            state.renaming_layer = Some((page, layer.id, layer.name.clone()));
+        }
+    });
+}
+
+/// The objects on one layer of page `i`, top first.
+fn objects_of_layer(ui: &mut egui::Ui, state: &mut AppState, i: usize, layer: LayerId) {
+    let active = state.doc.active_page_index();
+    let objects: Vec<_> = state.doc.pages()[i]
+        .objects
+        .iter()
+        .rev()
+        .filter(|o| o.layer == layer)
+        .map(|o| {
+            let label = if o.locked { format!("{}  {}", o.label(), <&str>::from(ICON_LOCK)) } else { o.label() };
+            (o.id, label)
+        })
+        .collect();
+    if objects.is_empty() {
+        ui.label(egui::RichText::new("No objects").weak());
+    }
+    for (id, label) in objects {
+        if let Some((rid, name)) = &mut state.renaming_object
+            && *rid == id
+        {
+            let resp = crate::a11y::add(ui, egui::TextEdit::singleline(name), "Object name");
+            if resp.lost_focus() {
+                let new = name.trim().to_owned();
+                if let Some(page) = state.doc.page_mut(i)
+                    && let Some(o) = page.object_mut(id)
+                {
+                    o.name = (!new.is_empty()).then_some(new);
+                }
+                state.renaming_object = None;
+            } else {
+                resp.request_focus();
+            }
+            continue;
+        }
+        let selected = i == active && state.selection.contains(&id);
+        let resp = ui.selectable_label(selected, &label);
+        crate::a11y::name(&resp, &format!("Object {label}"));
+        let resp = resp.on_hover_text("Double-click to rename");
+        if resp.clicked() {
+            if i != active {
+                let _ = state.doc.set_active_page(i);
+                state.selection.clear();
+            }
+            let add = ui.input(|inp| inp.modifiers.shift || inp.modifiers.command);
+            state.marquee_selection = None;
+            if add {
+                if let Some(pos) = state.selection.iter().position(|s| *s == id) {
+                    state.selection.remove(pos);
+                } else {
+                    state.selection.push(id);
+                }
+            } else {
+                state.selection = vec![id];
+            }
+        }
+        if resp.double_clicked() {
+            let current = state.doc.pages()[i].object(id).and_then(|o| o.name.clone()).unwrap_or_default();
+            state.renaming_object = Some((id, current));
+        }
     }
 }
 

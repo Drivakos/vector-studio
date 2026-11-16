@@ -71,7 +71,7 @@ impl Snapper {
             s.ys.extend(edges_y(page.bounds()));
         }
         if options.objects {
-            for obj in page.objects.iter().filter(|o| !exclude.contains(&o.id)) {
+            for obj in page.shown_objects().filter(|o| !exclude.contains(&o.id)) {
                 let b = obj.world_bounds();
                 s.xs.extend(edges(b));
                 s.ys.extend(edges_y(b));

@@ -8,6 +8,7 @@ pub mod document;
 pub mod fill;
 pub mod geometry;
 pub mod history;
+pub mod layers;
 pub mod nodes;
 pub mod ops;
 pub mod shaping;
@@ -22,6 +23,7 @@ pub use document::{
 pub use bitmap::{Bitmap, BitmapFormat};
 pub use fill::{Fill, Gradient, GradientKind, GradientStop};
 pub use history::History;
+pub use layers::{Layer, LayerError, LayerId};
 pub use kurbo;
 pub use ops::{Align, Distribute, Order};
 pub use shaping::Shaping;

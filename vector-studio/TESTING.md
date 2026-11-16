@@ -42,6 +42,7 @@ Names must be unique on screen, or a test cannot tell widgets apart.
 | Docker fields | Label + where: `Width (transform)`, `Page width (docker)` |
 | Docker strip | Title + ` docker`: `Objects docker` |
 | Objects docker rows | `Object` + label: `Object Rectangle` |
+| Layer rows | `Layer` + name: `Layer Layer 1`; toggles `Visible: Layer 1`, `Locked: Layer 1` |
 | Palette | `Swatch` + colour: `Swatch Red` |
 | Page navigator | Tooltip, and `Page tab` + page name |
 | Outline choices | Group + choice: `Corners Round`, `Caps Square` |
@@ -58,6 +59,7 @@ Names must be unique on screen, or a test cannot tell widgets apart.
 | Cmd+Q Convert to Curves (groups too); Shape tool on ellipses (pie, arc, Change direction), polygons and stars | `nodes.rs` |
 | Undo / redo, copy (SVG on the clipboard), cut, paste, duplicate offset, delete, select all, nudge, Step and Repeat docker (spacing and offset), Copy Properties From (choices, pick, Esc), Select All Nodes (menu and Cmd+A in the Shape tool) | `edit.rs` |
 | Objects docker: select, Shift-select, rename, order, delete | `objects.rs` |
+| Layers: add, hide, lock, move objects, rename, delete, undo | `layers.rs` |
 | Page navigator, Pages docker, page size / orientation / width, Layout menu, PageUp / PageDown | `pages.rs` |
 | Save, Save As, Open, command-line file, damaged file, unsaved-changes prompt, Export SVG / PNG / PDF, Import SVG (Cmd+I and menu, placement, undo, bad file), Import PNG (bitmap drawn on the canvas, selection, fit to page) | `files.rs` |
 | Group, Ungroup, Ungroup All, Lock, Unlock, Unlock All | `groups.rs` |

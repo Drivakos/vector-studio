@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::bitmap::Bitmap;
 use crate::fill::Fill;
+use crate::layers::{Layer, LayerId};
 use crate::text::Text;
 use crate::units::Unit;
 
@@ -302,6 +303,9 @@ pub struct Object {
     /// Locked objects can be selected but not moved, edited, restyled or deleted.
     #[serde(default)]
     pub locked: bool,
+    /// The page layer a top-level object is on (unused inside groups).
+    #[serde(default)]
+    pub layer: LayerId,
 }
 
 impl Object {
@@ -391,6 +395,11 @@ pub struct Page {
     pub objects: Vec<Object>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub guides: Vec<crate::snap::Guide>,
+    /// Bottom first; never empty once settled.
+    #[serde(default)]
+    pub(crate) layers: Vec<Layer>,
+    #[serde(default)]
+    pub(crate) active_layer: LayerId,
 }
 
 impl Page {
@@ -513,6 +522,8 @@ impl Document {
             size,
             objects: Vec::new(),
             guides: Vec::new(),
+            layers: vec![Layer::new(LayerId(1), "Layer 1")],
+            active_layer: LayerId(1),
         }
     }
 
@@ -609,18 +620,20 @@ impl Document {
         Ok(removed)
     }
 
-    /// Add an object on top of the active page.
+    /// Add an object on top of the active layer of the active page.
     pub fn add_object(&mut self, shape: Shape, style: Style) -> ObjectId {
         let id = ObjectId(self.alloc_id());
-        self.active_page_mut().objects.push(Object {
-            id,
-            name: None,
-            shape,
-            style,
-            transform: Affine::IDENTITY,
-            locked: false,
-        });
+        let page = self.active_page_mut();
+        let layer = page.active_layer;
+        page.objects.push(Object { id, name: None, shape, style, transform: Affine::IDENTITY, locked: false, layer });
+        page.settle_layers();
         id
+    }
+
+    /// Restore the layer invariants of every page (see [`Page::settle_layers`]). Edits
+    /// that add or restack objects may break them; the app calls this once they finish.
+    pub fn settle_layers(&mut self) {
+        self.pages.iter_mut().for_each(Page::settle_layers);
     }
 
     /// Give `obj` and everything nested in it fresh ids.
@@ -646,6 +659,7 @@ impl Document {
             self.pages.push(page);
         }
         self.active_page = self.active_page.min(self.pages.len() - 1);
+        self.settle_layers();
         let max = self
             .pages
             .iter()

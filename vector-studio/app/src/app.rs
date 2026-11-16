@@ -109,6 +109,8 @@ pub struct AppState {
     pub dialogs: Box<dyn files::Dialogs>,
     pub renaming_page: Option<(usize, String)>,
     pub renaming_object: Option<(ObjectId, String)>,
+    /// The layer (page index, layer) being renamed in the Objects docker.
+    pub renaming_layer: Option<(usize, vs_core::LayerId, String)>,
     pub interaction: CanvasInteraction,
     pub export: ExportDialog,
     pub step_repeat: crate::edit_tools::StepRepeat,
@@ -147,6 +149,7 @@ impl AppState {
             dialogs: Box::new(files::NativeDialogs),
             renaming_page: None,
             renaming_object: None,
+            renaming_layer: None,
             interaction: CanvasInteraction::default(),
             export: ExportDialog::default(),
             step_repeat: Default::default(),
@@ -705,8 +708,9 @@ impl VectorStudioApp {
             tools::cancel(s);
             s.last_tool = s.tool;
         }
+        s.doc.settle_layers();
         let page = s.doc.active_page();
-        s.selection.retain(|id| page.object(*id).is_some());
+        s.selection.retain(|id| page.object(*id).is_some_and(|o| page.is_selectable(o)));
         let target = match s.selection.as_slice() {
             [id] => Some(*id),
             _ => None,

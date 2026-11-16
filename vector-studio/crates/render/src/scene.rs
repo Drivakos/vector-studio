@@ -71,7 +71,7 @@ pub fn build_page_scene(
 
     // Zero width = hairline: one physical pixel at any zoom.
     let hairline = 1.0 / (viewport.zoom() * pixels_per_point);
-    for object in &page.objects {
+    for object in page.shown_objects() {
         for leaf in object.leaves() {
             let opacity = leaf.style.opacity();
             let fill = leaf.fill().map(|f| to_brush(f, opacity));

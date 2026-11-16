@@ -230,7 +230,7 @@ pub struct PaintHit {
 impl Page {
     /// The topmost fill or outline colour at `point`, within `tolerance` of outlines.
     pub fn paint_at(&self, point: Point, tolerance: f64) -> Option<PaintHit> {
-        for obj in self.objects.iter().rev() {
+        for obj in self.objects.iter().rev().filter(|o| self.is_selectable(o)) {
             for leaf in obj.leaves().iter().rev() {
                 if let Some(o) = &leaf.style.outline {
                     let reach = tolerance + o.page_width(leaf.transform) / 2.0;
@@ -259,13 +259,14 @@ impl Page {
 
     /// Topmost object under `point`.
     pub fn hit_test(&self, point: Point, tolerance: f64) -> Option<ObjectId> {
-        self.objects.iter().rev().find(|o| o.hit(point, tolerance)).map(|o| o.id)
+        self.objects.iter().rev().find(|o| self.is_selectable(o) && o.hit(point, tolerance)).map(|o| o.id)
     }
 
-    /// Objects whose bounds lie fully inside `rect`, bottom first.
+    /// Selectable objects whose bounds lie fully inside `rect`, bottom first.
     pub fn objects_inside(&self, rect: Rect) -> Vec<ObjectId> {
         self.objects
             .iter()
+            .filter(|o| self.is_selectable(o))
             .filter(|o| {
                 let b = o.world_bounds();
                 rect.contains(b.origin()) && rect.contains(Point::new(b.x1, b.y1))
