@@ -36,5 +36,5 @@ pub use kurbo;
 pub use ops::{Align, Distribute, Order};
 pub use shaping::Shaping;
 pub use snap::{Guide, GuideAxis, SnapOptions, Snapper};
-pub use text::{Text, TextAlign, TextField};
+pub use text::{ListStyle, Text, TextAlign, TextField};
 pub use units::Unit;

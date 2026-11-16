@@ -1,4 +1,4 @@
-//! Text menu windows: Change Case, Text Statistics and Columns.
+//! Text menu windows: Change Case, Text Statistics, Columns, and Bullets and Numbering.
 
 use vs_core::text_tools::{Case, TextStats, change_case};
 use vs_core::{ObjectId, Shape};
@@ -181,5 +181,63 @@ pub fn columns_window(ctx: &egui::Context, state: &mut AppState) {
         }
     } else if open && !cancel {
         state.columns = Some(d);
+    }
+}
+
+/// Text Bullets and Numbering works on: the text being typed into, else the selected
+/// unlocked text, but not text fitted to a path.
+pub fn list_targets(state: &AppState) -> Vec<ObjectId> {
+    let page = state.doc.active_page();
+    let ids: Vec<ObjectId> = match &state.tools.text {
+        Some(edit) => vec![edit.id],
+        None => state.selection.clone(),
+    };
+    ids.into_iter()
+        .filter(|id| page.object(*id).is_some_and(|o| !o.locked && matches!(&o.shape, Shape::Text(t) if t.on_path.is_none())))
+        .collect()
+}
+
+pub fn open_bullets(state: &mut AppState) {
+    let page = state.doc.active_page();
+    let current = list_targets(state).first().and_then(|id| match &page.object(*id)?.shape {
+        Shape::Text(t) => t.list,
+        _ => None,
+    });
+    state.bullets = Some(current);
+}
+
+/// The Bullets and Numbering window: none, bullets or numbers, then OK.
+pub fn bullets_window(ctx: &egui::Context, state: &mut AppState) {
+    let Some(mut list) = state.bullets.take() else { return };
+    let mut open = true;
+    let (mut ok, mut cancel) = (false, false);
+    egui::Window::new("Bullets and Numbering")
+        .collapsible(false)
+        .resizable(false)
+        .open(&mut open)
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .show(ctx, |ui| {
+            ui.radio_value(&mut list, None, "None");
+            for style in [vs_core::ListStyle::Bullet, vs_core::ListStyle::Numbered] {
+                ui.radio_value(&mut list, Some(style), style.label());
+            }
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                ok = crate::a11y::window_button(ui, true, "OK", "Bullets and Numbering").clicked();
+                cancel = crate::a11y::window_button(ui, true, "Cancel", "Bullets and Numbering").clicked();
+            });
+        });
+    if ok {
+        let ids = list_targets(state);
+        let page = state.doc.active_page_mut();
+        for id in ids {
+            if let Some(obj) = page.object_mut(id)
+                && let Shape::Text(t) = &mut obj.shape
+            {
+                t.list = list;
+            }
+        }
+    } else if open && !cancel {
+        state.bullets = Some(list);
     }
 }

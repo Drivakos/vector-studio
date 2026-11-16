@@ -451,3 +451,33 @@ fn columns_split_paragraph_text_and_the_words_flow_on() {
     app.shortcut(Modifiers::COMMAND, Key::Z);
     assert_eq!(text(&app, 0).columns, 1, "undo");
 }
+
+#[test]
+fn bullets_and_numbering_mark_each_paragraph() {
+    let mut app = E2e::new();
+    app.key(Key::F8);
+    app.drag_doc((100.0, 100.0), (400.0, 300.0));
+    app.type_text("first\nsecond");
+    app.key(Key::Escape);
+    let before = text(&app, 0).layout().lines[0].carets[0];
+
+    app.menu(&["Text", "Bullets and Numbering…"]);
+    app.click("Bullets");
+    app.click("OK (Bullets and Numbering)");
+    let t = text(&app, 0);
+    assert_eq!(t.list, Some(vs_core::ListStyle::Bullet));
+    let words = t.layout().lines[0].carets[0];
+    assert!(words > before + 5.0, "the words move past the bullet");
+    assert!(any_dark(&mut app, 100.0, 105.0, 100.0 + words - 3.0, 130.0), "the bullet is drawn before them");
+
+    app.menu(&["Text", "Bullets and Numbering…"]);
+    app.click("Numbers");
+    app.click("OK (Bullets and Numbering)");
+    assert_eq!(text(&app, 0).list, Some(vs_core::ListStyle::Numbered));
+    app.menu(&["Text", "Bullets and Numbering…"]);
+    app.click("None");
+    app.click("OK (Bullets and Numbering)");
+    assert_eq!(text(&app, 0).list, None);
+    app.shortcut(Modifiers::COMMAND, Key::Z);
+    assert_eq!(text(&app, 0).list, Some(vs_core::ListStyle::Numbered), "undo");
+}

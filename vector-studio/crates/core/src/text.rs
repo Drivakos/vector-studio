@@ -44,6 +44,25 @@ impl TextAlign {
     }
 }
 
+/// A mark at the start of every paragraph, with the lines of the paragraph indented
+/// past it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ListStyle {
+    /// "•"
+    Bullet,
+    /// "1.", "2.", … counting the paragraphs that have words.
+    Numbered,
+}
+
+impl ListStyle {
+    pub fn label(self) -> &'static str {
+        match self {
+            ListStyle::Bullet => "Bullets",
+            ListStyle::Numbered => "Numbers",
+        }
+    }
+}
+
 /// What a text field shows. Its text is kept up to date by the document.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum TextField {
@@ -82,6 +101,9 @@ pub struct Text {
     /// Paragraph text: space between columns, in points.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub gutter: f64,
+    /// Bullets or numbers before each paragraph. Not on text fitted to a path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub list: Option<ListStyle>,
 }
 
 fn one() -> u32 {
@@ -113,6 +135,7 @@ impl Text {
             field: None,
             columns: 1,
             gutter: 0.0,
+            list: None,
         }
     }
 
@@ -177,7 +200,7 @@ impl Text {
     pub fn to_path(&self) -> BezPath {
         let frame = self.frame.map(|f| (f.width.to_bits(), f.height.to_bits()));
         let guide = self.on_path.as_ref().map(BezPath::to_svg);
-        let columns = (self.columns, self.gutter.to_bits());
+        let columns = (self.columns, self.gutter.to_bits(), self.list);
         let key = (self.content.clone(), self.family.clone(), self.style.clone(), self.size.to_bits(), self.align, frame, guide, columns);
         let cache = PATHS.get_or_init(Mutex::default);
         if let Some(path) = cache.lock().expect("text cache").get(&key) {
@@ -193,7 +216,7 @@ impl Text {
     }
 }
 
-type PathKey = (String, String, String, u64, TextAlign, Option<(u64, u64)>, Option<String>, (u32, u64));
+type PathKey = (String, String, String, u64, TextAlign, Option<(u64, u64)>, Option<String>, (u32, u64, Option<ListStyle>));
 static PATHS: OnceLock<Mutex<HashMap<PathKey, BezPath>>> = OnceLock::new();
 
 /// One laid-out line.
@@ -219,6 +242,8 @@ pub struct TextLayout {
     pub frame: Option<Rect>,
     /// Paragraph text: some lines do not fit in the frame and are not drawn.
     pub overflow: bool,
+    /// Lists: how far each line starts past its bullet or number.
+    pub indent: f64,
 }
 
 impl TextLayout {
@@ -232,7 +257,7 @@ impl TextLayout {
         let mut r: Option<Rect> = None;
         for line in &self.lines {
             let (x0, x1) = (line.carets[0], *line.carets.last().expect("a line has a caret"));
-            let b = Rect::new(x0.min(x1), line.baseline - self.ascent, x0.max(x1), line.baseline + self.descent);
+            let b = Rect::new(x0.min(x1) - self.indent, line.baseline - self.ascent, x0.max(x1), line.baseline + self.descent);
             r = Some(r.map_or(b, |r| r.union(b)));
         }
         r.unwrap_or_default()
@@ -293,6 +318,29 @@ fn layout(text: &Text) -> TextLayout {
 
     let columns = text.column_spans();
     let (mut column, mut row) = (0, 0);
+    // Lists: each paragraph's mark, and how far its lines are indented past it.
+    let glyphs_of = |s: &str| -> Vec<(GlyphId, f64)> {
+        s.chars()
+            .map(|ch| {
+                let gid = charmap.map(ch).unwrap_or(GlyphId::NOTDEF);
+                (gid, f64::from(advances.advance_width(gid).unwrap_or(0.0)))
+            })
+            .collect()
+    };
+    let paragraphs = text.content.split('\n').filter(|p| !p.is_empty()).count();
+    let mark_text = |n: usize| match text.list {
+        Some(ListStyle::Bullet) => "•".to_owned(),
+        Some(ListStyle::Numbered) => format!("{n}."),
+        None => String::new(),
+    };
+    let indent = match text.list {
+        None => 0.0,
+        Some(_) => {
+            let widest = glyphs_of(&mark_text(paragraphs.max(1))).iter().map(|g| g.1).sum::<f64>();
+            widest + text.size * 0.5
+        }
+    };
+    let mut number = 0;
     let mut path = BezPath::new();
     let mut lines = Vec::new();
     let mut overflow = false;
@@ -307,10 +355,14 @@ fn layout(text: &Text) -> TextLayout {
             .collect();
         let advance: Vec<f64> = glyphs.iter().map(|g| g.2).collect();
         let ranges = match frame {
-            Some(_) => wrap(&glyphs.iter().map(|g| g.0).collect::<Vec<_>>(), &advance, columns[0].1),
+            Some(_) => wrap(&glyphs.iter().map(|g| g.0).collect::<Vec<_>>(), &advance, (columns[0].1 - indent).max(1.0)),
             None => std::iter::once(0..glyphs.len()).collect(),
         };
-        for range in ranges {
+        let marked = text.list.is_some() && !glyphs.is_empty();
+        if marked {
+            number += 1;
+        }
+        for (k, range) in ranges.into_iter().enumerate() {
             let mut baseline = first_baseline + row as f64 * line_height;
             // Past the bottom of a column: on to the top of the next one, if there is one.
             if let Some(f) = frame
@@ -324,11 +376,12 @@ fn layout(text: &Text) -> TextLayout {
             }
             row += 1;
             let (left, col_width) = columns[column];
+            let (left, col_width) = (left + indent, col_width - indent);
             let chars = &glyphs[range.clone()];
             // Trailing spaces hang past the edge, so they do not count for alignment.
             let shown = chars.len() - chars.iter().rev().take_while(|g| g.0 == ' ').count();
             let width: f64 = chars[..shown].iter().map(|g| g.2).sum();
-            let mut x = match (frame, text.align) {
+            let x = match (frame, text.align) {
                 (None, TextAlign::Left) => 0.0,
                 (None, TextAlign::Center) => -width / 2.0,
                 (None, TextAlign::Right) => -width,
@@ -338,6 +391,19 @@ fn layout(text: &Text) -> TextLayout {
             };
             let hidden = frame.is_some_and(|f| baseline + descent > f.height() + 1e-9);
             overflow |= hidden;
+            // Artistic text: the indent is relative to where the line starts.
+            let x = if frame.is_none() { x + indent } else { x };
+            if marked && k == 0 && !hidden {
+                let mut mx = x - indent;
+                for (gid, advance) in glyphs_of(&mark_text(number)) {
+                    if let Some(glyph) = outlines.get(gid) {
+                        let mut pen = Pen { path: &mut path, origin: Point::new(mx, baseline) };
+                        let _ = glyph.draw(DrawSettings::unhinted(size, location), &mut pen);
+                    }
+                    mx += advance;
+                }
+            }
+            let mut x = x;
             let mut carets = vec![x];
             for (_, gid, advance) in chars {
                 if !hidden && let Some(glyph) = outlines.get(*gid) {
@@ -352,7 +418,7 @@ fn layout(text: &Text) -> TextLayout {
         }
         start += glyphs.len() + 1;
     }
-    TextLayout { path, lines, ascent, descent, frame, overflow }
+    TextLayout { path, lines, ascent, descent, frame, overflow, indent: if frame.is_none() { indent } else { 0.0 } }
 }
 
 /// Accuracy of arc lengths along a text path, in points.
@@ -432,7 +498,7 @@ fn layout_on_path(text: &Text, guide: &BezPath, font: &FontRef, size: Size, asce
         carets.push(s);
     }
     let area = if path.is_empty() { guide.bounding_box() } else { path.bounding_box() };
-    TextLayout { path, lines: vec![Line { start: 0, baseline: 0.0, carets }], ascent, descent, frame: Some(area), overflow: false }
+    TextLayout { path, lines: vec![Line { start: 0, baseline: 0.0, carets }], ascent, descent, frame: Some(area), overflow: false, indent: 0.0 }
 }
 
 /// Split one paragraph into lines no wider than `width`: break after the last space that
@@ -843,6 +909,36 @@ mod tests {
         // One column (the default) is what it always was.
         t.columns = 1;
         assert!(t.layout().overflow, "four lines do not fit one 60 pt column");
+    }
+
+    #[test]
+    fn lists_mark_each_paragraph_and_indent_its_lines() {
+        let face = library().resolve(default_family(), default_style());
+        let data = face.data();
+        let font = FontRef::from_index(&data, face.index).unwrap();
+        assert!(font.charmap().map('•').is_some(), "the default font has a bullet");
+        let plain = paragraph("alpha beta gamma\n\ndelta", 400.0, 400.0);
+        let mut t = plain.clone();
+        t.list = Some(ListStyle::Bullet);
+        let (p, l) = (plain.layout(), t.layout());
+        let shift = l.lines[0].carets[0] - p.lines[0].carets[0];
+        assert!(shift > t.size * 0.5, "lines start past the bullet: {shift}");
+        assert_eq!(l.lines[1].carets.len(), 1, "the empty paragraph");
+        assert!(t.to_path().bounding_box().x0 < shift, "the bullet is drawn before the words");
+        // Numbers count the paragraphs with words and indent past the widest.
+        t.list = Some(ListStyle::Numbered);
+        let n = t.layout();
+        assert!(n.path.elements().len() > l.path.elements().len(), "\"1.\" and \"2.\" take more outline than two bullets");
+        // Wrapped lines hang under the first line's words, not under the mark.
+        let mut narrow = paragraph("one two three four five six", 120.0, 400.0);
+        narrow.list = Some(ListStyle::Bullet);
+        let w = narrow.layout();
+        assert!(w.lines.len() > 1);
+        assert!((w.lines[1].carets[0] - w.lines[0].carets[0]).abs() < 1e-9, "hanging indent");
+        // Artistic text: the bounds take in the bullet.
+        let mut a = text("x");
+        a.list = Some(ListStyle::Bullet);
+        assert!(a.layout().bounds().x0 < 0.0 + 1e-9 && a.layout().lines[0].carets[0] > 0.0);
     }
 
     #[test]
