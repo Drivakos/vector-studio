@@ -39,6 +39,8 @@ impl SnapTarget {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Command {
     NewDocument,
+    NewFromTemplate,
+    SaveAsTemplate,
     Open,
     /// Close (and Close All: there is one drawing open).
     Close,
@@ -134,6 +136,8 @@ impl Command {
             "file.open" => Open,
             "file.close" | "file.close_all" => Close,
             "file.revert" => Revert,
+            "file.new_from_template" => NewFromTemplate,
+            "file.save_as_template" => SaveAsTemplate,
             "file.save" => Save,
             "file.save_as" => SaveAs,
             "file.import" => Import,
@@ -254,6 +258,8 @@ impl Command {
     #[cfg(test)]
     pub const ALL: &'static [Command] = &[
         Command::NewDocument,
+        Command::NewFromTemplate,
+        Command::SaveAsTemplate,
         Command::Open,
         Command::Close,
         Command::Revert,

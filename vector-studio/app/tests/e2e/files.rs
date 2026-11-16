@@ -313,3 +313,45 @@ fn print_sends_the_chosen_pages_to_the_chosen_printer() {
     assert_eq!((job.printer.as_str(), job.copies), ("Office", 2), "settings are kept between prints");
     assert!(String::from_utf8_lossy(&pdf).contains("/Count 1"));
 }
+
+#[test]
+fn save_as_template_then_new_from_template_starts_an_untitled_copy() {
+    let mut app = E2e::new();
+    let dir = temp_dir("template");
+    app.draw_rect(100.0, 100.0, 200.0, 150.0);
+    app.script.borrow_mut().save_paths.push_back(dir.join("mine.vstudio"));
+    app.shortcut(Modifiers::COMMAND | Modifiers::SHIFT, Key::S);
+
+    app.menu(&["File", "Save as Template…"]);
+    assert_eq!(app.value("Template name"), "mine", "the drawing's name to start with");
+    app.fill("Template name", "Poster");
+    app.click("Save (Save as Template)");
+    assert!(!app.exists("Template name"), "the window closes");
+    let templates = app.state().templates_dir.clone().unwrap();
+    assert!(templates.join("Poster.vstemplate").exists());
+    assert_eq!(app.state().file_path.as_deref(), Some(dir.join("mine.vstudio").as_path()), "the drawing keeps its own file");
+
+    // Saving under the same name asks first; No keeps the old one.
+    app.menu(&["File", "Save as Template…"]);
+    app.fill("Template name", "Poster");
+    app.script.borrow_mut().confirms.push_back(false);
+    app.click("Save (Save as Template)");
+    assert_eq!(app.script.borrow().shown.last().map(String::as_str), Some("Replace template"));
+    assert!(app.exists("Template name"), "still open after No");
+    app.click("Cancel (Save as Template)");
+
+    app.menu(&["File", "New from Template…"]);
+    assert!(app.exists("Template Poster"));
+    app.click("Open (New from Template)");
+    assert!(!app.exists("Template Poster"));
+    assert_eq!(app.objects().len(), 1, "the template's rectangle");
+    assert!(app.state().file_path.is_none(), "a new, unsaved drawing");
+    assert!(app.doc().title.starts_with("Untitled-"), "{}", app.doc().title);
+
+    // Browse… opens any template file.
+    app.menu(&["File", "New from Template…"]);
+    app.script.borrow_mut().open_paths.push_back(templates.join("Poster.vstemplate"));
+    app.click("Browse… (New from Template)");
+    assert_eq!(app.script.borrow().shown.last().map(String::as_str), Some("New from Template"));
+    assert_eq!(app.objects().len(), 1);
+}

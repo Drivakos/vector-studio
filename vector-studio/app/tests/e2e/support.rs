@@ -117,6 +117,12 @@ impl E2e {
         h.state_mut().state_mut().dialogs = Box::new(ScriptedDialogs(script.clone()));
         h.state_mut().state_mut().printing = Box::new(ScriptedPrinting(script.clone()));
         h.state_mut().state_mut().clipboard_source = Box::new(ScriptedClipboard(script.clone()));
+        // Never the real Templates folder: one of its own for each app under test.
+        static APPS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = APPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let templates = std::env::temp_dir().join(format!("vs-e2e-templates-{}-{n}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&templates);
+        h.state_mut().state_mut().templates_dir = Some(templates);
         let mut app = Self { h, script, mods: Modifiers::NONE };
         app.run();
         app

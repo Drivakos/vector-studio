@@ -130,6 +130,10 @@ pub struct AppState {
     /// The page number in the open Go to Page window (1-based).
     pub go_to_page: Option<usize>,
     pub page_background: Option<crate::page_dialogs::PageBackgroundDialog>,
+    /// Where templates are kept; tests point it at a temporary folder.
+    pub templates_dir: Option<PathBuf>,
+    pub save_template: Option<crate::templates::SaveTemplateDialog>,
+    pub new_from_template: Option<crate::templates::NewFromTemplateDialog>,
     pub show_document_properties: bool,
     pub renaming_object: Option<(ObjectId, String)>,
     /// The layer (page index, layer) being renamed in the Objects docker.
@@ -253,6 +257,9 @@ impl AppState {
             renaming_page: None,
             go_to_page: None,
             page_background: None,
+            templates_dir: crate::templates::default_dir(),
+            save_template: None,
+            new_from_template: None,
             show_document_properties: false,
             renaming_object: None,
             renaming_layer: None,
@@ -528,6 +535,14 @@ impl VectorStudioApp {
             }
             Command::DocumentProperties => {
                 let _: () = s.show_document_properties = true;
+                Ok(())
+            }
+            Command::SaveAsTemplate => {
+                crate::templates::open_save(s);
+                Ok(())
+            }
+            Command::NewFromTemplate => {
+                crate::templates::open_new(s);
                 Ok(())
             }
             Command::Export => {
@@ -1219,6 +1234,8 @@ impl eframe::App for VectorStudioApp {
         crate::paste_special::paste_special_window(&ctx, &mut self.state);
         crate::page_dialogs::go_to_page_window(&ctx, &mut self.state);
         crate::page_dialogs::page_background_window(&ctx, &mut self.state);
+        crate::templates::save_window(&ctx, &mut self.state);
+        crate::templates::new_window(&ctx, &mut self.state);
         crate::edit_tools::copy_properties_window(&ctx, &mut self.state);
         self.settle(&ctx);
 
