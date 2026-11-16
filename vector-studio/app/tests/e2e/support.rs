@@ -22,6 +22,8 @@ pub struct Script {
     pub save_paths: VecDeque<PathBuf>,
     pub open_paths: VecDeque<PathBuf>,
     pub unsaved: VecDeque<Unsaved>,
+    /// Answers to OK/Cancel questions.
+    pub confirms: VecDeque<bool>,
     /// Titles of every dialog shown, in order.
     pub shown: Vec<String>,
     pub errors: Vec<String>,
@@ -46,6 +48,12 @@ impl Dialogs for ScriptedDialogs {
         let mut s = self.0.borrow_mut();
         s.shown.push("Unsaved changes".to_owned());
         s.unsaved.pop_front().expect("the test did not script an answer to the unsaved-changes dialog")
+    }
+
+    fn confirm(&mut self, title: &str, _detail: &str) -> bool {
+        let mut s = self.0.borrow_mut();
+        s.shown.push(title.to_owned());
+        s.confirms.pop_front().expect("the test did not script an answer to a confirmation")
     }
 
     fn error(&mut self, title: &str, detail: &str) {

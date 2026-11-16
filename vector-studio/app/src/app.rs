@@ -121,7 +121,7 @@ pub struct AppState {
     clipboard: Vec<Object>,
     /// Text we put on the system clipboard with the last copy, to recognise our own paste.
     clipboard_text: String,
-    untitled_count: u32,
+    pub(crate) untitled_count: u32,
     show_about: bool,
     last_tool: Tool,
     nodes_owner: Option<ObjectId>,
@@ -330,6 +330,7 @@ impl VectorStudioApp {
             Command::JoinCurves => (doc.can_join_curves(&state.selection, vs_core::curves::JOIN_TOLERANCE), None),
             Command::ConvertOutline => (doc.can_convert_outline(&state.selection), None),
             Command::ConvertText => (doc.can_convert_text(&state.selection), None),
+            Command::Revert => (files::can_revert(state), None),
             Command::FitTextToPath => (doc.can_fit_text_to_path(&state.selection), None),
             Command::StraightenText => (doc.can_straighten_text(&state.selection), None),
             Command::ClipPlaceInside => (doc.can_place_inside(&state.selection), None),
@@ -357,6 +358,14 @@ impl VectorStudioApp {
                 files::open(s);
                 Ok(())
             },
+            Command::Close => {
+                files::close(s);
+                Ok(())
+            }
+            Command::Revert => {
+                files::revert(s);
+                Ok(())
+            }
             Command::Save => Ok(_ = files::save(s, false)),
             Command::SaveAs => Ok(_ = files::save(s, true)),
             Command::Import => {

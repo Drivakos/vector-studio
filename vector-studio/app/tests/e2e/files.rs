@@ -207,3 +207,37 @@ fn import_places_a_png_as_a_bitmap_that_draws_and_fits_the_page() {
     let r = app.bounds(1);
     assert!((r.width() - page.width()).abs() < 0.01, "too wide for the page: scaled to fit it: {r:?}");
 }
+
+#[test]
+fn revert_reloads_the_saved_file_and_close_starts_a_new_drawing() {
+    let dir = temp_dir("revert");
+    let path = dir.join("card.vstudio");
+    let mut app = E2e::new();
+    app.draw_rect(100.0, 100.0, 200.0, 200.0);
+    assert!(!vector_studio::files::can_revert(app.state()), "never saved: nothing to revert to");
+    app.script.borrow_mut().save_paths.push_back(path.clone());
+    app.shortcut(Modifiers::COMMAND | Modifiers::SHIFT, Key::S);
+    assert!(!vector_studio::files::can_revert(app.state()), "no changes since saving");
+
+    app.draw_rect(300.0, 100.0, 400.0, 200.0);
+    app.script.borrow_mut().confirms.push_back(false);
+    app.menu(&["File", "Revert"]);
+    assert_eq!(app.objects().len(), 2, "Cancel keeps the changes");
+    app.script.borrow_mut().confirms.push_back(true);
+    app.menu(&["File", "Revert"]);
+    assert_eq!(app.objects().len(), 1, "back to the saved version");
+    assert!(!app.state().history.is_dirty());
+    assert_eq!(app.state().file_path.as_deref(), Some(path.as_path()));
+
+    // Close asks about unsaved changes, then starts a new drawing.
+    app.draw_rect(300.0, 100.0, 400.0, 200.0);
+    app.script.borrow_mut().unsaved.push_back(Unsaved::Cancel);
+    app.shortcut(Modifiers::COMMAND, Key::W);
+    assert_eq!(app.objects().len(), 2, "Cancel keeps the drawing open");
+    app.script.borrow_mut().unsaved.push_back(Unsaved::Discard);
+    app.menu(&["File", "Close All"]);
+    assert!(app.objects().is_empty());
+    assert_eq!(app.doc().title, "Untitled-2");
+    assert_eq!(app.state().file_path, None);
+    assert_eq!(vs_io::open_document(&path).unwrap().active_page().objects.len(), 1, "the file is untouched");
+}

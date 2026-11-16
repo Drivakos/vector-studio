@@ -38,6 +38,9 @@ impl SnapTarget {
 pub enum Command {
     NewDocument,
     Open,
+    /// Close (and Close All: there is one drawing open).
+    Close,
+    Revert,
     Save,
     SaveAs,
     Import,
@@ -107,6 +110,8 @@ impl Command {
         Some(match id {
             "file.new" => NewDocument,
             "file.open" => Open,
+            "file.close" | "file.close_all" => Close,
+            "file.revert" => Revert,
             "file.save" => Save,
             "file.save_as" => SaveAs,
             "file.import" => Import,
@@ -205,6 +210,8 @@ impl Command {
     pub const ALL: &'static [Command] = &[
         Command::NewDocument,
         Command::Open,
+        Command::Close,
+        Command::Revert,
         Command::Save,
         Command::SaveAs,
         Command::Import,

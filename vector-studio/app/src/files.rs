@@ -50,6 +50,8 @@ pub trait Dialogs {
     /// Ask for a file to read with one of `extensions`.
     fn open_file(&mut self, title: &str, filter: &str, extensions: &[&str]) -> Option<PathBuf>;
     fn unsaved_changes(&mut self, document: &str) -> Unsaved;
+    /// Ask OK or Cancel; true for OK.
+    fn confirm(&mut self, title: &str, detail: &str) -> bool;
     fn error(&mut self, title: &str, detail: &str);
 }
 
@@ -77,6 +79,16 @@ impl Dialogs for NativeDialogs {
             MessageDialogResult::No => Unsaved::Discard,
             _ => Unsaved::Cancel,
         }
+    }
+
+    fn confirm(&mut self, title: &str, detail: &str) -> bool {
+        let answer = MessageDialog::new()
+            .set_level(MessageLevel::Warning)
+            .set_title(title)
+            .set_description(detail)
+            .set_buttons(MessageButtons::OkCancel)
+            .show();
+        answer == MessageDialogResult::Ok
     }
 
     fn error(&mut self, title: &str, detail: &str) {
@@ -160,6 +172,30 @@ pub fn open(state: &mut AppState) {
         return;
     };
     open_path(state, &path);
+}
+
+/// Close the drawing (after asking to save changes) and start a new one in its place.
+pub fn close(state: &mut AppState) {
+    if confirm_discard(state) {
+        state.untitled_count += 1;
+        let doc = Document::new(format!("Untitled-{}", state.untitled_count));
+        set_document(state, doc, None);
+    }
+}
+
+/// Whether Revert applies: the drawing has a file and changes since it was saved.
+pub fn can_revert(state: &AppState) -> bool {
+    state.file_path.is_some() && state.history.is_dirty()
+}
+
+/// Throw away the changes since the last save and reload the file, after asking.
+pub fn revert(state: &mut AppState) {
+    state.history.commit(&state.doc);
+    let Some(path) = state.file_path.clone().filter(|_| state.history.is_dirty()) else { return };
+    let name = file_stem(state);
+    if state.dialogs.confirm("Revert", &format!("Discard the changes to “{name}” and go back to the saved version?")) {
+        open_path(state, &path);
+    }
 }
 
 pub fn open_path(state: &mut AppState, path: &Path) {
