@@ -89,24 +89,16 @@ pub fn statistics_window(ctx: &egui::Context, state: &mut AppState) {
         .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
         .show(ctx, |ui| {
             ui.label(egui::RichText::new(scope).strong());
-            egui::Grid::new("text_statistics").num_columns(2).spacing([16.0, 4.0]).show(ui, |ui| {
-                for (name, value) in [
-                    ("Text objects", stats.objects),
-                    ("Lines", stats.lines),
-                    ("Words", stats.words),
-                    ("Characters", stats.characters),
-                ] {
-                    ui.label(name);
-                    let v = ui.label(value.to_string());
-                    crate::a11y::name(&v, &format!("{name} (text statistics)"));
-                    ui.end_row();
-                }
-                ui.label("Fonts");
-                let fonts = if stats.fonts.is_empty() { "None".to_owned() } else { stats.fonts.join("\n") };
-                let v = ui.label(fonts);
-                crate::a11y::name(&v, "Fonts (text statistics)");
-                ui.end_row();
-            });
+            for (name, value) in [
+                ("Text objects", stats.objects),
+                ("Lines", stats.lines),
+                ("Words", stats.words),
+                ("Characters", stats.characters),
+            ] {
+                ui.label(format!("{name}: {value}"));
+            }
+            let fonts = if stats.fonts.is_empty() { "None".to_owned() } else { stats.fonts.join(", ") };
+            ui.label(format!("Fonts: {fonts}"));
             ui.add_space(8.0);
             close = crate::a11y::window_button(ui, true, "Close", "Text Statistics").clicked();
         });

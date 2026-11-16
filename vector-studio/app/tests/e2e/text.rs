@@ -356,3 +356,34 @@ fn change_case_rewrites_the_selected_text_or_the_text_being_typed() {
     assert_eq!(text(&app, 1).content, "ABc");
     assert_eq!(text(&app, 0).content, "The Cat. A Dog", "other text is left alone");
 }
+
+#[test]
+fn text_statistics_count_the_selected_text_or_the_whole_drawing() {
+    let mut app = E2e::new();
+    app.key(Key::F8);
+    app.click_doc(100.0, 200.0);
+    app.type_text("one two");
+    app.key(Key::Enter);
+    app.type_text("three");
+    app.key(Key::Escape);
+    app.click_doc(100.0, 400.0);
+    app.type_text("four");
+    app.key(Key::Escape);
+    app.pick_tool();
+    app.click_doc(500.0, 800.0);
+
+    app.menu(&["Text", "Text Statistics"]);
+    assert!(app.exists("Whole drawing"));
+    assert!(app.exists("Text objects: 2"));
+    assert!(app.exists("Words: 4"));
+    assert!(app.exists("Lines: 3"));
+    assert!(app.exists("Characters: 16"));
+    app.click("Close (Text Statistics)");
+    assert!(!app.exists("Words: 4"));
+
+    app.click_doc(110.0, 395.0);
+    assert_eq!(app.selection().len(), 1);
+    app.menu(&["Text", "Text Statistics"]);
+    assert!(app.exists("Selected text"));
+    assert!(app.exists("Words: 1"));
+}
