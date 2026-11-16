@@ -98,7 +98,12 @@ impl GpuCanvas {
         }
         let id = self.ensure_target(size);
         self.scene.reset();
-        build_page_scene(&mut self.scene, state.doc.active_page(), &state.viewport, pixels_per_point, &self.colors, state.view_mode);
+        // A page background shows on screen whether or not it prints and exports.
+        let colors = CanvasColors {
+            page: state.doc.background.map_or(self.colors.page, |b| vs_render::to_color(b.color)),
+            ..self.colors
+        };
+        build_page_scene(&mut self.scene, state.doc.active_page(), &state.viewport, pixels_per_point, &colors, state.view_mode);
         let target = self.target.as_ref()?;
         let params = RenderParams {
             base_color: self.colors.pasteboard,

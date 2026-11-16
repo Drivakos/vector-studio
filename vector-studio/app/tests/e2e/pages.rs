@@ -158,3 +158,49 @@ fn page_numbers_show_and_follow_their_page() {
     assert_eq!(app.doc().active_page_index(), 1);
     assert_eq!(text_content(&app, 0), typed, "no longer a page number");
 }
+
+#[test]
+fn page_background_shows_exports_when_asked_and_undoes() {
+    let dir = crate::support::temp_dir("background");
+    let mut app = E2e::new();
+    app.draw_rect(100.0, 100.0, 200.0, 200.0);
+    app.menu(&["Layout", "Page Background…"]);
+    assert!(app.is_selected("No background"));
+    app.click("Solid colour");
+    app.fill("Background colour (hex)", "#ffcc00");
+    app.click("OK");
+    assert!(!app.exists("Background colour (hex)"));
+    let paper = app.pixel(300.0, 400.0);
+    assert_eq!(&paper[..3], &[0xff, 0xcc, 0x00], "the page shows the background");
+    assert!(app.state().history.is_dirty(), "an unsaved change");
+
+    let export_svg = |app: &mut E2e, file: &str| {
+        app.shortcut(egui::Modifiers::COMMAND, Key::E);
+        app.click("Export format");
+        app.click("SVG - Scalable Vector Graphics");
+        app.script.borrow_mut().save_paths.push_back(dir.join(file));
+        app.click("Export…");
+        std::fs::read_to_string(dir.join(file)).unwrap()
+    };
+    let svg = export_svg(&mut app, "with.svg");
+    assert!(svg.contains(r##"<rect width="595.276" height="841.89" fill="#ffcc00"/>"##), "{svg}");
+
+    app.menu(&["Layout", "Page Background…"]);
+    assert_eq!(app.value("Background colour (hex)"), "#ffcc00");
+    app.click("Print and export background");
+    app.click("OK");
+    assert_eq!(app.doc().background.map(|b| b.print_and_export), Some(false));
+    let svg = export_svg(&mut app, "screen-only.svg");
+    assert!(!svg.contains("<rect"), "shown on screen only: {svg}");
+    assert_eq!(&app.pixel(300.0, 400.0)[..3], &[0xff, 0xcc, 0x00]);
+
+    // Undo: printing back on, then the white Solid colour picked first, then none.
+    let undo = |app: &mut E2e| {
+        app.shortcut(egui::Modifiers::COMMAND, Key::Z);
+        app.doc().background.map(|b| (b.color.to_hex(), b.print_and_export))
+    };
+    assert_eq!(undo(&mut app), Some(("#ffcc00".into(), true)));
+    assert_eq!(undo(&mut app), Some(("#ffffff".into(), true)));
+    assert_eq!(undo(&mut app), None, "each change is an undo step");
+    assert_eq!(&app.pixel(300.0, 400.0)[..3], &[0xff, 0xff, 0xff]);
+}

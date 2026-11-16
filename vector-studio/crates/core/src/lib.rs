@@ -21,7 +21,7 @@ pub mod text;
 pub mod units;
 
 pub use document::{
-    ArcKind, Document, DocumentError, EllipseArc, LineCap, LineJoin, LineStyle, Object, ObjectId, Orientation, Outline,
+    ArcKind, Background, Document, DocumentError, EllipseArc, LineCap, LineJoin, LineStyle, Object, ObjectId, Orientation, Outline,
     PAGE_PRESETS, Page, PageId, PagePreset, Rgba, Shape, Style,
 };
 pub use bitmap::{Bitmap, BitmapFormat};

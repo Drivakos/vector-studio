@@ -82,10 +82,11 @@ pub fn select_at(state: &mut AppState, p: Point, tolerance: f64) -> Option<Objec
 /// A click with either eyedropper.
 pub fn press_eyedropper(state: &mut AppState, p: Point, tolerance: f64) {
     let page = state.doc.active_page();
+    let paper = state.doc.background.map_or(Rgba::WHITE, |b| b.color);
     let eye = &mut state.tools.eyedropper;
     match (state.tool, eye.applying) {
         (Tool::ColorEyedropper, false) => {
-            let picked = page.paint_at(p, tolerance).map(|h| h.color).or_else(|| page.bounds().contains(p).then_some(Rgba::WHITE));
+            let picked = page.paint_at(p, tolerance).map(|h| h.color).or_else(|| page.bounds().contains(p).then_some(paper));
             if picked.is_some() {
                 eye.color = picked;
                 eye.applying = true;

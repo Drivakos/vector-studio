@@ -161,12 +161,17 @@ impl Default for ExportOptions {
 }
 
 /// Export to `path`, picking the format from its extension. SVG and PNG export the
-/// active page; PDF exports every page.
+/// active page; PDF exports every page. A page background set to print and export
+/// comes out under the objects (for PNG, in place of `options.background`).
 pub fn export(doc: &Document, path: &Path, options: &ExportOptions) -> Result<ExportFormat, IoError> {
     let format = ExportFormat::from_path(path)?;
+    let background = doc.exported_background();
     let bytes = match format {
-        ExportFormat::Svg => page_to_svg(doc.active_page()).into_bytes(),
-        ExportFormat::Png => page_to_png(doc.active_page(), options)?,
+        ExportFormat::Svg => svg_of_page(doc.active_page(), background).into_bytes(),
+        ExportFormat::Png => {
+            let options = ExportOptions { background: background.or(options.background), ..*options };
+            page_to_png(doc.active_page(), &options)?
+        }
         ExportFormat::Pdf => document_to_pdf(doc)?,
     };
     std::fs::write(path, bytes)?;
@@ -330,6 +335,11 @@ fn num(v: f64) -> String {
 
 /// SVG 1.1 document of one page; 1 user unit = 1 pt.
 pub fn page_to_svg(page: &Page) -> String {
+    svg_of_page(page, None)
+}
+
+/// [`page_to_svg`] with a rectangle of `background` under everything.
+fn svg_of_page(page: &Page, background: Option<Rgba>) -> String {
     let (w, h) = (page.size.width, page.size.height);
     let mut out = String::new();
     let _ = writeln!(out, r#"<?xml version="1.0" encoding="UTF-8"?>"#);
@@ -338,6 +348,9 @@ pub fn page_to_svg(page: &Page) -> String {
         r#"<svg xmlns="http://www.w3.org/2000/svg" version="1.1" width="{}pt" height="{}pt" viewBox="0 0 {} {}">"#,
         num(w), num(h), num(w), num(h)
     );
+    if let Some(bg) = background {
+        let _ = writeln!(out, r#"  <rect width="{}" height="{}" fill="{}"/>"#, num(w), num(h), hex(bg));
+    }
     for obj in page.shown_objects() {
         write_svg_object(&mut out, obj, vs_core::kurbo::Affine::IDENTITY, 1);
     }
@@ -486,6 +499,14 @@ pub fn document_to_pdf(doc: &Document) -> Result<Vec<u8>, IoError> {
             .ok_or_else(|| IoError::Pdf("invalid page size".into()))?;
         let mut pdf_page = pdf.start_page_with(settings);
         let mut surface = pdf_page.surface();
+        if let Some(bg) = doc.exported_background() {
+            let paper = vs_core::kurbo::Shape::to_path(&page.bounds(), 0.1);
+            if let Some(path) = pdf_path(&paper) {
+                surface.set_fill(Some(krilla::paint::Fill { paint: krilla::color::rgb::Color::new(bg.r, bg.g, bg.b).into(), ..Default::default() }));
+                surface.set_stroke(None);
+                surface.draw_path(&path);
+            }
+        }
         for leaf in page.shown_objects().flat_map(Object::leaves) {
             for clip in leaf.clips.iter().filter_map(pdf_path) {
                 surface.push_clip_path(&clip, &FillRule::EvenOdd);
@@ -755,6 +776,35 @@ mod tests {
         assert!(pdf.starts_with(b"%PDF-"));
         let text = String::from_utf8_lossy(&pdf);
         assert!(text.contains("/Count 2"), "page tree lists two pages");
+    }
+
+    #[test]
+    fn a_page_background_set_to_export_comes_out_under_the_objects() {
+        let dir = std::env::temp_dir().join(format!("vs-io-background-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut doc = sample();
+        let plain_pdf = document_to_pdf(&doc).unwrap();
+        let corner = |doc: &Document| {
+            let path = dir.join("page.png");
+            export(doc, &path, &ExportOptions { dpi: 72.0, background: None }).unwrap();
+            let pixmap = resvg::tiny_skia::Pixmap::decode_png(&std::fs::read(&path).unwrap()).unwrap();
+            let p = pixmap.pixel(500, 700).unwrap();
+            (p.red(), p.green(), p.blue(), p.alpha())
+        };
+        doc.background = Some(vs_core::Background { color: Rgba::rgb(0, 128, 255), print_and_export: false });
+        assert_eq!(corner(&doc).3, 0, "screen only: still transparent");
+        assert_eq!(document_to_pdf(&doc).unwrap(), plain_pdf);
+
+        doc.background = Some(vs_core::Background { color: Rgba::rgb(0, 128, 255), print_and_export: true });
+        assert_eq!(corner(&doc), (0, 128, 255, 255));
+        let svg_path = dir.join("page.svg");
+        export(&doc, &svg_path, &ExportOptions::default()).unwrap();
+        let svg = std::fs::read_to_string(&svg_path).unwrap();
+        let rect = svg.find(r##"<rect width="595.276" height="841.89" fill="#0080ff"/>"##).expect("background rect");
+        assert!(rect < svg.find("<path").unwrap(), "under the objects");
+        assert!(!page_to_svg(doc.active_page()).contains("<rect"), "the clipboard copy has no background");
+        assert_ne!(document_to_pdf(&doc).unwrap(), plain_pdf, "the PDF pages are painted");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

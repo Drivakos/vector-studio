@@ -39,7 +39,7 @@ impl History {
 
     /// Record `doc` as a new step if its pages changed. Returns true if a step was added.
     pub fn commit(&mut self, doc: &Document) -> bool {
-        if doc.pages() == self.base.doc.pages() {
+        if doc.same_content(&self.base.doc) {
             // Keep view-only state (active page, units) in the snapshot without a step.
             self.base.doc = doc.clone();
             return false;

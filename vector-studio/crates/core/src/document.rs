@@ -32,6 +32,21 @@ impl Rgba {
         Self { r, g, b, a: 255 }
     }
 
+    /// `#rrggbb` (alpha is left out).
+    pub fn to_hex(self) -> String {
+        format!("#{:02x}{:02x}{:02x}", self.r, self.g, self.b)
+    }
+
+    /// An opaque colour from `#rrggbb` or `rrggbb`, any case.
+    pub fn from_hex(text: &str) -> Option<Self> {
+        let digits = text.trim().trim_start_matches('#');
+        if digits.len() != 6 || !digits.is_ascii() {
+            return None;
+        }
+        let byte = |i: usize| u8::from_str_radix(&digits[i..i + 2], 16).ok();
+        Some(Self::rgb(byte(0)?, byte(2)?, byte(4)?))
+    }
+
     /// This colour with its alpha multiplied by `opacity` (0..=1).
     pub fn faded(self, opacity: f64) -> Self {
         Self { a: (f64::from(self.a) * opacity.clamp(0.0, 1.0)).round() as u8, ..self }
@@ -471,6 +486,14 @@ impl PagePreset {
     }
 }
 
+/// A colour under the objects of every page, in place of white paper.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Background {
+    pub color: Rgba,
+    /// Print and export it with the drawing; otherwise it only shows on screen.
+    pub print_and_export: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DocumentError {
     LastPage,
@@ -495,6 +518,9 @@ pub struct Document {
     pub(crate) pages: Vec<Page>,
     active_page: usize,
     next_id: u64,
+    /// The page background; `None` is plain white paper that is not exported.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background: Option<Background>,
     /// What each clone last took from its master (see [`Document::sync_clones`]).
     #[serde(skip)]
     pub(crate) clone_sync: crate::clones::CloneSync,
@@ -515,6 +541,7 @@ impl Document {
             pages: Vec::new(),
             active_page: 0,
             next_id: 1,
+            background: None,
             clone_sync: Default::default(),
         };
         let size = PAGE_PRESETS[1].size(Orientation::Portrait);
@@ -540,6 +567,17 @@ impl Document {
             layers: vec![Layer::new(LayerId(1), "Layer 1")],
             active_layer: LayerId(1),
         }
+    }
+
+    /// Whether `other` has the same drawing: pages and document settings, ignoring view
+    /// state such as the active page. Undo steps and unsaved changes follow this.
+    pub fn same_content(&self, other: &Document) -> bool {
+        self.pages == other.pages && self.background == other.background
+    }
+
+    /// The background colour to print and export, if there is one.
+    pub fn exported_background(&self) -> Option<Rgba> {
+        self.background.filter(|b| b.print_and_export).map(|b| b.color)
     }
 
     pub fn pages(&self) -> &[Page] {
@@ -796,6 +834,33 @@ mod tests {
         let mut doc = Document::default();
         assert_eq!(doc.set_active_page(3), Err(DocumentError::PageOutOfRange(3)));
         assert_eq!(doc.insert_page_after(3), Err(DocumentError::PageOutOfRange(3)));
+    }
+
+    #[test]
+    fn colours_read_and_write_hex() {
+        let c = Rgba::rgb(0x12, 0xab, 0xff);
+        assert_eq!(c.to_hex(), "#12abff");
+        assert_eq!(Rgba::from_hex("#12ABFF"), Some(c));
+        assert_eq!(Rgba::from_hex(" 12abff "), Some(c));
+        assert_eq!(Rgba::from_hex("#12abf"), None);
+        assert_eq!(Rgba::from_hex("#12abfg"), None);
+        assert_eq!(Rgba::from_hex("#12abfé"), None);
+    }
+
+    #[test]
+    fn the_background_is_content_and_exported_only_when_asked() {
+        let mut doc = Document::default();
+        let before = doc.clone();
+        assert_eq!(doc.exported_background(), None);
+        doc.background = Some(Background { color: Rgba::rgb(1, 2, 3), print_and_export: false });
+        assert!(!doc.same_content(&before), "an undo step and an unsaved change");
+        assert_eq!(doc.exported_background(), None, "screen only");
+        doc.background = Some(Background { color: Rgba::rgb(1, 2, 3), print_and_export: true });
+        assert_eq!(doc.exported_background(), Some(Rgba::rgb(1, 2, 3)));
+        let mut moved = before.clone();
+        moved.insert_page_after(0).unwrap();
+        moved.set_active_page(0).unwrap();
+        assert!(!moved.same_content(&before));
     }
 
     #[test]
