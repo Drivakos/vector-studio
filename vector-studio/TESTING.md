@@ -65,6 +65,7 @@ Names must be unique on screen, or a test cannot tell widgets apart.
 | Layers: add, hide, lock, move objects, rename, delete, undo | `layers.rs` |
 | PowerClip: place inside (Esc cancels), clipped pixels, edit and finish, move with frame, extract | `powerclip.rs` |
 | Page navigator, Pages docker, page size / orientation / width, Layout menu, PageUp / PageDown | `pages.rs` |
+| Rename Page (Layout menu, in the Pages docker), Go to Page (window, limited to the page count, Cancel) | `pages.rs` |
 | Save, Save As, Open, command-line file, damaged file, unsaved-changes prompt, Export SVG / PNG / PDF, Import SVG (Cmd+I and menu, placement, undo, bad file), Import PNG (bitmap drawn on the canvas, selection, fit to page) | `files.rs` |
 | Revert (cancel, confirm, only after changes to a saved file), Close and Close All (unsaved prompt, new drawing) | `files.rs` |
 | Group, Ungroup, Ungroup All, Lock, Unlock, Unlock All | `groups.rs` |

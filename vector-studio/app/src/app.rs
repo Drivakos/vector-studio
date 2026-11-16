@@ -108,6 +108,8 @@ pub struct AppState {
     /// Native file and message dialogs; tests swap in scripted ones.
     pub dialogs: Box<dyn files::Dialogs>,
     pub renaming_page: Option<(usize, String)>,
+    /// The page number in the open Go to Page window (1-based).
+    pub go_to_page: Option<usize>,
     pub renaming_object: Option<(ObjectId, String)>,
     /// The layer (page index, layer) being renamed in the Objects docker.
     pub renaming_layer: Option<(usize, vs_core::LayerId, String)>,
@@ -210,6 +212,7 @@ impl AppState {
             canvas_rect: egui::Rect::NOTHING,
             dialogs: Box::new(files::NativeDialogs),
             renaming_page: None,
+            go_to_page: None,
             renaming_object: None,
             renaming_layer: None,
             interaction: CanvasInteraction::default(),
@@ -356,6 +359,7 @@ impl VectorStudioApp {
             Command::DeletePage => (doc.page_count() > 1, None),
             Command::PreviousPage => (doc.active_page_index() > 0, None),
             Command::NextPage => (doc.active_page_index() + 1 < doc.page_count(), None),
+            Command::GoToPage => (doc.page_count() > 1, None),
             Command::ToggleRulers => (true, Some(state.prefs.show_rulers)),
             Command::ToggleGrid => (true, Some(state.prefs.show_grid)),
             Command::Repeat => (state.has_selection() && state.last_action.is_some(), None),
@@ -708,6 +712,15 @@ impl VectorStudioApp {
                 p.set_orientation(next);
                 Ok(())
             }
+            Command::RenamePage => {
+                s.dockers.show(DockerKind::Pages);
+                s.renaming_page = Some((page, s.doc.active_page().name.clone()));
+                Ok(())
+            }
+            Command::GoToPage => {
+                crate::page_dialogs::open_go_to_page(s);
+                Ok(())
+            }
             Command::ToggleDocker(kind) => {
                 s.dockers.toggle(kind);
                 Ok(())
@@ -1021,6 +1034,7 @@ impl eframe::App for VectorStudioApp {
         }
 
         files::export_window(&ctx, &mut self.state);
+        crate::page_dialogs::go_to_page_window(&ctx, &mut self.state);
         crate::edit_tools::copy_properties_window(&ctx, &mut self.state);
         self.settle(&ctx);
 

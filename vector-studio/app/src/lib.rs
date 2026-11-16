@@ -14,6 +14,7 @@ pub mod guides;
 #[cfg(target_os = "macos")]
 pub mod native_menu;
 pub mod outline;
+pub mod page_dialogs;
 pub mod paint_tools;
 pub mod panels;
 pub mod text_tool;

@@ -93,3 +93,30 @@ fn layout_menu_inserts_duplicates_and_deletes_pages() {
     app.menu(&["Layout", "Delete Page"]);
     assert_eq!(app.doc().page_count(), 2);
 }
+
+#[test]
+fn layout_menu_renames_the_page_and_goes_to_a_page() {
+    let mut app = E2e::new();
+    app.click("Insert page after");
+    app.click("Insert page after");
+    app.click("First page");
+
+    app.menu(&["Layout", "Rename Page…"]);
+    assert!(app.is_selected("Pages docker"), "renaming happens in the Pages docker");
+    app.type_into("Page name", "Cover");
+    assert_eq!(app.doc().pages()[0].name, "Cover");
+    assert!(app.exists("Page tab Cover"));
+
+    app.menu(&["Layout", "Go to Page…"]);
+    assert_eq!(app.value("Page number (go to page)"), "1", "starts at the active page");
+    app.fill("Page number (go to page)", "3");
+    app.click("Go");
+    assert_eq!(active(&app), 2);
+    assert!(!app.exists("Page number (go to page)"), "the window closes");
+
+    app.menu(&["Layout", "Go to Page…"]);
+    app.fill("Page number (go to page)", "9");
+    assert_eq!(app.value("Page number (go to page)"), "3", "limited to the pages there are");
+    app.click("Cancel");
+    assert_eq!(active(&app), 2);
+}
