@@ -41,7 +41,7 @@ Dark theme, laid out as follows:
 | Canvas | Grey desk (#5a5a5a), white page without border or shadow; page navigator with + on both sides and page tabs |
 | Off by default | Rulers and status bar; View toolbar and View menu turn them on |
 
-Not yet available (shown disabled): Snap To Pixels, view modes other than Enhanced. Icons are Material Symbols (outline).
+View modes (View menu or the View Modes dropdown): Enhanced draws fills, outlines and bitmaps; Wireframe draws every outline as a one-pixel line, with no fills, bitmaps as frames and PowerClip contents unclipped. Not yet available (shown disabled): Snap To Pixels, the Normal and Pixels view modes. Icons are Material Symbols (outline).
 
 Phase 1 drawing:
 

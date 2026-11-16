@@ -116,6 +116,8 @@ pub struct AppState {
     pub step_repeat: crate::edit_tools::StepRepeat,
     pub copy_properties: crate::edit_tools::CopyProperties,
     pub powerclip: crate::edit_tools::PowerClipState,
+    /// How the canvas draws objects (not saved).
+    pub view_mode: vs_render::ViewMode,
     /// Last status message (e.g. "Exported …").
     pub status: Option<String>,
     clipboard: Vec<Object>,
@@ -156,6 +158,7 @@ impl AppState {
             step_repeat: Default::default(),
             copy_properties: Default::default(),
             powerclip: Default::default(),
+            view_mode: Default::default(),
             status: None,
             clipboard: Vec::new(),
             clipboard_text: String::new(),
@@ -295,6 +298,7 @@ impl VectorStudioApp {
             Command::NextPage => (doc.active_page_index() + 1 < doc.page_count(), None),
             Command::ToggleRulers => (true, Some(state.prefs.show_rulers)),
             Command::ToggleGrid => (true, Some(state.prefs.show_grid)),
+            Command::ViewMode(mode) => (true, Some(state.view_mode == mode)),
             Command::ToggleGuidelines => (true, Some(state.prefs.show_guidelines)),
             Command::ToggleSnap(target) => (true, Some(*state.prefs.snap_flag(target))),
             Command::ToggleStatusBar => (true, Some(state.prefs.show_status_bar)),
@@ -583,6 +587,10 @@ impl VectorStudioApp {
             },
             Command::ToggleGrid => {
                 let _: () = s.prefs.show_grid ^= true;
+                Ok(())
+            }
+            Command::ViewMode(mode) => {
+                s.view_mode = mode;
                 Ok(())
             }
             Command::ToggleGuidelines => {

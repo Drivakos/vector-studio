@@ -6,6 +6,6 @@ pub mod scene;
 pub mod viewport;
 
 pub use rulers::{Tick, ruler_ticks};
-pub use scene::{CanvasColors, build_page_scene};
+pub use scene::{CanvasColors, ViewMode, build_page_scene};
 pub use vello;
 pub use viewport::Viewport;

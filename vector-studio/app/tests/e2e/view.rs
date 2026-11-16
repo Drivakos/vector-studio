@@ -78,3 +78,26 @@ fn palette_and_status_bar_toggle_from_the_view_menu() {
     app.menu(&["View", "Status Bar"]);
     assert!(app.state().prefs.show_status_bar);
 }
+
+#[test]
+fn wireframe_draws_outlines_only_and_enhanced_brings_fills_back() {
+    use vs_render::ViewMode;
+    let mut app = E2e::new();
+    app.draw_rect(100.0, 100.0, 200.0, 200.0);
+    app.click("Swatch Red");
+    app.click_doc(500.0, 700.0);
+    let filled = app.pixel(150.0, 150.0);
+    assert!(filled[0] > 200 && filled[1] < 60, "{filled:?}");
+
+    app.menu(&["View", "Wireframe"]);
+    assert_eq!(app.state().view_mode, ViewMode::Wireframe);
+    let inside = app.pixel(150.0, 150.0);
+    assert!(inside.iter().take(3).all(|c| *c > 240), "no fill in wireframe: {inside:?}");
+    let edge = app.pixel(100.0, 150.0);
+    assert!(edge[0] < 200 && edge[0] == edge[1], "a grey outline, not red: {edge:?}");
+
+    app.menu(&["View modes", "Enhanced (view modes)"]);
+    assert_eq!(app.state().view_mode, ViewMode::Enhanced);
+    let back = app.pixel(150.0, 150.0);
+    assert!(back[0] > 200 && back[1] < 60, "{back:?}");
+}

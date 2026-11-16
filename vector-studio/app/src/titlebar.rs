@@ -95,7 +95,7 @@ fn items(state: &AppState) -> Vec<Vec<Item>> {
             Item {
                 caption: "View Modes",
                 seg_width: 92.0,
-                segments: vec![dropdown(seg(Face::Text("Enhanced".into()), Action::ViewModes, "View modes", true))],
+                segments: vec![dropdown(seg(Face::Text(state.view_mode.label().into()), Action::ViewModes, "View modes", true))],
             },
         ],
         vec![
@@ -330,10 +330,17 @@ fn act(state: &mut AppState, action: Action, resp: &egui::Response, out: &mut Ve
         }
         Action::ViewModes => {
             egui::Popup::menu(resp).show(|ui| {
-                for mode in ["Wireframe", "Normal"] {
-                    ui.add_enabled(false, egui::Button::new(mode));
-                }
-                let _ = ui.add(egui::Button::new("Enhanced").selected(true));
+                use vs_render::ViewMode;
+                let mut pick = |ui: &mut egui::Ui, mode: ViewMode| {
+                    let resp = ui.add(egui::Button::new(mode.label()).selected(state.view_mode == mode));
+                    crate::a11y::name(&resp, &format!("{} (view modes)", mode.label()));
+                    if resp.clicked() {
+                        out.push(Command::ViewMode(mode));
+                    }
+                };
+                pick(ui, ViewMode::Wireframe);
+                ui.add_enabled(false, egui::Button::new("Normal"));
+                pick(ui, ViewMode::Enhanced);
                 ui.add_enabled(false, egui::Button::new("Pixels"));
             });
         }

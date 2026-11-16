@@ -98,7 +98,7 @@ impl GpuCanvas {
         }
         let id = self.ensure_target(size);
         self.scene.reset();
-        build_page_scene(&mut self.scene, state.doc.active_page(), &state.viewport, pixels_per_point, &self.colors);
+        build_page_scene(&mut self.scene, state.doc.active_page(), &state.viewport, pixels_per_point, &self.colors, state.view_mode);
         let target = self.target.as_ref()?;
         let params = RenderParams {
             base_color: self.colors.pasteboard,

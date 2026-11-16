@@ -28,6 +28,29 @@ impl Default for CanvasColors {
     }
 }
 
+/// How objects are drawn.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum ViewMode {
+    /// Fills, outlines and bitmaps, anti-aliased.
+    #[default]
+    Enhanced,
+    /// Every outline as a one-pixel line: no fills, bitmaps as frames, PowerClip
+    /// contents not clipped.
+    Wireframe,
+}
+
+impl ViewMode {
+    pub fn label(self) -> &'static str {
+        match self {
+            ViewMode::Enhanced => "Enhanced",
+            ViewMode::Wireframe => "Wireframe",
+        }
+    }
+}
+
+/// Colour of wireframe lines.
+const WIREFRAME: Color = Color::from_rgb8(0x20, 0x20, 0x20);
+
 pub fn to_color(c: Rgba) -> Color {
     Color::from_rgba8(c.r, c.g, c.b, c.a)
 }
@@ -57,6 +80,7 @@ pub fn build_page_scene(
     viewport: &Viewport,
     pixels_per_point: f64,
     colors: &CanvasColors,
+    mode: ViewMode,
 ) {
     let screen = Affine::scale(pixels_per_point);
     let doc = screen * viewport.transform();
@@ -71,6 +95,16 @@ pub fn build_page_scene(
 
     // Zero width = hairline: one physical pixel at any zoom.
     let hairline = 1.0 / (viewport.zoom() * pixels_per_point);
+    if mode == ViewMode::Wireframe {
+        let line = Stroke::new(hairline);
+        for leaf in page.shown_objects().flat_map(vs_core::Object::leaves) {
+            scene.stroke(&line, doc, WIREFRAME, None, &leaf.path);
+        }
+        if let Some(border) = colors.page_border {
+            scene.stroke(&Stroke::new(1.0), screen, border, None, &page_screen);
+        }
+        return;
+    }
     for object in page.shown_objects() {
         for leaf in object.leaves() {
             let opacity = leaf.style.opacity();
