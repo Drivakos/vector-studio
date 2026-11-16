@@ -15,10 +15,10 @@ const STROKE_ACCURACY: f64 = 0.01;
 
 impl Document {
     /// Whether Join Curves would change anything: two or more unlocked objects (none a
-    /// group) to merge, or open ends within `tolerance` of each other.
+    /// group or bitmap) to merge, or open ends within `tolerance` of each other.
     pub fn can_join_curves(&self, ids: &[ObjectId], tolerance: f64) -> bool {
         let picked: Vec<&Object> = self.unlocked(ids).collect();
-        if picked.is_empty() || picked.iter().any(|o| matches!(o.shape, Shape::Group { .. })) {
+        if picked.is_empty() || picked.iter().any(|o| matches!(o.shape, Shape::Group { .. } | Shape::Image(_))) {
             return false;
         }
         if picked.len() >= 2 {

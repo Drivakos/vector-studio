@@ -3,6 +3,7 @@
 use kurbo::{Affine, BezPath, Rect, Size};
 use serde::{Deserialize, Serialize};
 
+use crate::bitmap::Bitmap;
 use crate::fill::Fill;
 use crate::text::Text;
 use crate::units::Unit;
@@ -268,6 +269,8 @@ pub enum Shape {
     Curve { path: BezPath },
     /// Artistic text, drawn as glyph outlines.
     Text(Text),
+    /// A placed bitmap.
+    Image(Bitmap),
     /// Objects moved, scaled and styled as one. Child transforms are relative to the group.
     Group { children: Vec<Object> },
 }
@@ -281,6 +284,7 @@ impl Shape {
             Shape::Star { .. } => "Star",
             Shape::Curve { .. } => "Curve",
             Shape::Text(_) => "Artistic Text",
+            Shape::Image(_) => "Bitmap",
             Shape::Group { .. } => "Group",
         }
     }
@@ -308,7 +312,7 @@ impl Object {
             return;
         }
         match &mut self.shape {
-            Shape::Curve { .. } => {}
+            Shape::Curve { .. } | Shape::Image(_) => {}
             Shape::Group { children } => children.iter_mut().for_each(Object::convert_to_curves),
             shape => *shape = Shape::Curve { path: shape.to_path() },
         }
@@ -318,7 +322,7 @@ impl Object {
     pub fn can_convert_to_curves(&self) -> bool {
         !self.locked
             && match &self.shape {
-                Shape::Curve { .. } => false,
+                Shape::Curve { .. } | Shape::Image(_) => false,
                 Shape::Group { children } => children.iter().any(Object::can_convert_to_curves),
                 _ => true,
             }

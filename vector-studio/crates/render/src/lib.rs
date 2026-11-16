@@ -1,5 +1,6 @@
 //! Rendering for Vector Studio: viewport maths, ruler layout and Vello scene building.
 
+pub mod bitmaps;
 pub mod rulers;
 pub mod scene;
 pub mod viewport;

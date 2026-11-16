@@ -4,6 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use rfd::{FileDialog, MessageButtons, MessageDialog, MessageDialogResult, MessageLevel};
+use vs_core::kurbo::{Affine, Vec2};
 use vs_core::{Document, History, Rgba};
 use vs_io::{ExportFormat, ExportOptions, FILE_EXTENSION};
 
@@ -46,7 +47,8 @@ pub enum Unsaved {
 pub trait Dialogs {
     /// Ask where to save. `extension` is the one file type offered.
     fn save_file(&mut self, title: &str, filter: &str, extension: &str, file_name: &str) -> Option<PathBuf>;
-    fn open_file(&mut self, title: &str, filter: &str, extension: &str) -> Option<PathBuf>;
+    /// Ask for a file to read with one of `extensions`.
+    fn open_file(&mut self, title: &str, filter: &str, extensions: &[&str]) -> Option<PathBuf>;
     fn unsaved_changes(&mut self, document: &str) -> Unsaved;
     fn error(&mut self, title: &str, detail: &str);
 }
@@ -59,8 +61,8 @@ impl Dialogs for NativeDialogs {
         FileDialog::new().set_title(title).add_filter(filter, &[extension]).set_file_name(file_name).save_file()
     }
 
-    fn open_file(&mut self, title: &str, filter: &str, extension: &str) -> Option<PathBuf> {
-        FileDialog::new().set_title(title).add_filter(filter, &[extension]).pick_file()
+    fn open_file(&mut self, title: &str, filter: &str, extensions: &[&str]) -> Option<PathBuf> {
+        FileDialog::new().set_title(title).add_filter(filter, extensions).pick_file()
     }
 
     fn unsaved_changes(&mut self, document: &str) -> Unsaved {
@@ -154,7 +156,7 @@ pub fn open(state: &mut AppState) {
     if !confirm_discard(state) {
         return;
     }
-    let Some(path) = state.dialogs.open_file("Open Drawing", "Vector Studio drawing", FILE_EXTENSION) else {
+    let Some(path) = state.dialogs.open_file("Open Drawing", "Vector Studio drawing", &[FILE_EXTENSION]) else {
         return;
     };
     open_path(state, &path);
@@ -167,24 +169,37 @@ pub fn open_path(state: &mut AppState, path: &Path) {
     }
 }
 
-/// Ask for an SVG file and place what it draws in the middle of the page, selected.
+/// What Import offers.
+pub const IMPORT_EXTENSIONS: &[&str] = &["svg", "png", "jpg", "jpeg"];
+
+/// Ask for an SVG, PNG or JPEG file and place it in the middle of the page, selected.
 pub fn import(state: &mut AppState) {
-    let Some(path) = state.dialogs.open_file("Import", "SVG image", "svg") else {
+    let Some(path) = state.dialogs.open_file("Import", "SVG, PNG or JPEG image", IMPORT_EXTENSIONS) else {
         return;
     };
     import_path(state, &path);
 }
 
 pub fn import_path(state: &mut AppState, path: &Path) {
-    let result = std::fs::read(path).map_err(vs_io::IoError::from).and_then(|data| vs_io::import_svg(&data));
+    let svg = path.extension().is_some_and(|e| e.eq_ignore_ascii_case("svg") || e.eq_ignore_ascii_case("svgz"));
+    let result = std::fs::read(path).map_err(vs_io::IoError::from).and_then(|data| {
+        if svg { vs_io::import_svg(&data) } else { vs_io::import_bitmap(&data).map(|o| vec![o]) }
+    });
     match result {
         Ok(objects) => {
             let Some(bounds) = objects.iter().map(|o| o.world_bounds()).reduce(|a, b| a.union(b)) else {
                 error(state, "Could not import", format!("{}: the file draws nothing that can be imported", path.display()));
                 return;
             };
-            let offset = state.doc.active_page().bounds().center() - bounds.center();
-            state.selection = state.doc.paste_objects(&objects, offset);
+            // Larger than the page: scaled down to fit it, as a placed image would be.
+            let page = state.doc.active_page().bounds();
+            let k = (page.width() / bounds.width()).min(page.height() / bounds.height()).min(1.0);
+            let fit = Affine::translate(page.center().to_vec2()) * Affine::scale(k) * Affine::translate(-bounds.center().to_vec2());
+            let objects: Vec<_> = objects.into_iter().map(|mut o| {
+                o.transform = fit * o.transform;
+                o
+            }).collect();
+            state.selection = state.doc.paste_objects(&objects, Vec2::ZERO);
             state.marquee_selection = None;
             state.tools.nodes.clear();
             state.status = Some(format!("Imported {}", path.display()));

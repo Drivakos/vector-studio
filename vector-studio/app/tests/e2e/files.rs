@@ -168,3 +168,42 @@ fn import_places_an_svg_in_the_middle_of_the_page_selected_and_undoable() {
     assert!(app.script.borrow().errors.last().is_some_and(|e| e.starts_with("Could not import")), "{:?}", app.script.borrow().errors);
     assert_eq!(app.objects().len(), 1);
 }
+
+fn png(w: u32, h: u32, rgb: [u8; 3]) -> Vec<u8> {
+    let img = image::RgbaImage::from_pixel(w, h, image::Rgba([rgb[0], rgb[1], rgb[2], 255]));
+    let mut out = std::io::Cursor::new(Vec::new());
+    img.write_to(&mut out, image::ImageFormat::Png).unwrap();
+    out.into_inner()
+}
+
+#[test]
+fn import_places_a_png_as_a_bitmap_that_draws_and_fits_the_page() {
+    let dir = temp_dir("import_png");
+    let small = dir.join("blue.png");
+    std::fs::write(&small, png(160, 80, [0, 0, 255])).unwrap();
+    let mut app = E2e::new();
+    app.script.borrow_mut().open_paths.push_back(small);
+    app.shortcut(Modifiers::COMMAND, Key::I);
+
+    assert_eq!(app.objects().len(), 1);
+    let obj = &app.objects()[0];
+    let vs_core::Shape::Image(b) = &obj.shape else { panic!("a bitmap: {:?}", obj.shape) };
+    assert_eq!((b.width, b.height), (160, 80));
+    assert_eq!(app.selection(), vec![obj.id]);
+    let page = app.doc().active_page().bounds();
+    let r = obj.world_bounds();
+    assert!((r.width() - 120.0).abs() < 0.01 && (r.center() - page.center()).hypot() < 0.01, "160 px = 120 pt, centred: {r:?}");
+
+    app.click_doc(10.0, 10.0);
+    let px = app.pixel(page.center().x, page.center().y);
+    assert!(px[2] > 200 && px[0] < 60 && px[1] < 60, "the bitmap shows on the canvas: {px:?}");
+    app.click_doc(page.center().x, page.center().y);
+    assert_eq!(app.selection().len(), 1, "a click anywhere on it selects it");
+
+    let wide = dir.join("wide.png");
+    std::fs::write(&wide, png(4000, 100, [0, 255, 0])).unwrap();
+    app.script.borrow_mut().open_paths.push_back(wide);
+    app.menu(&["File", "Import…"]);
+    let r = app.bounds(1);
+    assert!((r.width() - page.width()).abs() < 0.01, "too wide for the page: scaled to fit it: {r:?}");
+}

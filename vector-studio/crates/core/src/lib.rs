@@ -1,5 +1,6 @@
 //! Document model for Vector Studio. No UI or GPU dependencies.
 
+pub mod bitmap;
 pub mod controls;
 pub mod curves;
 pub mod document;
@@ -17,6 +18,7 @@ pub use document::{
     ArcKind, Document, DocumentError, EllipseArc, LineCap, LineJoin, LineStyle, Object, ObjectId, Orientation, Outline,
     PAGE_PRESETS, Page, PageId, PagePreset, Rgba, Shape, Style,
 };
+pub use bitmap::{Bitmap, BitmapFormat};
 pub use fill::{Fill, Gradient, GradientKind, GradientStop};
 pub use history::History;
 pub use kurbo;

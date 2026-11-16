@@ -36,7 +36,7 @@ impl Dialogs for ScriptedDialogs {
         s.save_paths.pop_front()
     }
 
-    fn open_file(&mut self, title: &str, _filter: &str, _extension: &str) -> Option<PathBuf> {
+    fn open_file(&mut self, title: &str, _filter: &str, _extensions: &[&str]) -> Option<PathBuf> {
         let mut s = self.0.borrow_mut();
         s.shown.push(title.to_owned());
         s.open_paths.pop_front()

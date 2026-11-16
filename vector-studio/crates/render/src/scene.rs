@@ -3,7 +3,7 @@
 use kurbo::{Affine, Rect, Stroke};
 use vello::Scene;
 use vello::peniko::{Brush, Color, Fill, Gradient};
-use vs_core::{GradientKind, Page, Rgba};
+use vs_core::{GradientKind, Page, Rgba, Shape};
 
 use crate::viewport::Viewport;
 
@@ -80,6 +80,16 @@ pub fn build_page_scene(
                 (o.stroke(width), to_color(o.color.faded(opacity)), o.behind_fill)
             });
             let draw_fill = |scene: &mut Scene| {
+                if let Shape::Image(bitmap) = leaf.shape {
+                    if let Some(image) = crate::bitmaps::decoded(bitmap) {
+                        let place = Affine::translate(bitmap.rect.origin().to_vec2())
+                            * Affine::scale_non_uniform(bitmap.rect.width() / f64::from(image.width), bitmap.rect.height() / f64::from(image.height));
+                        let mut brush = vello::peniko::ImageBrush::new(image);
+                        brush.sampler.alpha = opacity as f32;
+                        scene.draw_image(&brush, doc * leaf.transform * place);
+                    }
+                    return;
+                }
                 if let Some(brush) = &fill {
                     // Even-odd: overlaps in a combined curve are holes.
                     // Fountain fills are in local space; the path is already on the page.

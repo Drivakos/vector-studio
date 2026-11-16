@@ -1,8 +1,10 @@
-//! Import: SVG files become editable curves.
+//! Import: SVG files become editable curves; PNG and JPEG files become bitmaps.
 
 use resvg::usvg;
-use vs_core::kurbo::{Affine, BezPath, Point};
-use vs_core::{Fill, Gradient, GradientKind, GradientStop, LineCap, LineJoin, LineStyle, Object, ObjectId, Outline, Rgba, Shape, Style};
+use std::sync::Arc;
+
+use vs_core::kurbo::{Affine, BezPath, Point, Rect};
+use vs_core::{Bitmap, BitmapFormat, Fill, Gradient, GradientKind, GradientStop, LineCap, LineJoin, LineStyle, Object, ObjectId, Outline, Rgba, Shape, Style};
 
 use crate::IoError;
 
@@ -21,6 +23,22 @@ pub fn import_svg(data: &[u8]) -> Result<Vec<Object>, IoError> {
         objects = vec![object(Shape::Group { children: objects }, Style::default())];
     }
     Ok(objects)
+}
+
+/// Read a PNG or JPEG file as a bitmap object at 96 pixels per inch, its top-left corner
+/// at the origin.
+pub fn import_bitmap(data: &[u8]) -> Result<Object, IoError> {
+    let format = match image::guess_format(data) {
+        Ok(image::ImageFormat::Png) => BitmapFormat::Png,
+        Ok(image::ImageFormat::Jpeg) => BitmapFormat::Jpeg,
+        _ => return Err(IoError::Image("only PNG and JPEG files can be imported".into())),
+    };
+    // Decode it all now, so a damaged file is refused here and not drawn blank later.
+    let decoded = image::load_from_memory(data).map_err(|e| IoError::Image(e.to_string()))?;
+    let (width, height) = (decoded.width(), decoded.height());
+    let rect = Rect::new(0.0, 0.0, f64::from(width) * PX_TO_PT, f64::from(height) * PX_TO_PT);
+    let bitmap = Bitmap { format, width, height, rect, data: Arc::new(data.to_vec()) };
+    Ok(object(Shape::Image(bitmap), Style::default()))
 }
 
 fn object(shape: Shape, style: Style) -> Object {
@@ -142,7 +160,7 @@ fn paint(paint: &usvg::Paint, opacity: f64, to_page: Affine) -> Option<Fill> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use vs_core::kurbo::Shape as _;
 
@@ -197,5 +215,27 @@ mod tests {
         assert!((g.start.x).abs() < 1e-6 && (g.end.x - 60.0).abs() < 1e-6, "bounding-box units become page points: {g:?}");
         assert_eq!((g.stops[0].color, g.stops[1].color), (Rgba::BLACK, Rgba::WHITE));
         assert!(import_svg(b"not svg").is_err());
+    }
+
+    /// A `w`×`h` PNG, all `rgb`.
+    pub(crate) fn png(w: u32, h: u32, rgb: [u8; 3]) -> Vec<u8> {
+        let img = image::RgbaImage::from_pixel(w, h, image::Rgba([rgb[0], rgb[1], rgb[2], 255]));
+        let mut out = std::io::Cursor::new(Vec::new());
+        img.write_to(&mut out, image::ImageFormat::Png).unwrap();
+        out.into_inner()
+    }
+
+    #[test]
+    fn png_comes_in_at_96_pixels_per_inch_and_keeps_its_bytes() {
+        let data = png(40, 20, [255, 0, 0]);
+        let obj = import_bitmap(&data).expect("decodes");
+        let Shape::Image(b) = &obj.shape else { panic!("bitmap") };
+        assert_eq!((b.format, b.width, b.height), (BitmapFormat::Png, 40, 20));
+        assert_eq!(b.rect, Rect::new(0.0, 0.0, 30.0, 15.0));
+        assert_eq!(b.data.as_slice(), data.as_slice());
+        assert!(matches!(import_bitmap(b"GIF89a....").unwrap_err(), IoError::Image(_)));
+        let mut broken = data.clone();
+        broken.truncate(40);
+        assert!(import_bitmap(&broken).is_err(), "a damaged PNG is refused");
     }
 }

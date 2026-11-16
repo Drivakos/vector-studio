@@ -25,10 +25,11 @@ pub enum Shaping {
 }
 
 impl Document {
-    /// Whether shaping can run on `ids`: at least two unlocked objects, all closed.
+    /// Whether shaping can run on `ids`: at least two unlocked objects, all closed, none
+    /// of them a bitmap.
     pub fn can_shape(&self, ids: &[ObjectId]) -> bool {
         let picked: Vec<_> = self.unlocked(ids).collect();
-        picked.len() >= 2 && picked.iter().all(|o| o.leaves().iter().all(|l| l.closed))
+        picked.len() >= 2 && picked.iter().all(|o| o.leaves().iter().all(|l| l.closed && !matches!(l.shape, Shape::Image(_))))
     }
 
     /// Run `op` on the unlocked objects among `ids`. `target` is the object whose fill and
@@ -132,10 +133,11 @@ impl Document {
         }
     }
 
-    /// Whether Combine can run: at least two unlocked objects, none of them a group.
+    /// Whether Combine can run: at least two unlocked objects, none of them a group or a
+    /// bitmap.
     pub fn can_combine(&self, ids: &[ObjectId]) -> bool {
         let picked: Vec<_> = self.unlocked(ids).collect();
-        picked.len() >= 2 && !picked.iter().any(|o| matches!(o.shape, Shape::Group { .. }))
+        picked.len() >= 2 && !picked.iter().any(|o| matches!(o.shape, Shape::Group { .. } | Shape::Image(_)))
     }
 
     /// Join the unlocked objects among `ids` into one curve with all their paths, styled

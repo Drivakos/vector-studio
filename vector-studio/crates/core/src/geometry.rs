@@ -31,6 +31,7 @@ impl Shape {
             }
             Shape::Curve { path } => path.clone(),
             Shape::Text(text) => text.to_path(),
+            Shape::Image(b) => b.rect.to_path(PATH_TOLERANCE),
             Shape::Group { children } => {
                 let mut path = BezPath::new();
                 for child in children {
@@ -50,6 +51,7 @@ impl Shape {
             | Shape::Star { rect, .. } => *rect,
             Shape::Curve { path } => path.bounding_box(),
             Shape::Text(text) => text.layout().bounds(),
+            Shape::Image(b) => b.rect,
             Shape::Group { .. } => self.to_path().bounding_box(),
         }
     }
@@ -127,9 +129,9 @@ pub struct Leaf<'a> {
 }
 
 impl Leaf<'_> {
-    /// The fill, if the leaf is closed and has one.
+    /// The fill, if the leaf is closed, has one and is not a bitmap.
     pub fn fill(&self) -> Option<&crate::Fill> {
-        self.style.fill.as_ref().filter(|_| self.closed)
+        self.style.fill.as_ref().filter(|_| self.closed && !matches!(self.shape, Shape::Image(_)))
     }
 }
 
@@ -189,11 +191,17 @@ impl Object {
         self.leaves().iter().any(|leaf| {
             let half = leaf.style.outline.as_ref().map_or(0.0, |o| o.page_width(leaf.transform) / 2.0);
             let reach = tolerance + half;
-            // Text is picked anywhere in its line boxes, not just on the glyphs.
-            if let Shape::Text(text) = leaf.shape {
+            // Text is picked anywhere in its line boxes, not just on the glyphs; bitmaps
+            // anywhere on them.
+            let solid = match leaf.shape {
+                Shape::Text(text) => Some(text.layout().bounds()),
+                Shape::Image(b) => Some(b.rect),
+                _ => None,
+            };
+            if let Some(area) = solid {
                 let local = leaf.transform.inverse() * point;
                 let pad = tolerance / leaf.transform.determinant().abs().sqrt().max(1e-9);
-                if text.layout().bounds().inflate(pad, pad).contains(local) {
+                if area.inflate(pad, pad).contains(local) {
                     return true;
                 }
             }

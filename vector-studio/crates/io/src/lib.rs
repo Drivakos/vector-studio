@@ -2,7 +2,7 @@
 
 mod import;
 
-pub use import::import_svg;
+pub use import::{import_bitmap, import_svg};
 
 use std::fmt::Write as _;
 use std::path::Path;
@@ -27,6 +27,7 @@ pub enum IoError {
     Png(String),
     Pdf(String),
     Svg(String),
+    Image(String),
 }
 
 impl std::fmt::Display for IoError {
@@ -40,6 +41,7 @@ impl std::fmt::Display for IoError {
             IoError::Png(e) => write!(f, "PNG export failed: {e}"),
             IoError::Pdf(e) => write!(f, "PDF export failed: {e}"),
             IoError::Svg(e) => write!(f, "not a readable SVG file ({e})"),
+            IoError::Image(e) => write!(f, "not a readable image ({e})"),
         }
     }
 }
@@ -174,6 +176,12 @@ pub fn export(doc: &Document, path: &Path, options: &ExportOptions) -> Result<Ex
 /// One `<path>` per drawable object; groups become `<g>` around their members.
 fn write_svg_object(out: &mut String, obj: &Object, parent: vs_core::kurbo::Affine, depth: usize) {
     let indent = "  ".repeat(depth);
+    if let Shape::Image(b) = &obj.shape {
+        write_svg_image(out, &indent, b, parent * obj.transform, obj.style.opacity());
+        if obj.style.outline.is_none() {
+            return;
+        }
+    }
     if let Shape::Group { children } = &obj.shape {
         let _ = writeln!(out, "{indent}<g>");
         for child in children {
@@ -187,7 +195,7 @@ fn write_svg_object(out: &mut String, obj: &Object, parent: vs_core::kurbo::Affi
     path.apply_affine(transform);
     round_path(&mut path);
     let opacity = obj.style.opacity();
-    let fill = obj.style.fill.as_ref().filter(|_| obj.shape.is_closed());
+    let fill = obj.style.fill.as_ref().filter(|_| obj.shape.is_closed() && !matches!(obj.shape, Shape::Image(_)));
     if let Some(Fill::Gradient(g)) = fill {
         write_svg_gradient(out, &indent, obj.id.0, g, transform, opacity);
     }
@@ -209,6 +217,21 @@ fn write_svg_object(out: &mut String, obj: &Object, parent: vs_core::kurbo::Affi
         write_svg_stroke(out, o, o.page_width(transform), opacity);
     }
     out.push_str("/>\n");
+}
+
+/// An `<image>` with the bitmap's own bytes inline.
+fn write_svg_image(out: &mut String, indent: &str, b: &vs_core::Bitmap, transform: vs_core::kurbo::Affine, opacity: f64) {
+    let [a, bb, c, d, e, f] = transform.as_coeffs();
+    let _ = write!(
+        out,
+        r#"{indent}<image x="{}" y="{}" width="{}" height="{}" preserveAspectRatio="none" transform="matrix({} {} {} {} {} {})""#,
+        num(b.rect.x0), num(b.rect.y0), num(b.rect.width()), num(b.rect.height()),
+        num(a), num(bb), num(c), num(d), num(e), num(f)
+    );
+    if opacity < 1.0 {
+        let _ = write!(out, r#" opacity="{}""#, num(opacity));
+    }
+    let _ = writeln!(out, r#" href="data:{};base64,{}"/>"#, b.format.mime(), b.base64());
 }
 
 /// A `<linearGradient>` or `<radialGradient>` with id `fill{id}`. Its points are in the
@@ -402,6 +425,30 @@ fn pdf_path(leaf: &Leaf<'_>) -> Option<krilla::geom::Path> {
     pb.finish()
 }
 
+/// Draw `b` on a PDF page; `transform` is its object's local → page transform.
+fn pdf_image(surface: &mut krilla::surface::Surface<'_>, b: &vs_core::Bitmap, transform: vs_core::kurbo::Affine, opacity: f64) -> Result<(), IoError> {
+    use krilla::num::NormalizedF32;
+    let data: krilla::Data = b.data.clone().into();
+    let image = match b.format {
+        vs_core::BitmapFormat::Png => krilla::image::Image::from_png(data, true),
+        vs_core::BitmapFormat::Jpeg => krilla::image::Image::from_jpeg(data, true),
+    }
+    .map_err(IoError::Pdf)?;
+    let Some(size) = krilla::geom::Size::from_wh(b.rect.width() as f32, b.rect.height() as f32) else { return Ok(()) };
+    let [a, bb, c, d, e, f] = (transform * vs_core::kurbo::Affine::translate(b.rect.origin().to_vec2())).as_coeffs().map(|v| v as f32);
+    surface.push_transform(&krilla::geom::Transform::from_row(a, bb, c, d, e, f));
+    let faded = opacity < 1.0;
+    if faded {
+        surface.push_opacity(NormalizedF32::new(opacity as f32).unwrap_or(NormalizedF32::ONE));
+    }
+    surface.draw_image(image, size);
+    if faded {
+        surface.pop();
+    }
+    surface.pop();
+    Ok(())
+}
+
 /// Every page of the document as a PDF, 1 unit = 1 pt.
 pub fn document_to_pdf(doc: &Document) -> Result<Vec<u8>, IoError> {
     use krilla::color::rgb;
@@ -417,6 +464,9 @@ pub fn document_to_pdf(doc: &Document) -> Result<Vec<u8>, IoError> {
         let mut pdf_page = pdf.start_page_with(settings);
         let mut surface = pdf_page.surface();
         for leaf in page.objects.iter().flat_map(Object::leaves) {
+            if let Shape::Image(b) = leaf.shape {
+                pdf_image(&mut surface, b, leaf.transform, leaf.style.opacity())?;
+            }
             let Some(path) = pdf_path(&leaf) else { continue };
             let alpha = leaf.style.opacity();
             let fill = leaf.fill().map(|f| match f {
@@ -486,6 +536,29 @@ mod tests {
         doc.transform_objects(&[id], Affine::rotate_about(0.2, vs_core::kurbo::Point::new(200.0, 200.0)));
         doc.add_object(Shape::Ellipse { rect: Rect::new(10.0, 10.0, 60.0, 40.0), arc: None }, Style::new_object());
         doc
+    }
+
+    #[test]
+    fn bitmaps_save_open_and_export_to_svg_png_and_pdf() {
+        let mut doc = Document::new("Photo");
+        let mut obj = import_bitmap(&crate::import::tests::png(4, 4, [0, 0, 255])).unwrap();
+        obj.transform = Affine::translate((100.0, 100.0)) * Affine::scale(10.0);
+        doc.paste_objects(&[obj], vs_core::kurbo::Vec2::ZERO);
+
+        let reopened = document_from_str(&document_to_string(&doc).unwrap()).unwrap();
+        assert_eq!(reopened.active_page().objects[0].shape, doc.active_page().objects[0].shape, "bytes survive save and open");
+
+        let svg = page_to_svg(doc.active_page());
+        assert!(svg.contains("<image ") && svg.contains("href=\"data:image/png;base64,"), "{svg}");
+
+        let png = page_to_png(doc.active_page(), &ExportOptions { dpi: 72.0, background: Some(Rgba::WHITE) }).unwrap();
+        let img = image::load_from_memory(&png).unwrap().into_rgba8();
+        assert_eq!(img.get_pixel(115, 115).0, [0, 0, 255, 255], "the bitmap is drawn: 3 pt × 10 = 30 pt square at 100 pt");
+        assert_eq!(img.get_pixel(140, 140).0, [255, 255, 255, 255], "and only there");
+
+        let pdf = document_to_pdf(&doc).unwrap();
+        let text = String::from_utf8_lossy(&pdf);
+        assert!(text.contains("/Subtype/Image") && text.contains("/Width 4/Height 4"), "the PDF holds the 4 × 4 image");
     }
 
     #[test]

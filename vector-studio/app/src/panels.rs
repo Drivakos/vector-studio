@@ -115,10 +115,21 @@ pub fn object_properties_ui(ui: &mut egui::Ui, state: &mut AppState) {
                     crate::a11y::add(ui, egui::DragValue::new(&mut text.size).range(1.0..=3000.0).max_decimals(1).suffix(" pt"), "Font size (properties)");
                     ui.end_row();
                 }
+                Shape::Image(b) => {
+                    ui.label("Pixels");
+                    ui.label(format!("{} × {}", b.width, b.height));
+                    ui.end_row();
+                    ui.label("Format");
+                    ui.label(match b.format {
+                        vs_core::BitmapFormat::Png => "PNG",
+                        vs_core::BitmapFormat::Jpeg => "JPEG",
+                    });
+                    ui.end_row();
+                }
                 Shape::Ellipse { .. } => {}
             }
         });
-        if !matches!(obj.shape, Shape::Curve { .. } | Shape::Group { .. }) {
+        if !matches!(obj.shape, Shape::Curve { .. } | Shape::Group { .. } | Shape::Image(_)) {
             ui.add_space(4.0);
             if ui.button("Convert to Curves").clicked() {
                 obj.shape = Shape::Curve { path: obj.shape.to_path() };

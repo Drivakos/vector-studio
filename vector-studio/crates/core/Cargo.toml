@@ -10,6 +10,7 @@ linesweeper = "0.5"
 skrifa = "0.44"
 epaint_default_fonts = "0.37"
 memmap2 = "0.9"
+base64 = "0.22"
 serde = { workspace = true, features = ["derive"] }
 
 [dev-dependencies]
