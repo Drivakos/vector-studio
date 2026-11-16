@@ -241,3 +241,36 @@ fn fit_text_to_path_runs_it_along_a_curve_and_straighten_undoes_it() {
     let start = app.objects()[1].transform * vs_core::kurbo::Point::ORIGIN;
     assert!(close(start.x, 300.0) && (start.y - 200.0).abs() < 1.0, "starts where it started on the curve: {start:?}");
 }
+
+#[test]
+fn edit_text_window_changes_the_words_or_leaves_them() {
+    let mut app = E2e::new();
+    app.key(Key::F8);
+    app.click_doc(100.0, 100.0);
+    app.type_text("Hello");
+    app.key(Key::Escape);
+    app.pick_tool();
+    app.click_doc(110.0, 95.0);
+    assert_eq!(app.selection().len(), 1);
+
+    let retype = |app: &mut E2e, words: &str| {
+        app.click("Text (edit text)");
+        app.h.key_press_modifiers(Modifiers::COMMAND, Key::A);
+        app.h.get_by_label("Text (edit text)").type_text(words);
+        app.run();
+    };
+    app.shortcut(Modifiers::COMMAND | Modifiers::SHIFT, Key::T);
+    assert_eq!(app.value("Text (edit text)"), "Hello");
+    retype(&mut app, "Goodbye");
+    app.click("Cancel");
+    assert_eq!(text(&app, 0).content, "Hello", "Cancel leaves it");
+
+    app.menu(&["Text", "Edit Text…"]);
+    retype(&mut app, "Goodbye");
+    assert_eq!(text(&app, 0).content, "Hello", "nothing changes before OK");
+    app.click("OK");
+    assert!(!app.exists("Text (edit text)"));
+    assert_eq!(text(&app, 0).content, "Goodbye");
+    app.shortcut(Modifiers::COMMAND, Key::Z);
+    assert_eq!(text(&app, 0).content, "Hello");
+}

@@ -111,6 +111,8 @@ pub struct AppState {
     pub printing: Box<dyn crate::printing::Printing>,
     pub print: crate::printing::PrintDialog,
     pub find: crate::find_ui::FindState,
+    /// The text object and its words in the open Edit Text window.
+    pub edit_text: Option<(ObjectId, String)>,
     pub renaming_page: Option<(usize, String)>,
     /// The page number in the open Go to Page window (1-based).
     pub go_to_page: Option<usize>,
@@ -220,6 +222,7 @@ impl AppState {
             printing: Box::new(crate::printing::SystemPrinting),
             print: Default::default(),
             find: Default::default(),
+            edit_text: None,
             renaming_page: None,
             go_to_page: None,
             page_background: None,
@@ -413,6 +416,7 @@ impl VectorStudioApp {
             Command::ConvertText => (doc.can_convert_text(&state.selection), None),
             Command::Revert => (files::can_revert(state), None),
             Command::FitTextToPath => (doc.can_fit_text_to_path(&state.selection), None),
+            Command::EditText => (crate::text_tool::can_edit_text(state), None),
             Command::StraightenText => (doc.can_straighten_text(&state.selection), None),
             Command::ClipPlaceInside => (doc.can_place_inside(&state.selection), None),
             Command::ClipExtract => (doc.can_extract_contents(&state.selection), None),
@@ -615,6 +619,10 @@ impl VectorStudioApp {
                     s.selection = vec![id];
                     s.tools.nodes.clear();
                 }
+                Ok(())
+            }
+            Command::EditText => {
+                crate::text_tool::open_edit_text(s);
                 Ok(())
             }
             Command::FitTextToPath => {
@@ -1071,6 +1079,7 @@ impl eframe::App for VectorStudioApp {
         files::export_window(&ctx, &mut self.state);
         files::document_properties_window(&ctx, &mut self.state);
         crate::printing::print_window(&ctx, &mut self.state);
+        crate::text_tool::edit_text_window(&ctx, &mut self.state);
         crate::page_dialogs::go_to_page_window(&ctx, &mut self.state);
         crate::page_dialogs::page_background_window(&ctx, &mut self.state);
         crate::edit_tools::copy_properties_window(&ctx, &mut self.state);

@@ -307,6 +307,62 @@ pub fn controls(ui: &mut egui::Ui, state: &mut AppState) {
     }
 }
 
+/// The single selected text, if it can be edited.
+fn selected_text(state: &AppState) -> Option<(ObjectId, &Text)> {
+    match state.selection.as_slice() {
+        [id] => match state.doc.active_page().object(*id) {
+            Some(o) if !o.locked => match &o.shape {
+                Shape::Text(t) => Some((*id, t)),
+                _ => None,
+            },
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Text > Edit Text applies: one unlocked text object is selected.
+pub fn can_edit_text(state: &AppState) -> bool {
+    selected_text(state).is_some()
+}
+
+/// Open the Edit Text window on the selected text.
+pub fn open_edit_text(state: &mut AppState) {
+    finish(state);
+    if let Some((id, t)) = selected_text(state) {
+        state.edit_text = Some((id, t.content.clone()));
+    }
+}
+
+/// The Edit Text window: the whole text in a field, OK to apply, Cancel to leave it.
+pub fn edit_text_window(ctx: &egui::Context, state: &mut AppState) {
+    let Some((id, mut content)) = state.edit_text.take() else { return };
+    let mut open = true;
+    let (mut ok, mut cancel) = (false, false);
+    egui::Window::new("Edit Text")
+        .collapsible(false)
+        .resizable(false)
+        .open(&mut open)
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .show(ctx, |ui| {
+            crate::a11y::add(ui, egui::TextEdit::multiline(&mut content).desired_width(360.0).desired_rows(6), "Text (edit text)");
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                ok = ui.button("OK").clicked();
+                cancel = ui.button("Cancel").clicked();
+            });
+        });
+    if ok {
+        if let Some(t) = text_mut(state, id) {
+            t.content = content;
+            // Edited by hand: no longer a page number.
+            t.field = None;
+        }
+    } else if open && !cancel {
+        state.edit_text = Some((id, content));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
