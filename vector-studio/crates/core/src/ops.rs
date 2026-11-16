@@ -69,6 +69,16 @@ impl Document {
         }
     }
 
+    /// Resize: like [`Document::transform_objects`], but paragraph text keeps its glyph
+    /// size and rewraps in a frame resized instead (see [`Object::reflow_text`]).
+    pub fn resize_objects(&mut self, ids: &[ObjectId], transform: Affine) {
+        for obj in self.active_page_mut().objects.iter_mut().filter(|o| ids.contains(&o.id) && !o.locked) {
+            let before = obj.transform;
+            obj.transform = transform * before;
+            obj.reflow_text(before);
+        }
+    }
+
     pub fn move_objects(&mut self, ids: &[ObjectId], delta: Vec2) {
         self.transform_objects(ids, Affine::translate(delta));
     }
@@ -405,6 +415,28 @@ impl Document {
     }
 }
 
+impl Object {
+    /// Paragraph text whose transform went from `before` to its current one keeps its
+    /// glyph size: the change in scale along its own axes goes into its frame instead, so
+    /// the frame covers the same area and the words rewrap in it. Other objects, artistic
+    /// text and text on a path are left as they are.
+    pub fn reflow_text(&mut self, before: Affine) {
+        let Shape::Text(text) = &mut self.shape else { return };
+        let (Some(frame), None) = (text.frame, &text.on_path) else { return };
+        let axes = |a: Affine| {
+            let c = a.as_coeffs();
+            (Vec2::new(c[0], c[1]).hypot(), Vec2::new(c[2], c[3]).hypot())
+        };
+        let ((bx, by), (nx, ny)) = (axes(before), axes(self.transform));
+        if [bx, by, nx, ny].iter().any(|v| *v < 1e-12) {
+            return;
+        }
+        let (rx, ry) = (nx / bx, ny / by);
+        text.frame = Some(kurbo::Size::new(frame.width * rx, frame.height * ry));
+        self.transform *= Affine::scale_non_uniform(1.0 / rx, 1.0 / ry);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -623,5 +655,30 @@ mod tests {
         let (mut doc, ids) = doc_with(&[r, r]);
         doc.delete_objects(&ids[..1]);
         assert_eq!(order(&doc), vec![ids[1]]);
+    }
+
+    #[test]
+    fn resizing_paragraph_text_resizes_its_frame_not_its_glyphs() {
+        let mut doc = Document::default();
+        let mut text = crate::Text::new("words that wrap");
+        text.frame = Some(kurbo::Size::new(100.0, 50.0));
+        let para = doc.add_object(Shape::Text(text.clone()), Style::new_text());
+        let artistic = doc.add_object(Shape::Text(crate::Text::new("art")), Style::new_text());
+        doc.transform_objects(&[para], Affine::rotate(0.5) * Affine::translate((10.0, 20.0)));
+        let before = doc.active_page().object(para).unwrap().world_bounds();
+        let scale = Affine::scale_non_uniform(2.0, 3.0);
+        doc.resize_objects(&[para, artistic], Affine::rotate(0.5) * scale * Affine::rotate(-0.5));
+        let obj = doc.active_page().object(para).unwrap();
+        let Shape::Text(t) = &obj.shape else { panic!() };
+        let f = t.frame.unwrap();
+        assert!((f.width - 200.0).abs() < 1e-9 && (f.height - 150.0).abs() < 1e-9, "the frame grew: {f:?}");
+        let c = obj.transform.as_coeffs();
+        assert!((Vec2::new(c[0], c[1]).hypot() - 1.0).abs() < 1e-9 && (Vec2::new(c[2], c[3]).hypot() - 1.0).abs() < 1e-9, "the glyphs did not");
+        let origin = obj.transform * kurbo::Point::ORIGIN;
+        let expected = Affine::rotate(0.5) * scale * Affine::rotate(-0.5) * (Affine::rotate(0.5) * kurbo::Point::new(10.0, 20.0));
+        assert!((origin - expected).hypot() < 1e-9, "the frame's corner went where the scale took it");
+        assert!(obj.world_bounds() != before);
+        let art = doc.active_page().object(artistic).unwrap();
+        assert_eq!(art.transform, Affine::rotate(0.5) * scale * Affine::rotate(-0.5), "artistic text just scales");
     }
 }

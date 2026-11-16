@@ -55,6 +55,7 @@ Names must be unique on screen, or a test cannot tell widgets apart.
 | Rectangle, Ellipse, Polygon, Star, Freehand, Bézier, Pen; Esc behaviour | `drawing.rs` |
 | 2-Point Line (with 15° snap), Polyline, B-Spline, 3-Point Curve, 3-Point Rectangle and Ellipse (Esc drops the first edge), Spiral turns | `lines.rs` |
 | Pick (select, Shift, marquee, move, Cmd axis, scale, Shift from centre, rotate, double-click to Shape tool); Shape (nodes, handles, node marquee, rounded corners) | `editing.rs` |
+| Paragraph text resized with a Pick handle and the W field: the frame grows, the glyphs keep their size, fewer lines, undo | `text.rs` |
 | Freehand Pick: a loop selects only what lies wholly inside it (not its bounding box), Shift adds, an empty loop clears, a click still picks | `editing.rs` |
 | Free Transform: rotation, reflection, scale and skew about the press point from the property bar's modes, undo, a click deselects or selects | `transform.rs` |
 | Palette fill and outline, outline width / style / corners / caps / behind fill / scale with object, multi-object edits, behind fill on the GPU canvas | `style.rs` |

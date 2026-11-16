@@ -299,7 +299,7 @@ fn selection_bar(ui: &mut egui::Ui, state: &mut AppState, out: &mut Vec<Command>
         let sy = if b.height() > 1e-9 { unit.to_points(h) / b.height() } else { 1.0 };
         let o = b.origin().to_vec2();
         let t = vs_core::kurbo::Affine::translate(o) * vs_core::kurbo::Affine::scale_non_uniform(sx, sy) * vs_core::kurbo::Affine::translate(-o);
-        state.doc.transform_objects(&ids, t);
+        state.doc.resize_objects(&ids, t);
     }
     theme::vsep(ui);
     if icon_button(ui, ICON_ROTATE_LEFT, "Rotate 90° left", true).clicked() {

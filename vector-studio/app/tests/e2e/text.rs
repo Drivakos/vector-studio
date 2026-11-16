@@ -274,3 +274,36 @@ fn edit_text_window_changes_the_words_or_leaves_them() {
     app.shortcut(Modifiers::COMMAND, Key::Z);
     assert_eq!(text(&app, 0).content, "Hello");
 }
+
+#[test]
+fn resizing_paragraph_text_rewraps_it_instead_of_stretching_it() {
+    let mut app = E2e::new();
+    app.key(Key::F8);
+    app.drag_doc((100.0, 100.0), (220.0, 300.0));
+    app.type_text("one two three four five six seven eight");
+    app.key(Key::Escape);
+    app.pick_tool();
+    app.shortcut(Modifiers::COMMAND, Key::A);
+    let lines = text(&app, 0).layout().lines.len();
+    let scale = |app: &E2e| app.objects()[0].transform.as_coeffs()[0];
+
+    // The right-hand handle doubles the width: the frame grows, the glyphs do not.
+    let gap = app.handle_gap();
+    app.drag_doc((220.0 + gap, 200.0), (340.0 + gap, 200.0));
+    let t = text(&app, 0);
+    let frame = t.frame.unwrap();
+    assert!(close(frame.width, 240.0) && close(frame.height, 200.0), "{frame:?}");
+    assert!(close(scale(&app), 1.0), "glyphs keep their size");
+    assert!(t.layout().lines.len() < lines, "fewer, longer lines: {} → {}", lines, t.layout().lines.len());
+    let b = app.objects()[0].world_bounds();
+    assert!(close(b.x0, 100.0) && close(b.x1, 340.0), "{b:?}");
+
+    // So does the property bar's width.
+    app.fill("Object width", "50");
+    let width = text(&app, 0).frame.unwrap().width;
+    assert!((width - vs_core::Unit::Millimeters.to_points(50.0)).abs() < 0.1, "{width}");
+    assert!(close(scale(&app), 1.0));
+
+    app.shortcut(Modifiers::COMMAND, Key::Z);
+    assert!(close(text(&app, 0).frame.unwrap().width, 240.0), "undo");
+}

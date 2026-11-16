@@ -63,7 +63,8 @@ enum Drag {
     NodeMarquee { start: Point, add: bool },
     Move { press: Point, start: Point, originals: Originals, moved: bool, was_selected: bool },
     /// `grab` is where the pointer took the handle, relative to the bounds point it controls.
-    Scale { handle: usize, bounds: kurbo::Rect, grab: Vec2, originals: Originals },
+    /// `frames` are the paragraph text frames as they were, `last` the scale made so far.
+    Scale { handle: usize, bounds: kurbo::Rect, grab: Vec2, originals: Originals, frames: Vec<(ObjectId, kurbo::Size)>, last: Affine },
     Rotate { center: Point, start_angle: f64, originals: Originals },
     /// Free Transform: about `anchor`; `start` is where the pointer was once the drag began,
     /// `size` the selection's width and height.
@@ -371,7 +372,10 @@ fn press_pick(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers
         if let Some(handle) = near {
             let originals = selection_originals(state);
             state.tools.drag = Some(match state.tools.pick_mode {
-                PickMode::Scale => Drag::Scale { handle, bounds, grab: p - edge_points(bounds)[handle], originals },
+                PickMode::Scale => {
+                    let frames = text_frames(state, &originals);
+                    Drag::Scale { handle, bounds, grab: p - edge_points(bounds)[handle], originals, frames, last: Affine::IDENTITY }
+                }
                 PickMode::Rotate => {
                     let center = bounds.center();
                     Drag::Rotate { center, start_angle: (p - center).atan2(), originals }
@@ -668,11 +672,23 @@ fn drag_to(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers) {
             }
             Drag::Move { press, start, originals, moved, was_selected }
         }
-        Drag::Scale { handle, bounds, grab, originals } => {
+        Drag::Scale { handle, bounds, grab, originals, frames, .. } => {
             let at = snapper(state, view, &state.selection).point(p - grab);
             let t = scale_transform(handle, bounds, at, mods);
             apply(state, &originals, t);
-            Drag::Scale { handle, bounds, grab, originals }
+            // Paragraph text rewraps in a resized frame instead of stretching.
+            let page = state.doc.active_page_mut();
+            for (id, frame) in &frames {
+                let before = originals.iter().find(|o| o.0 == *id).map(|o| o.1);
+                if let Some(before) = before
+                    && let Some(obj) = page.object_mut(*id)
+                    && let Shape::Text(text) = &mut obj.shape
+                {
+                    text.frame = Some(*frame);
+                    obj.reflow_text(before);
+                }
+            }
+            Drag::Scale { handle, bounds, grab, originals, frames, last: t }
         }
         Drag::Rotate { center, start_angle, originals } => {
             let mut angle = (p - center).atan2() - start_angle;
@@ -865,6 +881,30 @@ fn creation_rect(start: Point, p: Point, mods: egui::Modifiers) -> kurbo::Rect {
     }
 }
 
+/// The paragraph text frames among `originals`, in the same order.
+fn text_frames(state: &AppState, originals: &Originals) -> Vec<(ObjectId, kurbo::Size)> {
+    let page = state.doc.active_page();
+    originals
+        .iter()
+        .filter_map(|(id, _)| match &page.object(*id)?.shape {
+            Shape::Text(t) if t.on_path.is_none() => t.frame.map(|f| (*id, f)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Remember `t`, the transform a finished drag made, for Repeat.
+fn remember_transform(state: &mut AppState, originals: &Originals, t: Affine) {
+    let page = state.doc.active_page();
+    let before = originals
+        .iter()
+        .filter_map(|(id, o)| page.object(*id).map(|obj| vs_core::Object { transform: *o, ..obj.clone() }.world_bounds()))
+        .reduce(|a, b| a.union(b));
+    if let Some(before) = before {
+        state.remember_transform(t, before.center());
+    }
+}
+
 /// Remember the transform a finished move, scale or rotate drag did, for Repeat.
 fn remember_drag(state: &mut AppState, originals: &Originals) {
     let page = state.doc.active_page();
@@ -957,7 +997,8 @@ fn release(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers) {
                 _ => remember_drag(state, &originals),
             }
         }
-        Drag::Scale { originals, .. } | Drag::Rotate { originals, .. } => remember_drag(state, &originals),
+        Drag::Scale { originals, last, .. } => remember_transform(state, &originals, last),
+        Drag::Rotate { originals, .. } => remember_drag(state, &originals),
         Drag::Free { start: Some(_), originals, .. } => remember_drag(state, &originals),
         // A click on empty space clears the selection.
         Drag::Free { anchor, start: None, .. } => {
