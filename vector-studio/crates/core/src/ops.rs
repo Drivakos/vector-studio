@@ -314,6 +314,23 @@ impl Document {
         }
     }
 
+    /// Whether Convert to Artistic/Paragraph Text applies: some unlocked text is among `ids`.
+    pub fn can_convert_text(&self, ids: &[ObjectId]) -> bool {
+        self.active_page().objects.iter().any(|o| ids.contains(&o.id) && !o.locked && matches!(o.shape, Shape::Text(_)))
+    }
+
+    /// Turn the unlocked artistic texts among `ids` into paragraph text and paragraph
+    /// texts into artistic text, keeping each in place.
+    pub fn convert_text(&mut self, ids: &[ObjectId]) {
+        for obj in self.active_page_mut().objects.iter_mut().filter(|o| ids.contains(&o.id) && !o.locked) {
+            if let Shape::Text(text) = &obj.shape {
+                let (text, shift) = if text.is_paragraph() { text.to_artistic() } else { text.to_paragraph() };
+                obj.shape = Shape::Text(text);
+                obj.transform *= shift;
+            }
+        }
+    }
+
     /// The ids of every object on the active page that can be selected, bottom first.
     pub fn all_object_ids(&self) -> Vec<ObjectId> {
         let page = self.active_page();

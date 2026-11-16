@@ -1,9 +1,10 @@
-//! The Text tool (F8): click the page to start artistic text, click text to edit it, type.
-//! Font, style, size and alignment come from the property bar.
+//! The Text tool (F8): click the page to start artistic text, drag a frame for paragraph
+//! text, click text to edit it, type. Font, style, size and alignment come from the
+//! property bar.
 
 use egui::{Color32, Event, Key, Pos2, Stroke};
 use egui_material_icons::icons::*;
-use vs_core::kurbo::{Affine, Point};
+use vs_core::kurbo::{Affine, Point, Rect};
 use vs_core::{ObjectId, Shape, Style, Text, TextAlign};
 
 use crate::app::AppState;
@@ -35,17 +36,21 @@ fn text_mut(state: &mut AppState, id: ObjectId) -> Option<&mut Text> {
     }
 }
 
+/// The unlocked, selectable text under `p` (page space), topmost first.
+pub fn text_at(state: &AppState, p: Point, tolerance: f64) -> Option<(ObjectId, Affine)> {
+    let page = state.doc.active_page();
+    page.objects
+        .iter()
+        .rev()
+        .find(|o| !o.locked && page.is_selectable(o) && matches!(o.shape, Shape::Text(_)) && o.hit(p, tolerance))
+        .map(|o| (o.id, o.transform))
+}
+
 /// Click with the Text tool at `p` (page space): edit the text there, or start new text
 /// whose first baseline begins at `p`.
 pub fn press(state: &mut AppState, p: Point, tolerance: f64) {
     finish(state);
-    let page = state.doc.active_page();
-    let hit = page
-        .objects
-        .iter()
-        .rev()
-        .find(|o| !o.locked && matches!(o.shape, Shape::Text(_)) && o.hit(p, tolerance))
-        .map(|o| (o.id, o.transform));
+    let hit = text_at(state, p, tolerance);
     let edit = match hit {
         Some((id, transform)) => {
             let caret = text_of(state, id).map_or(0, |(t, _)| t.layout().index_at(transform.inverse() * p));
@@ -66,10 +71,25 @@ pub fn press(state: &mut AppState, p: Point, tolerance: f64) {
     state.tools.text = Some(edit);
 }
 
-/// Stop typing. Text left empty is removed.
+/// Start paragraph text in `frame` (page space) and type into it.
+pub fn start_paragraph(state: &mut AppState, frame: Rect) {
+    finish(state);
+    let mut text = state.tools.settings.text.clone();
+    text.content.clear();
+    text.frame = Some(frame.size());
+    let id = state.doc.add_object(Shape::Text(text), Style::new_text());
+    if let Some(obj) = state.doc.active_page_mut().object_mut(id) {
+        obj.transform = Affine::translate(frame.origin().to_vec2());
+    }
+    state.selection = vec![id];
+    state.marquee_selection = None;
+    state.tools.text = Some(TextEdit { id, caret: 0 });
+}
+
+/// Stop typing. Artistic text left empty is removed; an empty paragraph frame stays.
 pub fn finish(state: &mut AppState) {
     let Some(edit) = state.tools.text.take() else { return };
-    if text_of(state, edit.id).is_some_and(|(t, _)| t.content.is_empty()) {
+    if text_of(state, edit.id).is_some_and(|(t, _)| t.content.is_empty() && !t.is_paragraph()) {
         state.doc.delete_objects(&[edit.id]);
         state.selection.retain(|id| *id != edit.id);
     }
@@ -176,10 +196,31 @@ pub fn draw_caret(painter: &egui::Painter, state: &AppState, to_screen: impl Fn(
     let (top, bottom) = layout.caret(edit.caret);
     let stroke = Stroke::new(1.5, Color32::BLACK);
     painter.line_segment([to_screen(transform * top), to_screen(transform * bottom)], stroke);
-    // A faint frame shows where the text sits while it is still empty.
+    // A faint frame shows where the text sits; red when paragraph text overflows it.
     let b = layout.bounds();
     let corners = [b.origin(), Point::new(b.x1, b.y0), Point::new(b.x1, b.y1), Point::new(b.x0, b.y1)].map(|c| to_screen(transform * c));
-    painter.add(egui::Shape::closed_line(corners.to_vec(), Stroke::new(1.0, Color32::from_rgba_unmultiplied(0x1E, 0x6F, 0xD9, 0x80))));
+    let color = if layout.overflow { OVERFLOW } else { Color32::from_rgba_unmultiplied(0x1E, 0x6F, 0xD9, 0x80) };
+    painter.add(egui::Shape::closed_line(corners.to_vec(), Stroke::new(1.0, color)));
+}
+
+/// Frame colour of paragraph text that does not fit.
+pub const OVERFLOW: Color32 = Color32::from_rgb(0xD0, 0x20, 0x20);
+
+/// Paragraph text frames of the selection (not the one being typed into, which
+/// [`draw_caret`] frames), so a frame shows even while the text is short.
+pub fn draw_frames(painter: &egui::Painter, state: &AppState, to_screen: impl Fn(Point) -> Pos2) {
+    let typing = state.tools.text.map(|e| e.id);
+    for obj in state.selected_objects().filter(|o| Some(o.id) != typing) {
+        let Shape::Text(text) = &obj.shape else { continue };
+        if !text.is_paragraph() {
+            continue;
+        }
+        let layout = text.layout();
+        let b = layout.bounds();
+        let corners = [b.origin(), Point::new(b.x1, b.y0), Point::new(b.x1, b.y1), Point::new(b.x0, b.y1)].map(|c| to_screen(obj.transform * c));
+        let color = if layout.overflow { OVERFLOW } else { Color32::from_gray(140) };
+        painter.add(egui::Shape::dashed_line(&[corners.to_vec(), vec![corners[0]]].concat(), Stroke::new(1.0, color), 4.0, 3.0));
+    }
 }
 
 /// The texts the font controls change: the one being typed into, else the selected

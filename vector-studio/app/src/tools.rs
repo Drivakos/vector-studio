@@ -80,6 +80,8 @@ enum Drag {
     Knife { start: Point },
     /// Eraser tool: the path of the eraser so far.
     Erase { points: Vec<Point> },
+    /// Text tool: dragging out a paragraph text frame (a click makes artistic text).
+    TextFrame { start: Point },
 }
 
 /// A Bézier or Pen path being drawn, in document space.
@@ -237,7 +239,12 @@ fn press(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers, dou
         Tool::Shape => press_shape(state, view, p, mods, double),
         Tool::Freehand => state.tools.drag = Some(Drag::Freehand { points: vec![p] }),
         Tool::Bezier | Tool::Pen => press_pen(state, view, p),
-        Tool::Text => crate::text_tool::press(state, p, view.doc_len(HIT)),
+        // On text: edit it. Elsewhere: a drag makes paragraph text, a click artistic text.
+        Tool::Text if crate::text_tool::text_at(state, p, view.doc_len(HIT)).is_some() => crate::text_tool::press(state, p, view.doc_len(HIT)),
+        Tool::Text => {
+            crate::text_tool::finish(state);
+            state.tools.drag = Some(Drag::TextFrame { start: p });
+        }
         Tool::InteractiveFill => press_fill(state, view, p),
         Tool::Transparency => {
             crate::paint_tools::select_at(state, p, view.doc_len(HIT));
@@ -810,6 +817,14 @@ fn release(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers) {
                 }
             }
         }
+        Drag::TextFrame { start } => {
+            let frame = kurbo::Rect::from_points(start, p);
+            if frame.width() * view.zoom > DRAG_START && frame.height() * view.zoom > DRAG_START {
+                crate::text_tool::start_paragraph(state, frame);
+            } else {
+                crate::text_tool::press(state, start, view.doc_len(HIT));
+            }
+        }
         Drag::Crop { start } => {
             let area = kurbo::Rect::from_points(start, p);
             if area.width() * view.zoom >= 2.0 && area.height() * view.zoom >= 2.0 {
@@ -962,6 +977,7 @@ pub fn draw_overlay(painter: &egui::Painter, state: &AppState, canvas: Rect) {
     let view = View::new(state, canvas);
     let page = state.doc.active_page();
     let thin = Stroke::new(1.0, ACCENT);
+    crate::text_tool::draw_frames(painter, state, |p| view.screen(p));
     crate::text_tool::draw_caret(painter, state, |p| view.screen(p));
     if state.tool == Tool::InteractiveFill
         && let Some((_, g, t)) = crate::paint_tools::selected_gradient(state)
@@ -1069,6 +1085,12 @@ pub fn draw_overlay(painter: &egui::Painter, state: &AppState, canvas: Rect) {
                 crop_frame(painter, &view, kurbo::Rect::from_points(*start, p));
             }
         }
+        Some(Drag::TextFrame { start }) => {
+            if let Some(p) = state.tools.pointer {
+                let r = Rect::from_two_pos(view.screen(*start), view.screen(p));
+                painter.rect_stroke(r, 0.0, thin, egui::StrokeKind::Inside);
+            }
+        }
         Some(Drag::Knife { start }) => {
             if let Some(p) = state.tools.pointer {
                 painter.line_segment([view.screen(*start), view.screen(p)], Stroke::new(1.5, Color32::from_rgb(0xD0, 0x20, 0x20)));
@@ -1170,7 +1192,7 @@ pub fn hint(state: &AppState) -> String {
             "Click for corners, drag for curves · click the first node to close · Enter or click the last node to finish".into()
         }
         Tool::Text if state.tools.text.is_some() => "Type the text · Enter starts a new line · Esc or another tool finishes".into(),
-        Tool::Text => "Click the page to add text, or click text to edit it".into(),
+        Tool::Text => "Click to add artistic text, drag a frame for paragraph text, or click text to edit it".into(),
         Tool::InteractiveFill => "Click an object, then drag across it for a fountain fill · drag the ends to move it".into(),
         Tool::Transparency => "Click an object, then set its transparency in the property bar".into(),
         Tool::ColorEyedropper if state.tools.eyedropper.applying => {

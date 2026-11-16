@@ -327,6 +327,7 @@ impl VectorStudioApp {
             Command::BreakApart => (doc.can_break_apart(&state.selection), None),
             Command::JoinCurves => (doc.can_join_curves(&state.selection, vs_core::curves::JOIN_TOLERANCE), None),
             Command::ConvertOutline => (doc.can_convert_outline(&state.selection), None),
+            Command::ConvertText => (doc.can_convert_text(&state.selection), None),
             _ => (true, None),
         }
     }
@@ -482,6 +483,11 @@ impl VectorStudioApp {
                     s.selection = vec![id];
                     s.tools.nodes.clear();
                 }
+                Ok(())
+            }
+            Command::ConvertText => {
+                crate::text_tool::finish(s);
+                s.doc.convert_text(&s.selection);
                 Ok(())
             }
             Command::ConvertOutline => {

@@ -158,3 +158,48 @@ fn text_moves_converts_to_curves_and_survives_save_and_open() {
     let b = app.objects()[0].world_path().bounding_box();
     assert!((b.x0 - glyphs.x0).abs() < 0.01 && (b.y1 - glyphs.y1).abs() < 0.01, "same outlines: {b:?} vs {glyphs:?}");
 }
+
+#[test]
+fn paragraph_text_wraps_in_a_dragged_frame_converts_and_overflows() {
+    let mut app = E2e::new();
+    app.key(Key::F8);
+    app.drag_doc((100.0, 100.0), (220.0, 300.0));
+    app.type_text("one two three four five six seven eight");
+    let t = text(&app, 0);
+    assert_eq!(t.content, "one two three four five six seven eight");
+    let frame = t.frame.expect("a drag makes paragraph text");
+    assert!(close(frame.width, 120.0) && close(frame.height, 200.0), "{frame:?}");
+    assert!(t.layout().lines.len() > 1, "words wrap to the frame");
+    let b = app.objects()[0].world_path().bounding_box();
+    assert!(b.x0 >= 99.5 && b.x1 <= 220.5 && b.y0 >= 99.5, "glyphs stay in the frame: {b:?}");
+    assert!(any_dark(&mut app, 100.0, 100.0, 220.0, 130.0), "the first line is drawn at the top");
+    app.key(Key::Escape);
+    assert_eq!(app.objects()[0].shape.kind_label(), "Paragraph Text");
+
+    // To artistic text and back, without moving the glyphs.
+    app.pick_tool();
+    app.menu(&["Text", "Convert to Artistic/Paragraph Text"]);
+    let artistic = text(&app, 0);
+    assert_eq!(artistic.frame, None);
+    assert!(artistic.content.contains('\n'), "wrapped lines become line breaks: {:?}", artistic.content);
+    let after = app.objects()[0].world_path().bounding_box();
+    assert!(close(after.x0, b.x0) && close(after.y0, b.y0) && close(after.x1, b.x1), "{b:?} → {after:?}");
+    app.menu(&["Text", "Convert to Artistic/Paragraph Text"]);
+    assert!(text(&app, 0).frame.is_some());
+    let back = app.objects()[0].world_path().bounding_box();
+    assert!(close(back.x0, b.x0) && close(back.y0, b.y0), "{b:?} → {back:?}");
+
+    // A short frame hides the lines that do not fit.
+    app.docker("Properties");
+    app.fill("Frame height (properties)", "12");
+    let t = text(&app, 0);
+    assert!(close(t.frame.unwrap().height, vs_core::Unit::Millimeters.to_points(12.0)));
+    assert!(t.layout().overflow, "the text no longer fits");
+
+    // An empty frame stays when typing ends.
+    app.key(Key::F8);
+    app.drag_doc((300.0, 100.0), (400.0, 200.0));
+    app.key(Key::Escape);
+    assert_eq!(app.objects().len(), 2);
+    assert!(text(&app, 1).content.is_empty() && text(&app, 1).frame.is_some());
+}

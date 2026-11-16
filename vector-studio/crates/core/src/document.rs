@@ -284,6 +284,7 @@ impl Shape {
             Shape::Polygon { .. } => "Polygon",
             Shape::Star { .. } => "Star",
             Shape::Curve { .. } => "Curve",
+            Shape::Text(t) if t.is_paragraph() => "Paragraph Text",
             Shape::Text(_) => "Artistic Text",
             Shape::Image(_) => "Bitmap",
             Shape::Group { .. } => "Group",

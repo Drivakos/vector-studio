@@ -114,6 +114,16 @@ pub fn object_properties_ui(ui: &mut egui::Ui, state: &mut AppState) {
                     ui.label("Size");
                     crate::a11y::add(ui, egui::DragValue::new(&mut text.size).range(1.0..=3000.0).max_decimals(1).suffix(" pt"), "Font size (properties)");
                     ui.end_row();
+                    if let Some(frame) = &mut text.frame {
+                        for (label, side) in [("Frame width", &mut frame.width), ("Frame height", &mut frame.height)] {
+                            ui.label(label);
+                            let mut v = unit.from_points(*side);
+                            if crate::a11y::add(ui, length(&mut v, unit).range(unit.from_points(1.0)..=f64::MAX), &format!("{label} (properties)")).changed() {
+                                *side = unit.to_points(v).max(1.0);
+                            }
+                            ui.end_row();
+                        }
+                    }
                 }
                 Shape::Image(b) => {
                     ui.label("Pixels");
