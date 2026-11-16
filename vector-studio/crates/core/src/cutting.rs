@@ -2,7 +2,7 @@
 //! boolean operations; open curves are split where they cross the region's edge. Curves
 //! stay curves either way.
 
-use kurbo::{Affine, BezPath, Line, ParamCurve, PathSeg, Point, Rect, Shape as _, Stroke, StrokeOpts};
+use kurbo::{Affine, BezPath, Line, ParamCurve, ParamCurveNearest, PathEl, PathSeg, Point, Rect, Shape as _, Stroke, StrokeOpts};
 use linesweeper::BinaryOp;
 
 use crate::document::{Document, Object, ObjectId, Shape};
@@ -280,6 +280,185 @@ fn half_plane(a: Point, b: Point) -> Option<Region> {
     Some(Region::new(path))
 }
 
+/// Tolerance of the outlines other objects are flattened to when finding where they
+/// cross the curve a virtual segment is taken from.
+const CROSSING_TOLERANCE: f64 = 0.01;
+
+impl Document {
+    /// Virtual Segment Delete: on the topmost unlocked shape or curve whose outline passes
+    /// within `tolerance` of `at`, delete the part of the outline between the crossings
+    /// (with other objects' outlines, or itself) on either side of `at`. An open curve with
+    /// no crossing there loses everything up to its end; a closed subpath crossed fewer
+    /// than twice goes whole. The object becomes a curve, and goes when nothing is left.
+    /// Groups, text and bitmaps are not cut, and text and bitmaps do not cross. Returns
+    /// whether anything was deleted.
+    pub fn delete_virtual_segment(&mut self, at: Point, tolerance: f64) -> bool {
+        let page = self.active_page();
+        let hit = page.objects.iter().enumerate().rev().find_map(|(i, obj)| {
+            let cuttable = !obj.locked && !matches!(obj.shape, Shape::Group { .. } | Shape::Text(_) | Shape::Image(_));
+            let subpaths = subpaths(&obj.world_path());
+            let (k, u) = cuttable.then(|| nearest_on(&subpaths, at, tolerance)).flatten()?;
+            Some((i, subpaths, k, u))
+        });
+        let Some((index, subpaths, k, u)) = hit else { return false };
+        let target = &page.objects[index];
+        // Everything that can cross it, flattened to line segments.
+        let mut lines: Vec<(Option<(usize, usize)>, Line)> = Vec::new();
+        for (i, obj) in page.objects.iter().enumerate() {
+            if i != index && !matches!(obj.shape, Shape::Text(_) | Shape::Image(_)) {
+                flat_lines(&obj.world_path(), &mut |l| lines.push((None, l)));
+            }
+        }
+        for (j, (segs, _)) in subpaths.iter().enumerate() {
+            for (n, seg) in segs.iter().enumerate() {
+                flat_lines(&BezPath::from_path_segments(std::iter::once(*seg)), &mut |l| lines.push((Some((j, n)), l)));
+            }
+        }
+        let (segs, closed) = &subpaths[k];
+        let mut cuts: Vec<f64> = Vec::new();
+        for (n, seg) in segs.iter().enumerate() {
+            for (own, line) in &lines {
+                if *own == Some((k, n)) {
+                    continue;
+                }
+                for hit in seg.intersect_line(*line) {
+                    // A curve meets its own neighbouring segments at its nodes: not a crossing.
+                    let at_node = own.is_some() && (hit.segment_t < 1e-6 || hit.segment_t > 1.0 - 1e-6);
+                    if !at_node {
+                        cuts.push(n as f64 + hit.segment_t);
+                    }
+                }
+            }
+        }
+        cuts.sort_by(f64::total_cmp);
+        cuts.dedup_by(|a, b| (*a - *b).abs() < 1e-7);
+
+        let len = segs.len() as f64;
+        let kept: Vec<BezPath> = if *closed {
+            if cuts.len() < 2 {
+                Vec::new()
+            } else {
+                let next = cuts.iter().copied().find(|c| *c > u).unwrap_or(cuts[0] + len);
+                let prev = cuts.iter().copied().rev().find(|c| *c < u).unwrap_or(cuts[cuts.len() - 1] - len);
+                // Round from the next crossing to the previous one.
+                vec![piece(segs, next, prev + len)]
+            }
+        } else {
+            let prev = cuts.iter().copied().rev().find(|c| *c < u).unwrap_or(0.0);
+            let next = cuts.iter().copied().find(|c| *c > u).unwrap_or(len);
+            [(0.0, prev), (next, len)].into_iter().filter(|(a, b)| b - a > 1e-7).map(|(a, b)| piece(segs, a, b)).collect()
+        };
+
+        let mut path = BezPath::new();
+        for (j, (segs, closed)) in subpaths.iter().enumerate() {
+            if j == k {
+                for p in &kept {
+                    path.extend(p.elements().iter().copied());
+                }
+            } else {
+                path.extend(BezPath::from_path_segments(segs.iter().copied()).elements().iter().copied());
+                if *closed {
+                    path.close_path();
+                }
+            }
+        }
+        let obj = target.clone();
+        let objects = &mut self.active_page_mut().objects;
+        if path.elements().len() < 2 {
+            objects.remove(index);
+        } else {
+            objects[index] = Object { shape: Shape::Curve { path }, style: page_style(&obj), transform: Affine::IDENTITY, ..obj };
+        }
+        true
+    }
+}
+
+/// The subpaths of `path` as their segments, each with whether it is closed. A closed
+/// subpath's last segment ends at its start.
+fn subpaths(path: &BezPath) -> Vec<(Vec<PathSeg>, bool)> {
+    let mut out: Vec<(Vec<PathSeg>, bool)> = Vec::new();
+    let (mut start, mut last) = (Point::ZERO, Point::ZERO);
+    for el in path.elements() {
+        let seg = match *el {
+            PathEl::MoveTo(p) => {
+                out.push((Vec::new(), false));
+                (start, last) = (p, p);
+                continue;
+            }
+            PathEl::LineTo(p) => PathSeg::Line(Line::new(last, p)),
+            PathEl::QuadTo(a, p) => PathSeg::Quad(kurbo::QuadBez::new(last, a, p)),
+            PathEl::CurveTo(a, b, p) => PathSeg::Cubic(kurbo::CubicBez::new(last, a, b, p)),
+            PathEl::ClosePath => {
+                if let Some((segs, closed)) = out.last_mut() {
+                    if (last - start).hypot() > 1e-9 {
+                        segs.push(PathSeg::Line(Line::new(last, start)));
+                    }
+                    *closed = true;
+                }
+                last = start;
+                continue;
+            }
+        };
+        last = seg.end();
+        if let Some((segs, _)) = out.last_mut() {
+            segs.push(seg);
+        }
+    }
+    out.retain(|(segs, _)| !segs.is_empty());
+    out
+}
+
+/// The subpath and position (segment index + t) of the outline point nearest `at`, if
+/// it is within `tolerance`.
+fn nearest_on(subpaths: &[(Vec<PathSeg>, bool)], at: Point, tolerance: f64) -> Option<(usize, f64)> {
+    let mut best: Option<(f64, usize, f64)> = None;
+    for (k, (segs, _)) in subpaths.iter().enumerate() {
+        for (n, seg) in segs.iter().enumerate() {
+            let near = seg.nearest(at, 1e-6);
+            if best.is_none_or(|b| near.distance_sq < b.0) {
+                best = Some((near.distance_sq, k, n as f64 + near.t));
+            }
+        }
+    }
+    best.filter(|b| b.0 <= tolerance * tolerance).map(|b| (b.1, b.2))
+}
+
+/// `path` flattened, line by line.
+fn flat_lines(path: &BezPath, out: &mut impl FnMut(Line)) {
+    let (mut start, mut last) = (Point::ZERO, Point::ZERO);
+    kurbo::flatten(path.elements().iter().copied(), CROSSING_TOLERANCE, |el| match el {
+        PathEl::MoveTo(p) => (start, last) = (p, p),
+        PathEl::LineTo(p) => {
+            out(Line::new(last, p));
+            last = p;
+        }
+        PathEl::ClosePath => {
+            out(Line::new(last, start));
+            last = start;
+        }
+        _ => {}
+    });
+}
+
+/// The part of the curve `segs` from position `from` to `to` (segment index + t; past
+/// the end goes round again, for closed subpaths).
+fn piece(segs: &[PathSeg], from: f64, to: f64) -> BezPath {
+    let n = segs.len();
+    let mut path = BezPath::new();
+    let mut u = from;
+    while u < to - 1e-9 {
+        let k = u.floor();
+        let end = (k + 1.0).min(to);
+        let seg = segs[(k as usize) % n].subsegment((u - k)..(end - k));
+        if path.elements().is_empty() {
+            path.move_to(seg.start());
+        }
+        path.push(seg.as_path_el());
+        u = end;
+    }
+    path
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -347,5 +526,47 @@ mod tests {
         let hole = std::f64::consts::PI * 25.0;
         assert!((area(&doc, r) - (9000.0 - hole)).abs() < 0.05, "{}", area(&doc, r));
         assert!(!doc.erase(&[], &[Point::new(500.0, 500.0)], 10.0), "erasing empty space changes nothing");
+    }
+
+    #[test]
+    fn virtual_segment_delete_removes_the_part_between_crossings() {
+        let mut doc = Document::default();
+        // A line crossed by two verticals at x = 30 and x = 70.
+        let l = line(&mut doc, (0.0, 50.0), (100.0, 50.0));
+        line(&mut doc, (30.0, 0.0), (30.0, 100.0));
+        line(&mut doc, (70.0, 0.0), (70.0, 100.0));
+        assert!(doc.delete_virtual_segment(Point::new(50.0, 50.5), 2.0), "the middle goes");
+        let path = doc.active_page().object(l).unwrap().world_path();
+        let ends: Vec<Point> = path.elements().iter().filter_map(|e| e.end_point()).collect();
+        assert_eq!(path.elements().iter().filter(|e| matches!(e, PathEl::MoveTo(_))).count(), 2, "two pieces: {ends:?}");
+        assert!(ends.iter().any(|p| (p.x - 30.0).abs() < 1e-6) && ends.iter().any(|p| (p.x - 70.0).abs() < 1e-6), "{ends:?}");
+        let b = doc.active_page().object(l).unwrap().world_bounds();
+        assert!((b.x0 - 0.0).abs() < 1e-6 && (b.x1 - 100.0).abs() < 1e-6);
+
+        // The end piece runs to the curve's end.
+        assert!(doc.delete_virtual_segment(Point::new(90.0, 50.0), 2.0));
+        let b = doc.active_page().object(l).unwrap().world_bounds();
+        assert!((b.x1 - 30.0).abs() < 1e-6, "only 0..30 is left: {b:?}");
+        assert!(doc.delete_virtual_segment(Point::new(10.0, 50.0), 2.0));
+        assert!(doc.active_page().object(l).is_none(), "nothing left: the object goes");
+        assert!(!doc.delete_virtual_segment(Point::new(500.0, 500.0), 2.0), "no outline there");
+    }
+
+    #[test]
+    fn virtual_segment_delete_opens_a_crossed_shape_and_removes_an_uncrossed_one() {
+        let mut doc = Document::default();
+        let r = rect(&mut doc, Rect::new(0.0, 0.0, 100.0, 100.0));
+        line(&mut doc, (50.0, -20.0), (50.0, 120.0));
+        // The right edge: the outline from x = 50 on the top round to x = 50 on the bottom.
+        assert!(doc.delete_virtual_segment(Point::new(100.0, 50.0), 2.0));
+        let obj = doc.active_page().object(r).unwrap();
+        assert!(matches!(obj.shape, Shape::Curve { .. }), "it is a curve now");
+        let b = obj.world_bounds();
+        assert!((b.x0 - 0.0).abs() < 1e-6 && (b.x1 - 50.0).abs() < 1e-6, "the left half is left: {b:?}");
+        assert!(!obj.shape.is_closed(), "and it is open");
+
+        let lone = rect(&mut doc, Rect::new(300.0, 300.0, 320.0, 320.0));
+        assert!(doc.delete_virtual_segment(Point::new(300.0, 310.0), 2.0));
+        assert!(doc.active_page().object(lone).is_none(), "an uncrossed closed shape goes whole");
     }
 }

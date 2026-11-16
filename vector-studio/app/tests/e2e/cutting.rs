@@ -1,4 +1,4 @@
-//! Crop, Knife and Eraser tools.
+//! Crop, Knife, Virtual Segment Delete and Eraser tools.
 
 use egui::Key;
 use vs_core::kurbo::Shape as _;
@@ -81,4 +81,27 @@ fn eraser_removes_a_band_with_the_size_from_the_property_bar() {
     assert!(px[0] > 200 && px[1] > 200, "the band shows the page: {px:?}");
     let kept = app.pixel(200.0, 150.0);
     assert!(kept[1] < 60, "the rest is still red: {kept:?}");
+}
+
+#[test]
+fn virtual_segment_delete_removes_the_clicked_part_between_crossings() {
+    let mut app = E2e::new();
+    app.draw_rect(100.0, 100.0, 300.0, 200.0);
+    app.draw_rect(150.0, 50.0, 250.0, 250.0);
+    app.flyout_tool("Crop", "Virtual Segment Delete");
+    let perimeter = |app: &E2e| app.objects()[0].world_path().perimeter(1e-6);
+    assert!(close(perimeter(&app), 600.0));
+
+    // The first rectangle's top edge, between where the second one's sides cross it.
+    app.click_doc(200.0, 100.0);
+    let obj = &app.objects()[0];
+    assert!(matches!(obj.shape, vs_core::Shape::Curve { .. }) && !obj.shape.is_closed(), "an open curve now");
+    assert!(close(perimeter(&app), 500.0), "100 pt of outline went: {}", perimeter(&app));
+    assert_eq!(app.objects().len(), 2, "the other rectangle stays");
+
+    app.click_doc(500.0, 500.0);
+    assert!(close(perimeter(&app), 500.0), "a click away from any line does nothing");
+
+    app.shortcut(egui::Modifiers::COMMAND, Key::Z);
+    assert!(matches!(app.objects()[0].shape, vs_core::Shape::Rectangle { .. }), "undone");
 }

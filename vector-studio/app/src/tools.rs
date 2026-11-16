@@ -182,7 +182,7 @@ pub fn is_implemented(tool: Tool) -> bool {
     is_shape_tool(tool)
         || matches!(tool, Tool::Pick | Tool::FreehandPick | Tool::FreeTransform | Tool::Shape | Tool::Zoom | Tool::Pan | Tool::Freehand | Tool::Bezier | Tool::Pen | Tool::Text)
         || matches!(tool, Tool::InteractiveFill | Tool::Transparency | Tool::ColorEyedropper | Tool::AttributesEyedropper)
-        || matches!(tool, Tool::Crop | Tool::Knife | Tool::Eraser)
+        || matches!(tool, Tool::Crop | Tool::Knife | Tool::VirtualSegmentDelete | Tool::Eraser)
         || matches!(tool, Tool::TwoPointLine | Tool::Polyline | Tool::BSpline | Tool::Spiral)
         || is_three_point(tool)
 }
@@ -310,6 +310,14 @@ fn press(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers, dou
             _ => state.tools.drag = Some(Drag::Crop { start: p }),
         },
         Tool::Knife => state.tools.drag = Some(Drag::Knife { start: p }),
+        Tool::VirtualSegmentDelete => {
+            if state.doc.delete_virtual_segment(p, view.doc_len(HIT)) {
+                let page = state.doc.active_page();
+                let gone: Vec<ObjectId> = state.selection.iter().copied().filter(|id| page.object(*id).is_none()).collect();
+                state.selection.retain(|id| !gone.contains(id));
+                state.marquee_selection = None;
+            }
+        }
         Tool::Eraser => state.tools.drag = Some(Drag::Erase { points: vec![p] }),
         t if is_shape_tool(t) => state.tools.drag = Some(Drag::Create { start: p }),
         _ => {}
@@ -1471,6 +1479,7 @@ pub fn hint(state: &AppState) -> String {
         Tool::Crop if state.has_selection() => "Drag the area to keep; the selected objects are cropped".into(),
         Tool::Crop => "Drag the area to keep; everything on the page is cropped".into(),
         Tool::Knife => "Drag a line across objects to cut them in two".into(),
+        Tool::VirtualSegmentDelete => "Click a line to delete it up to where other lines cross it".into(),
         Tool::Eraser if state.has_selection() => "Drag over the selected objects to erase · size in the property bar".into(),
         Tool::Eraser => "Drag over objects to erase · size in the property bar".into(),
         Tool::Zoom => "Click to zoom in; Shift-click to zoom out".into(),

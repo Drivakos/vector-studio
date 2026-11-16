@@ -76,7 +76,7 @@ Names must be unique on screen, or a test cannot tell widgets apart.
 | Print (no printer, default printer, copies, page range and current page, the PDF sent; the print queue is scripted) | `files.rs` |
 | Group, Ungroup, Ungroup All, Lock, Unlock, Unlock All | `groups.rs` |
 | Join Curves (Object menu) closing two nearly-touching paths, Convert Outline to Object (Cmd+Shift+Q) and how it renders | `curves.rs` |
-| Crop tool (Enter, Esc, double-click on the selection, canvas result, undo), Knife tool, Eraser tool (size from the property bar, canvas result) | `cutting.rs` |
+| Crop tool (Enter, Esc, double-click on the selection, canvas result, undo), Knife tool, Virtual Segment Delete (the part between crossings, a miss, undo), Eraser tool (size from the property bar, canvas result) | `cutting.rs` |
 | Shaping (Weld, Trim, Intersect, Simplify, Front/Back Minus, Boundary: property bar and Object > Shaping), the target rule (marquee vs Shift-click), Combine (Cmd+L) with even-odd holes, Break Apart (Cmd+K) | `shaping.rs` |
 | Text tool: typing, lines, caret keys, plain keys not running shortcuts, Esc, one undo step, empty text removed, clicking and Pick double-click to edit, font size and alignment for new and selected text, move, save/open, Convert to Curves | `text.rs` |
 | Paragraph text: drag a frame, wrap, convert to artistic and back in place, frame height and overflow, empty frames stay | `text.rs` |
