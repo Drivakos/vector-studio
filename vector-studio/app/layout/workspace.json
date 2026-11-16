@@ -52,7 +52,7 @@
         ] },
         "-",
         { "cmd": "edit.find_replace", "label": "Find and Replace…", "shortcut": "CmdOrCtrl+F" },
-        { "cmd": "edit.step_repeat", "label": "Step and Repeat…" }
+        { "cmd": "edit.step_repeat", "label": "Step and Repeat…", "shortcut": "CmdOrCtrl+Shift+D" }
       ]
     },
     {
@@ -299,7 +299,8 @@
           { "cmd": "window.docker.objects", "label": "Objects", "checkable": true },
           { "cmd": "window.docker.pages", "label": "Pages", "checkable": true },
           { "cmd": "window.docker.transform", "label": "Transform", "checkable": true },
-          { "cmd": "window.docker.align", "label": "Align and Distribute", "checkable": true }
+          { "cmd": "window.docker.align", "label": "Align and Distribute", "checkable": true },
+          { "cmd": "window.docker.step_repeat", "label": "Step and Repeat", "checkable": true }
         ] },
         { "cmd": "window.show_dockers", "label": "Show Dockers", "checkable": true },
         "-",

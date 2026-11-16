@@ -63,18 +63,18 @@ Phase 1 drawing:
 | Combine, Break Apart | Combine (`Cmd+L`) joins objects into one curve styled like the target; where its paths overlap there are holes. Break Apart (`Cmd+K`) makes each path its own object |
 | Join Curves, Convert Outline | Join Curves (Object menu) merges the selected objects into one curve and links open ends less than 1 mm apart; they meet halfway, and a path whose own ends meet closes. Convert Outline to Object (`Cmd+Shift+Q`) turns each outline into a filled curve of its colour, above the object (below for Behind fill); the object keeps its fill, or goes if it had none |
 | Arrange | Align (L R T B E C, P = centre to page): one object aligns to the page, several to the last selected. Distribute (three or more objects; Align and Distribute docker and Object menu): left, centres, right or spacing, horizontally or vertically, between the two outermost objects. Order: front, back, forward, backward, reverse order. Convert to Curves (Cmd+Q / Ctrl+Q), which also converts every member of a group |
-| Edit | Undo/redo (every finished gesture is one step), cut/copy/paste (copy also puts SVG on the system clipboard), duplicate (offset set in the property bar), delete, select all, arrow nudge (distance set in the property bar, default 1 mm; Shift ×10) |
+| Edit | Undo/redo (every finished gesture is one step), cut/copy/paste (copy also puts SVG on the system clipboard), duplicate (offset set in the property bar), delete, select all, arrow nudge (distance set in the property bar, default 1 mm; Shift ×10). Step and Repeat docker (`Cmd+Shift+D`): number of copies, and for each direction an offset or a spacing between objects. Copy Properties From: choose outline pen, outline colour, fill and text properties, then click the object to copy from (Esc cancels). Select All › Nodes (or `Cmd+A` with the Shape tool) selects every node of the selected curve |
 | Objects docker | Every page's objects top-first; click to select, Shift/Cmd-click to add, double-click to rename, order and delete buttons |
 | Files | New, Open, Save, Save As (`.vstudio`), unsaved-changes prompt on New/Open/close, `•` in the title when unsaved. Export: SVG (current page), PNG (current page, dpi, transparent or white), PDF (all pages). Import (`Cmd+I`), centred on the page, selected, and scaled down to fit when larger: SVG as editable curves (several shapes come in as a group; shapes, groups, solid and fountain fills, outlines and opacity are kept; text, embedded bitmaps, patterns, clipping, masks and filters are not yet); PNG and JPEG as bitmaps at 96 pixels per inch. Bitmaps keep the file's own bytes, move, scale, rotate and take transparency, and export to SVG, PNG and PDF |
 
 ## Tests
 
-`cargo test --workspace` runs about 225 tests. The 86 end-to-end tests drive the whole app through its window on a real GPU. Every feature and change ships with one. See [TESTING.md](TESTING.md).
+`cargo test --workspace` runs about 230 tests. The 89 end-to-end tests drive the whole app through its window on a real GPU. Every feature and change ships with one. See [TESTING.md](TESTING.md).
 
 ## Shortcuts
 
 Tools: `F10` Shape, `Z` Zoom, `H` Pan, `F5` Freehand, `F6` Rectangle, `F7` Ellipse, `Y` Polygon, `F8` Text, `Esc` finishes a path, then clears the selection, then picks the Pick tool.
-Edit: `Cmd+Z` / `Cmd+Shift+Z`, `Cmd+X/C/V`, `Cmd+D` duplicate, `Cmd+A` select all, `Delete`/`Backspace`.
+Edit: `Cmd+Z` / `Cmd+Shift+Z`, `Cmd+X/C/V`, `Cmd+D` duplicate, `Cmd+A` select all (all nodes with the Shape tool), `Cmd+Shift+D` Step and Repeat, `Delete`/`Backspace`.
 Arrange: `Cmd+L` combine, `Cmd+K` break apart, `L R T B E C P` align, `Shift+PageUp/PageDown` to front/back, `Cmd+PageUp/PageDown` forward/back one.
 View: `Cmd+=` / `Cmd+-` zoom, `Shift+F4` zoom to page, `Cmd+1` actual size. `PageUp`/`PageDown` change page.
 

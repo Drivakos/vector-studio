@@ -279,6 +279,13 @@ impl Document {
         new_ids
     }
 
+    /// Step and Repeat: `copies` copies of the objects among `ids`, the n-th moved by
+    /// n × `step`. Returns the new objects, first copy first.
+    pub fn step_and_repeat(&mut self, ids: &[ObjectId], copies: u32, step: Vec2) -> Vec<ObjectId> {
+        let originals = self.copy_objects(ids);
+        (1..=copies).flat_map(|n| self.paste_objects(&originals, step * f64::from(n))).collect()
+    }
+
     pub fn duplicate_objects(&mut self, ids: &[ObjectId], offset: Vec2) -> Vec<ObjectId> {
         let copies = self.copy_objects(ids);
         self.paste_objects(&copies, offset)
@@ -300,6 +307,19 @@ impl Document {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn step_and_repeat_makes_evenly_spaced_copies() {
+        let mut doc = Document::default();
+        let a = doc.add_object(Shape::Rectangle { rect: Rect::new(0.0, 0.0, 10.0, 10.0), corner_radius: 0.0 }, Style::new_object());
+        let made = doc.step_and_repeat(&[a], 3, Vec2::new(15.0, 5.0));
+        assert_eq!(made.len(), 3);
+        let page = doc.active_page();
+        let x: Vec<f64> = made.iter().map(|id| page.object(*id).unwrap().world_bounds().x0).collect();
+        assert_eq!(x, vec![15.0, 30.0, 45.0]);
+        assert_eq!(page.object(made[2]).unwrap().world_bounds().y0, 15.0);
+        assert!(doc.step_and_repeat(&[a], 0, Vec2::ZERO).is_empty());
+    }
+
     #[test]
     fn distribute_spreads_edges_centres_and_gaps() {
         use super::Distribute;

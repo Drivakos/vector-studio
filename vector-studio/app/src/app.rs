@@ -111,6 +111,8 @@ pub struct AppState {
     pub renaming_object: Option<(ObjectId, String)>,
     pub interaction: CanvasInteraction,
     pub export: ExportDialog,
+    pub step_repeat: crate::edit_tools::StepRepeat,
+    pub copy_properties: crate::edit_tools::CopyProperties,
     /// Last status message (e.g. "Exported …").
     pub status: Option<String>,
     clipboard: Vec<Object>,
@@ -147,6 +149,8 @@ impl AppState {
             renaming_object: None,
             interaction: CanvasInteraction::default(),
             export: ExportDialog::default(),
+            step_repeat: Default::default(),
+            copy_properties: Default::default(),
             status: None,
             clipboard: Vec::new(),
             clipboard_text: String::new(),
@@ -296,6 +300,8 @@ impl VectorStudioApp {
             Command::Redo => (state.history.can_redo(), None),
             Command::Paste => (!state.clipboard.is_empty(), None),
             Command::SelectAll => (!doc.active_page().objects.is_empty(), None),
+            Command::SelectAllNodes => (crate::edit_tools::can_select_all_nodes(state), None),
+            Command::CopyProperties => (state.selected_objects().any(|o| !o.locked), None),
             Command::Group => (state.selected_objects().filter(|o| !o.locked).count() >= 2, None),
             Command::Ungroup | Command::UngroupAll => {
                 (state.selected_objects().any(|o| !o.locked && matches!(o.shape, Shape::Group { .. })), None)
@@ -385,6 +391,18 @@ impl VectorStudioApp {
             Command::Duplicate => {
                 let [dx, dy] = s.prefs.duplicate_offset;
                 s.selection = s.doc.duplicate_objects(&s.selection, Vec2::new(dx, dy));
+                Ok(())
+            }
+            Command::SelectAllNodes => {
+                crate::edit_tools::select_all_nodes(s);
+                Ok(())
+            }
+            Command::CopyProperties => {
+                s.copy_properties.open = true;
+                Ok(())
+            }
+            Command::StepRepeat => {
+                s.dockers.show(DockerKind::StepRepeat);
                 Ok(())
             }
             Command::SelectAll => {
@@ -597,7 +615,9 @@ impl VectorStudioApp {
                 commands.push(Command::Undo);
             }
             if i.consume_shortcut(&shortcut(Modifiers::COMMAND, Key::A)) {
-                commands.push(Command::SelectAll);
+                // With the Shape tool on a curve, Cmd+A selects its nodes.
+                let nodes = s.tool == Tool::Shape && crate::edit_tools::can_select_all_nodes(s);
+                commands.push(if nodes { Command::SelectAllNodes } else { Command::SelectAll });
             }
             if !typing && (i.consume_key(Modifiers::NONE, Key::Delete) || i.consume_key(Modifiers::NONE, Key::Backspace)) {
                 commands.push(Command::Delete);
@@ -608,7 +628,9 @@ impl VectorStudioApp {
         });
 
         if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
-            if s.tools.has_open_path() {
+            if s.copy_properties.picking {
+                s.copy_properties.picking = false;
+            } else if s.tools.has_open_path() {
                 tools::finish_pen(s);
             } else if s.tools.is_dragging() {
                 tools::cancel(s);
@@ -838,6 +860,7 @@ impl eframe::App for VectorStudioApp {
         }
 
         files::export_window(&ctx, &mut self.state);
+        crate::edit_tools::copy_properties_window(&ctx, &mut self.state);
         self.settle(&ctx);
 
         #[cfg(target_os = "macos")]

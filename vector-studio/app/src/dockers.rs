@@ -16,10 +16,20 @@ pub enum DockerKind {
     Pages,
     Transform,
     AlignDistribute,
+    StepRepeat,
 }
 
 impl DockerKind {
-    pub const ALL: [DockerKind; 5] = [
+    pub const ALL: [DockerKind; 6] = [
+        DockerKind::Properties,
+        DockerKind::Objects,
+        DockerKind::Pages,
+        DockerKind::Transform,
+        DockerKind::AlignDistribute,
+        DockerKind::StepRepeat,
+    ];
+    /// Open in a new workspace.
+    pub const DEFAULT_OPEN: [DockerKind; 5] = [
         DockerKind::Properties,
         DockerKind::Objects,
         DockerKind::Pages,
@@ -34,6 +44,7 @@ impl DockerKind {
             DockerKind::Pages => ICON_DESCRIPTION,
             DockerKind::Transform => ICON_TRANSFORM,
             DockerKind::AlignDistribute => ICON_ALIGN_HORIZONTAL_LEFT,
+            DockerKind::StepRepeat => ICON_LIBRARY_ADD,
         }
     }
 
@@ -44,6 +55,7 @@ impl DockerKind {
             DockerKind::Pages => "Pages",
             DockerKind::Transform => "Transform",
             DockerKind::AlignDistribute => "Align and Distribute",
+            DockerKind::StepRepeat => "Step and Repeat",
         }
     }
 }
@@ -64,7 +76,7 @@ pub struct DockerHost {
 impl Default for DockerHost {
     fn default() -> Self {
         Self {
-            open: DockerKind::ALL.to_vec(),
+            open: DockerKind::DEFAULT_OPEN.to_vec(),
             active: Some(DockerKind::Properties),
             visible: true,
         }
@@ -224,6 +236,7 @@ pub fn docker_ui(ui: &mut egui::Ui, state: &mut AppState, commands: &mut Vec<Com
             DockerKind::Transform => needs_selection_ui(ui, "position, size, rotate and mirror"),
             DockerKind::AlignDistribute if state.has_selection() => panels::align_ui(ui, state, commands),
             DockerKind::AlignDistribute => needs_selection_ui(ui, "align and order"),
+            DockerKind::StepRepeat => crate::edit_tools::step_repeat_ui(ui, state),
         });
     });
 }
@@ -401,7 +414,7 @@ mod tests {
     #[test]
     fn default_opens_every_docker_with_properties_in_front() {
         let host = DockerHost::default();
-        assert_eq!(host.open, DockerKind::ALL.to_vec());
+        assert_eq!(host.open, DockerKind::DEFAULT_OPEN.to_vec());
         assert!(host.is_shown(DockerKind::Properties));
         assert!(!host.is_shown(DockerKind::Objects));
     }

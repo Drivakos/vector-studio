@@ -7,6 +7,7 @@ pub mod canvas;
 pub mod chrome;
 pub mod commands;
 pub mod dockers;
+pub mod edit_tools;
 pub mod files;
 pub mod fill_ui;
 pub mod guides;

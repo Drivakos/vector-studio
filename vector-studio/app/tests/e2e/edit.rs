@@ -95,3 +95,94 @@ fn arrow_keys_nudge_by_the_nudge_distance_and_shift_by_ten_times() {
     app.shortcut(Modifiers::SHIFT, Key::ArrowLeft);
     assert!(close(app.bounds(0).x0, 100.0 + step - 10.0 * step));
 }
+
+#[test]
+fn step_and_repeat_docker_makes_spaced_and_offset_copies() {
+    let mut app = E2e::new();
+    let unit = app.doc().display_unit;
+    app.draw_rect(100.0, 100.0, 150.0, 130.0);
+    app.shortcut(Modifiers::COMMAND | Modifiers::SHIFT, Key::D);
+    assert!(app.exists("Apply (Step and Repeat)"), "Cmd+Shift+D opens the docker");
+
+    // Spacing between objects: each copy starts 10 units past the previous one's edge.
+    app.fill("Number of copies (Step and Repeat)", "2");
+    app.click("Horizontal spacing between objects");
+    app.fill("Horizontal distance (Step and Repeat)", "10");
+    app.click("Apply (Step and Repeat)");
+    assert_eq!(app.objects().len(), 3);
+    let gap = unit.to_points(10.0);
+    assert!(close(app.bounds(1).x0, 150.0 + gap) && close(app.bounds(2).x0, 200.0 + 2.0 * gap), "{:?}", app.bounds(2));
+    assert_eq!(app.selection(), vec![app.ids()[1], app.ids()[2]], "the copies are selected");
+
+    // Offset: copies move by the distance itself.
+    app.click_doc(100.0, 100.0);
+    app.click("Horizontal offset");
+    app.fill("Horizontal distance (Step and Repeat)", "0");
+    app.fill("Vertical distance (Step and Repeat)", "20");
+    app.fill("Number of copies (Step and Repeat)", "1");
+    app.click("Apply (Step and Repeat)");
+    assert_eq!(app.objects().len(), 4);
+    assert!(close(app.bounds(3).x0, 100.0) && close(app.bounds(3).y0, 100.0 + unit.to_points(20.0)), "{:?}", app.bounds(3));
+    app.shortcut(Modifiers::COMMAND, Key::Z);
+    assert_eq!(app.objects().len(), 3, "one undo step per Apply");
+}
+
+#[test]
+fn copy_properties_from_copies_the_chosen_properties_from_the_clicked_object() {
+    let mut app = E2e::new();
+    let source = app.draw_rect(100.0, 100.0, 200.0, 200.0);
+    app.click("Swatch Red");
+    app.right_click("Swatch Blue");
+    app.fill("Outline width (property bar)", "8");
+    let target = app.draw_rect(300.0, 100.0, 400.0, 200.0);
+    app.click("Swatch Yellow");
+    let style = |app: &E2e, id| app.objects().iter().find(|o| o.id == id).unwrap().style.clone();
+    let source_style = style(&app, source);
+
+    app.menu(&["Edit", "Copy Properties From…"]);
+    app.click("Fill (Copy Properties)"); // leave the fill out
+    app.click("OK (Copy Properties)");
+    assert!(app.state().copy_properties.picking);
+    app.click_doc(150.0, 150.0);
+    assert!(!app.state().copy_properties.picking);
+    assert_eq!(app.selection(), vec![target], "the click picks the source; the selection stays");
+    let got = style(&app, target);
+    assert_eq!(got.outline, source_style.outline, "outline pen and colour copied");
+    assert_eq!(got.fill, Some(vs_core::Rgba::rgb(0xFF, 0xED, 0x00).into()), "fill left alone");
+
+    app.menu(&["Edit", "Copy Properties From…"]);
+    app.click("Fill (Copy Properties)");
+    app.click("OK (Copy Properties)");
+    app.key(Key::Escape);
+    assert!(!app.state().copy_properties.picking, "Esc cancels");
+    assert_eq!(app.selection(), vec![target]);
+    app.menu(&["Edit", "Copy Properties From…"]);
+    app.click("OK (Copy Properties)");
+    app.click_doc(150.0, 150.0);
+    assert_eq!(style(&app, target).fill, source_style.fill, "now the fill too");
+}
+
+#[test]
+fn select_all_nodes_from_the_menu_and_cmd_a_with_the_shape_tool() {
+    let mut app = E2e::new();
+    app.flyout_tool("Freehand", "Bézier");
+    for (x, y) in [(100.0, 100.0), (200.0, 100.0), (200.0, 200.0), (100.0, 200.0)] {
+        app.click_doc(x, y);
+    }
+    app.key(Key::Enter);
+    // The new curve is selected; with the Shape tool, click one node, then Cmd+A.
+    app.key(Key::F10);
+    assert_eq!(app.state().tool, vector_studio::toolbox::Tool::Shape);
+    app.click_doc(200.0, 200.0);
+    assert_eq!(app.state().tools.nodes.len(), 1);
+    app.shortcut(Modifiers::COMMAND, Key::A);
+    assert_eq!(app.state().tools.nodes.len(), 4, "Cmd+A in the Shape tool selects every node");
+
+    // From the Pick tool, Edit › Select All › Nodes switches to the Shape tool.
+    app.pick_tool();
+    app.click_doc(150.0, 100.0);
+    app.menu(&["Edit", "Select All", "Nodes"]);
+    assert_eq!(app.state().tool, vector_studio::toolbox::Tool::Shape, "switches to the Shape tool");
+    assert_eq!(app.state().tools.nodes.len(), 4);
+    assert_eq!(app.objects().len(), 1);
+}
