@@ -96,6 +96,10 @@ pub fn build_page_scene(
                     scene.fill(Fill::EvenOdd, doc, brush, Some(leaf.transform), &leaf.path);
                 }
             };
+            // PowerClip contents show only inside their containers.
+            for clip in &leaf.clips {
+                scene.push_clip_layer(Fill::EvenOdd, doc, clip);
+            }
             match outline {
                 Some((stroke, color, true)) => {
                     scene.stroke(&stroke, doc, color, None, &leaf.path);
@@ -106,6 +110,9 @@ pub fn build_page_scene(
                     scene.stroke(&stroke, doc, color, None, &leaf.path);
                 }
                 None => draw_fill(scene),
+            }
+            for _ in &leaf.clips {
+                scene.pop_layer();
             }
         }
     }

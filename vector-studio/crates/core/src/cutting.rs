@@ -95,6 +95,8 @@ impl Document {
             let (first, mut second) = (*first, *second);
             second.id = self.alloc_object_id();
             second.name = None;
+            // PowerClip contents stay with the first piece.
+            second.contents.clear();
             out.extend([first.id, second.id]);
             let objects = &mut self.active_page_mut().objects;
             objects[i - 1] = first;

@@ -91,6 +91,14 @@ pub fn property_bar_ui(ui: &mut egui::Ui, state: &mut AppState, out: &mut Vec<Co
     ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
         ui.add_space(4.0);
+        if state.powerclip.editing.is_some() {
+            let resp = ui.button(format!("{}  Finish editing PowerClip", <&str>::from(ICON_CHECK)));
+            crate::a11y::name(&resp, "Finish editing PowerClip");
+            if resp.clicked() {
+                out.push(Command::ClipFinishEdit);
+            }
+            theme::vsep(ui);
+        }
         match state.tool {
             Tool::Pick if state.has_selection() => selection_bar(ui, state, out),
             Tool::Pick | Tool::FreehandPick | Tool::FreeTransform => page_bar(ui, state),

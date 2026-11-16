@@ -122,10 +122,14 @@ pub fn polygon_path(rect: Rect, n: u32, inner: Option<f64>) -> BezPath {
 pub struct Leaf<'a> {
     pub path: BezPath,
     pub shape: &'a Shape,
-    pub style: &'a Style,
+    /// The object's style; a PowerClip container is split into a fill-only leaf under its
+    /// contents and an outline-only leaf over them.
+    pub style: std::borrow::Cow<'a, Style>,
     pub closed: bool,
     /// Local → page transform, groups included.
     pub transform: Affine,
+    /// PowerClip outlines (page space, even-odd) this leaf is drawn inside, outermost first.
+    pub clips: Vec<BezPath>,
 }
 
 impl Leaf<'_> {
@@ -133,24 +137,44 @@ impl Leaf<'_> {
     pub fn fill(&self) -> Option<&crate::Fill> {
         self.style.fill.as_ref().filter(|_| self.closed && !matches!(self.shape, Shape::Image(_)))
     }
+
+    /// Whether `point` (page space) is inside every clip, so the leaf can show there.
+    pub fn shows_at(&self, point: Point) -> bool {
+        self.clips.iter().all(|c| c.winding(point) % 2 != 0)
+    }
 }
 
 impl Object {
-    /// Everything this object draws, bottom first: itself, or its group's members.
+    /// Everything this object draws, bottom first: itself, or its group's members, with
+    /// any PowerClip contents between a container's fill and its outline.
     pub fn leaves(&self) -> Vec<Leaf<'_>> {
         let mut out = Vec::new();
-        self.collect_leaves(Affine::IDENTITY, &mut out);
+        self.collect_leaves(Affine::IDENTITY, &[], &mut out);
         out
     }
 
-    fn collect_leaves<'a>(&'a self, parent: Affine, out: &mut Vec<Leaf<'a>>) {
+    fn collect_leaves<'a>(&'a self, parent: Affine, clips: &[BezPath], out: &mut Vec<Leaf<'a>>) {
+        use std::borrow::Cow;
         let transform = parent * self.transform;
         match &self.shape {
-            Shape::Group { children } => children.iter().for_each(|c| c.collect_leaves(transform, out)),
+            Shape::Group { children } => children.iter().for_each(|c| c.collect_leaves(transform, clips, out)),
             shape => {
                 let mut path = shape.to_path();
                 path.apply_affine(transform);
-                out.push(Leaf { path, shape, style: &self.style, closed: shape.is_closed(), transform });
+                let leaf = |style: Cow<'a, Style>, path: BezPath| Leaf { path, shape, style, closed: shape.is_closed(), transform, clips: clips.to_vec() };
+                if self.contents.is_empty() {
+                    out.push(leaf(Cow::Borrowed(&self.style), path));
+                    return;
+                }
+                out.push(leaf(Cow::Owned(Style { outline: None, ..self.style.clone() }), path.clone()));
+                let mut inner = clips.to_vec();
+                inner.push(path.clone());
+                for content in &self.contents {
+                    content.collect_leaves(transform, &inner, out);
+                }
+                if self.style.outline.is_some() {
+                    out.push(leaf(Cow::Owned(Style { fill: None, ..self.style.clone() }), path));
+                }
             }
         }
     }
@@ -188,7 +212,7 @@ impl Object {
     /// Whether `point` (page space) hits the fill or comes within `tolerance` of the outline
     /// of this object or, for a group, of any object in it.
     pub fn hit(&self, point: Point, tolerance: f64) -> bool {
-        self.leaves().iter().any(|leaf| {
+        self.leaves().iter().filter(|leaf| leaf.shows_at(point)).any(|leaf| {
             let half = leaf.style.outline.as_ref().map_or(0.0, |o| o.page_width(leaf.transform) / 2.0);
             let reach = tolerance + half;
             // Text is picked anywhere in its line boxes, not just on the glyphs; bitmaps
@@ -231,7 +255,7 @@ impl Page {
     /// The topmost fill or outline colour at `point`, within `tolerance` of outlines.
     pub fn paint_at(&self, point: Point, tolerance: f64) -> Option<PaintHit> {
         for obj in self.objects.iter().rev().filter(|o| self.is_selectable(o)) {
-            for leaf in obj.leaves().iter().rev() {
+            for leaf in obj.leaves().iter().rev().filter(|l| l.shows_at(point)) {
                 if let Some(o) = &leaf.style.outline {
                     let reach = tolerance + o.page_width(leaf.transform) / 2.0;
                     if leaf.path.segments().any(|seg| seg.nearest(point, 1e-6).distance_sq <= reach * reach) {

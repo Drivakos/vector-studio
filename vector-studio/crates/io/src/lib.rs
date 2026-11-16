@@ -190,6 +190,10 @@ fn write_svg_object(out: &mut String, obj: &Object, parent: vs_core::kurbo::Affi
         let _ = writeln!(out, "{indent}</g>");
         return;
     }
+    if !obj.contents.is_empty() {
+        write_svg_powerclip(out, obj, parent, depth);
+        return;
+    }
     let mut path = obj.shape.to_path();
     let transform = parent * obj.transform;
     path.apply_affine(transform);
@@ -217,6 +221,27 @@ fn write_svg_object(out: &mut String, obj: &Object, parent: vs_core::kurbo::Affi
         write_svg_stroke(out, o, o.page_width(transform), opacity);
     }
     out.push_str("/>\n");
+}
+
+/// A PowerClip: the container's fill, its contents clipped to its outline, then the
+/// container's outline on top.
+fn write_svg_powerclip(out: &mut String, obj: &Object, parent: vs_core::kurbo::Affine, depth: usize) {
+    let indent = "  ".repeat(depth);
+    let bare = |style: vs_core::Style| Object { style, contents: Vec::new(), ..obj.clone() };
+    write_svg_object(out, &bare(vs_core::Style { outline: None, ..obj.style.clone() }), parent, depth);
+    let transform = parent * obj.transform;
+    let mut clip = obj.shape.to_path();
+    clip.apply_affine(transform);
+    round_path(&mut clip);
+    let _ = writeln!(out, r#"{indent}<clipPath id="clip{}"><path d="{}" clip-rule="evenodd"/></clipPath>"#, obj.id.0, clip.to_svg());
+    let _ = writeln!(out, r#"{indent}<g clip-path="url(#clip{})">"#, obj.id.0);
+    for content in &obj.contents {
+        write_svg_object(out, content, transform, depth + 1);
+    }
+    let _ = writeln!(out, "{indent}</g>");
+    if obj.style.outline.is_some() {
+        write_svg_object(out, &bare(vs_core::Style { fill: None, ..obj.style.clone() }), parent, depth);
+    }
 }
 
 /// An `<image>` with the bitmap's own bytes inline.
@@ -398,10 +423,11 @@ fn pdf_gradient(g: &Gradient, transform: vs_core::kurbo::Affine, alpha: f64) -> 
     }
 }
 
-fn pdf_path(leaf: &Leaf<'_>) -> Option<krilla::geom::Path> {
+/// A page-space path as a PDF path.
+fn pdf_path(path: &BezPath) -> Option<krilla::geom::Path> {
     let mut pb = krilla::geom::PathBuilder::new();
     let f = |p: vs_core::kurbo::Point| (p.x as f32, p.y as f32);
-    for el in leaf.path.elements() {
+    for el in path.elements() {
         match *el {
             PathEl::MoveTo(p) => {
                 let (x, y) = f(p);
@@ -451,12 +477,9 @@ fn pdf_image(surface: &mut krilla::surface::Surface<'_>, b: &vs_core::Bitmap, tr
 
 /// Every page of the document as a PDF, 1 unit = 1 pt.
 pub fn document_to_pdf(doc: &Document) -> Result<Vec<u8>, IoError> {
-    use krilla::color::rgb;
-    use krilla::num::NormalizedF32;
     use krilla::page::PageSettings;
-    use krilla::paint::{Fill, FillRule, Stroke, StrokeDash};
+    use krilla::paint::FillRule;
 
-    let opacity = |a: u8| NormalizedF32::new(f32::from(a) / 255.0).unwrap_or(NormalizedF32::ONE);
     let mut pdf = krilla::Document::new();
     for page in doc.pages() {
         let settings = PageSettings::from_wh(page.size.width as f32, page.size.height as f32)
@@ -464,61 +487,78 @@ pub fn document_to_pdf(doc: &Document) -> Result<Vec<u8>, IoError> {
         let mut pdf_page = pdf.start_page_with(settings);
         let mut surface = pdf_page.surface();
         for leaf in page.shown_objects().flat_map(Object::leaves) {
-            if let Shape::Image(b) = leaf.shape {
-                pdf_image(&mut surface, b, leaf.transform, leaf.style.opacity())?;
+            for clip in leaf.clips.iter().filter_map(pdf_path) {
+                surface.push_clip_path(&clip, &FillRule::EvenOdd);
             }
-            let Some(path) = pdf_path(&leaf) else { continue };
-            let alpha = leaf.style.opacity();
-            let fill = leaf.fill().map(|f| match f {
-                vs_core::Fill::Solid(c) => Fill {
-                    paint: rgb::Color::new(c.r, c.g, c.b).into(),
-                    opacity: opacity(c.faded(alpha).a),
-                    rule: FillRule::EvenOdd,
-                },
-                vs_core::Fill::Gradient(g) => Fill { paint: pdf_gradient(g, leaf.transform, alpha), opacity: NormalizedF32::ONE, rule: FillRule::EvenOdd },
-            });
-            let outline = leaf.style.outline.as_ref();
-            let stroke = outline.map(|o| {
-                let width = o.page_width(leaf.transform);
-                let dashes = o.dashes(width);
-                Stroke {
-                    paint: rgb::Color::new(o.color.r, o.color.g, o.color.b).into(),
-                    width: width as f32,
-                    miter_limit: Outline::MITER_LIMIT as f32,
-                    line_cap: match o.cap {
-                        LineCap::Butt => krilla::paint::LineCap::Butt,
-                        LineCap::Round => krilla::paint::LineCap::Round,
-                        LineCap::Square => krilla::paint::LineCap::Square,
-                    },
-                    line_join: match o.join {
-                        LineJoin::Miter => krilla::paint::LineJoin::Miter,
-                        LineJoin::Round => krilla::paint::LineJoin::Round,
-                        LineJoin::Bevel => krilla::paint::LineJoin::Bevel,
-                    },
-                    opacity: opacity(o.color.faded(alpha).a),
-                    dash: (!dashes.is_empty()).then(|| StrokeDash { array: dashes.iter().map(|d| *d as f32).collect(), offset: 0.0 }),
-                }
-            });
-            if fill.is_none() && stroke.is_none() {
-                continue;
+            pdf_leaf(&mut surface, &leaf)?;
+            for _ in leaf.clips.iter().filter_map(pdf_path) {
+                surface.pop();
             }
-            if outline.is_some_and(|o| o.behind_fill) && fill.is_some() {
-                // Outline under the fill: two passes.
-                surface.set_fill(None);
-                surface.set_stroke(stroke);
-                surface.draw_path(&path);
-                surface.set_fill(fill);
-                surface.set_stroke(None);
-            } else {
-                surface.set_fill(fill);
-                surface.set_stroke(stroke);
-            }
-            surface.draw_path(&path);
         }
         surface.finish();
         pdf_page.finish();
     }
     pdf.finish().map_err(|e| IoError::Pdf(format!("{e:?}")))
+}
+
+/// Draw one leaf on a PDF page.
+fn pdf_leaf(surface: &mut krilla::surface::Surface<'_>, leaf: &Leaf<'_>) -> Result<(), IoError> {
+    use krilla::color::rgb;
+    use krilla::num::NormalizedF32;
+    use krilla::paint::{Fill, FillRule, Stroke, StrokeDash};
+
+    let opacity = |a: u8| NormalizedF32::new(f32::from(a) / 255.0).unwrap_or(NormalizedF32::ONE);
+    if let Shape::Image(b) = leaf.shape {
+        pdf_image(surface, b, leaf.transform, leaf.style.opacity())?;
+    }
+    let Some(path) = pdf_path(&leaf.path) else { return Ok(()) };
+    let alpha = leaf.style.opacity();
+    let fill = leaf.fill().map(|f| match f {
+        vs_core::Fill::Solid(c) => Fill {
+            paint: rgb::Color::new(c.r, c.g, c.b).into(),
+            opacity: opacity(c.faded(alpha).a),
+            rule: FillRule::EvenOdd,
+        },
+        vs_core::Fill::Gradient(g) => Fill { paint: pdf_gradient(g, leaf.transform, alpha), opacity: NormalizedF32::ONE, rule: FillRule::EvenOdd },
+    });
+    let outline = leaf.style.outline.as_ref();
+    let stroke = outline.map(|o| {
+        let width = o.page_width(leaf.transform);
+        let dashes = o.dashes(width);
+        Stroke {
+            paint: rgb::Color::new(o.color.r, o.color.g, o.color.b).into(),
+            width: width as f32,
+            miter_limit: Outline::MITER_LIMIT as f32,
+            line_cap: match o.cap {
+                LineCap::Butt => krilla::paint::LineCap::Butt,
+                LineCap::Round => krilla::paint::LineCap::Round,
+                LineCap::Square => krilla::paint::LineCap::Square,
+            },
+            line_join: match o.join {
+                LineJoin::Miter => krilla::paint::LineJoin::Miter,
+                LineJoin::Round => krilla::paint::LineJoin::Round,
+                LineJoin::Bevel => krilla::paint::LineJoin::Bevel,
+            },
+            opacity: opacity(o.color.faded(alpha).a),
+            dash: (!dashes.is_empty()).then(|| StrokeDash { array: dashes.iter().map(|d| *d as f32).collect(), offset: 0.0 }),
+        }
+    });
+    if fill.is_none() && stroke.is_none() {
+        return Ok(());
+    }
+    if outline.is_some_and(|o| o.behind_fill) && fill.is_some() {
+        // Outline under the fill: two passes.
+        surface.set_fill(None);
+        surface.set_stroke(stroke);
+        surface.draw_path(&path);
+        surface.set_fill(fill);
+        surface.set_stroke(None);
+    } else {
+        surface.set_fill(fill);
+        surface.set_stroke(stroke);
+    }
+    surface.draw_path(&path);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -637,6 +677,26 @@ mod tests {
         let centre = pixmap.pixel(200, 200).unwrap();
         assert_eq!((centre.red(), centre.green(), centre.blue(), centre.alpha()), (255, 0, 0, 255));
         assert_eq!(pixmap.pixel(500, 700).unwrap().alpha(), 0, "background stays transparent");
+    }
+
+    #[test]
+    fn powerclips_clip_in_svg_png_and_pdf_and_survive_save() {
+        let mut doc = Document::new("Clip");
+        let red = Style::filled(vs_core::Rgba::rgb(255, 0, 0));
+        let frame = doc.add_object(Shape::Rectangle { rect: Rect::new(0.0, 0.0, 100.0, 100.0), corner_radius: 0.0 }, Style::outlined(Outline::new(vs_core::Rgba::BLACK, 1.0)));
+        let bar = doc.add_object(Shape::Rectangle { rect: Rect::new(50.0, 40.0, 200.0, 60.0), corner_radius: 0.0 }, red);
+        assert!(doc.place_inside(&[bar], frame));
+        let svg = page_to_svg(doc.active_page());
+        assert!(svg.contains(&format!(r#"<clipPath id="clip{}">"#, frame.0)), "{svg}");
+        assert!(svg.find("clip-path=").unwrap() < svg.rfind("stroke=").unwrap(), "the outline is drawn over the contents");
+        let png = page_to_png(doc.active_page(), &ExportOptions { dpi: 72.0, background: None }).unwrap();
+        let pixmap = resvg::tiny_skia::Pixmap::decode_png(&png).unwrap();
+        assert_eq!(pixmap.pixel(75, 50).unwrap().red(), 255, "inside");
+        assert_eq!(pixmap.pixel(150, 50).unwrap().alpha(), 0, "clipped away outside");
+        let pdf = document_to_pdf(&doc).unwrap();
+        assert!(pdf.starts_with(b"%PDF"));
+        let reopened = document_from_str(&document_to_string(&doc).unwrap()).unwrap();
+        assert_eq!(reopened.active_page().objects, doc.active_page().objects);
     }
 
     #[test]

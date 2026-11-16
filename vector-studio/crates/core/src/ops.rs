@@ -223,6 +223,7 @@ impl Document {
             transform: Affine::IDENTITY,
             locked: false,
             layer,
+            contents: Vec::new(),
         };
         objects.insert(top - below_top, group);
         Some(id)

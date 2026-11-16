@@ -1,4 +1,5 @@
-//! Edit menu extras: Step and Repeat (docker), Copy Properties From and Select All Nodes.
+//! Edit menu extras: Step and Repeat (docker), Copy Properties From and Select All Nodes;
+//! PowerClip placing and editing (Object > PowerClip).
 
 use vs_core::kurbo::{Point, Vec2};
 use vs_core::{Fill, Gradient, ObjectId, Rgba, Shape};
@@ -238,6 +239,68 @@ pub fn copy_properties(state: &mut AppState, targets: &[ObjectId], source: &vs_c
                 t.align = src.align;
             }
         }
+    }
+}
+
+// ---------------------------------------------------------------------------------------
+// PowerClip
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PowerClipState {
+    /// Place Inside Frame is waiting for the click on the container.
+    pub picking: bool,
+    /// Edit Contents: the container and the contents taken out of it onto the page.
+    pub editing: Option<(ObjectId, Vec<ObjectId>)>,
+}
+
+/// While picking, a click places the selection inside the closed shape under `p` (not one
+/// of the selected objects). Returns whether the click was used.
+pub fn press_place_inside(state: &mut AppState, p: Point, tolerance: f64) -> bool {
+    if !state.powerclip.picking {
+        return false;
+    }
+    state.powerclip.picking = false;
+    let page = state.doc.active_page();
+    let container = page
+        .objects
+        .iter()
+        .rev()
+        .find(|o| page.is_selectable(o) && !state.selection.contains(&o.id) && o.can_be_container() && o.hit(p, tolerance))
+        .map(|o| o.id);
+    let ids = state.selection.clone();
+    match container {
+        Some(c) if state.doc.place_inside(&ids, c) => {
+            state.selection = vec![c];
+            state.marquee_selection = None;
+        }
+        _ => state.status = Some("PowerClip: click a closed shape that is not selected".into()),
+    }
+    true
+}
+
+pub fn can_edit_contents(state: &AppState) -> bool {
+    state.powerclip.editing.is_none() && state.selection.len() == 1 && state.doc.can_extract_contents(&state.selection)
+}
+
+/// Edit Contents: take the selected container's contents out onto the page to edit them.
+pub fn edit_contents(state: &mut AppState) {
+    if !can_edit_contents(state) {
+        return;
+    }
+    let container = state.selection[0];
+    let contents = state.doc.extract_contents(&[container]);
+    state.selection.clone_from(&contents);
+    state.marquee_selection = None;
+    state.powerclip.editing = Some((container, contents));
+}
+
+/// Put the contents being edited (those still on the page) back inside their container.
+pub fn finish_contents(state: &mut AppState) {
+    let Some((container, contents)) = state.powerclip.editing.take() else { return };
+    if state.doc.active_page().object(container).is_some() {
+        state.doc.place_inside(&contents, container);
+        state.selection = vec![container];
+        state.marquee_selection = None;
     }
 }
 

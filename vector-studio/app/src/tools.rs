@@ -192,7 +192,9 @@ pub fn tool_input(ui: &egui::Ui, state: &mut AppState, response: &egui::Response
     if pressed && response.hovered() {
         let double = state.tools.last_press.is_some_and(|(t, at)| time - t < 0.4 && at.distance(pos) < 4.0);
         state.tools.last_press = if double { None } else { Some((time, pos)) };
-        if !crate::edit_tools::press_copy_from(state, view.doc(pos), view.doc_len(HIT)) {
+        if !crate::edit_tools::press_copy_from(state, view.doc(pos), view.doc_len(HIT))
+            && !crate::edit_tools::press_place_inside(state, view.doc(pos), view.doc_len(HIT))
+        {
             press(state, &view, p, mods, double);
         }
     } else if state.tools.drag.is_some() {
@@ -1147,6 +1149,12 @@ pub fn draw_overlay(painter: &egui::Painter, state: &AppState, canvas: Rect) {
 pub fn hint(state: &AppState) -> String {
     if state.copy_properties.picking {
         return "Click the object to copy properties from · Esc to cancel".into();
+    }
+    if state.powerclip.picking {
+        return "Click the shape to place the selection inside · Esc to cancel".into();
+    }
+    if state.powerclip.editing.is_some() {
+        return "Editing PowerClip contents · Finish editing PowerClip in the property bar puts them back".into();
     }
     let n = state.selection.len();
     let selected = match n {

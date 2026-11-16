@@ -127,6 +127,7 @@ impl Document {
                     transform: Affine::IDENTITY,
                     locked: false,
                     layer,
+                    contents: Vec::new(),
                 };
                 // On top of the selection, so the new object shows.
                 self.active_page_mut().objects.insert(picked[last] + 1, obj);
@@ -193,6 +194,8 @@ impl Document {
                     id,
                     name: if k == 0 { template.name.clone() } else { None },
                     shape: Shape::Curve { path: piece },
+                    // PowerClip contents stay with the first piece.
+                    contents: if k == 0 { template.contents.clone() } else { Vec::new() },
                     ..template.clone()
                 };
                 let objects = &mut self.active_page_mut().objects;
@@ -226,7 +229,7 @@ pub(crate) fn make_curve(obj: &mut Object, path: BezPath) {
 pub(crate) fn page_style(obj: &Object) -> Style {
     let leaves = obj.leaves();
     let (mut style, transform) = match leaves.first() {
-        Some(leaf) => (leaf.style.clone(), leaf.transform),
+        Some(leaf) => (leaf.style.clone().into_owned(), leaf.transform),
         None => (obj.style.clone(), obj.transform),
     };
     if let Some(o) = style.outline.as_mut().filter(|o| o.scale_with_object && o.width > 0.0) {

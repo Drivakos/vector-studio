@@ -11,6 +11,7 @@ pub mod history;
 pub mod layers;
 pub mod nodes;
 pub mod ops;
+pub mod powerclip;
 pub mod shaping;
 pub mod snap;
 pub mod text;

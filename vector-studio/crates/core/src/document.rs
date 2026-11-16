@@ -307,6 +307,10 @@ pub struct Object {
     /// The page layer a top-level object is on (unused inside groups).
     #[serde(default)]
     pub layer: LayerId,
+    /// PowerClip contents, bottom first, drawn only inside this object's outline. Their
+    /// transforms are relative to this object's, so they move with it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub contents: Vec<Object>,
 }
 
 impl Object {
@@ -338,6 +342,7 @@ impl Object {
             Some(n) if !n.trim().is_empty() => n.clone(),
             _ => match &self.shape {
                 Shape::Group { children } => format!("Group of {} objects", children.len()),
+                shape if !self.contents.is_empty() => format!("PowerClip {}", shape.kind_label()),
                 shape => shape.kind_label().to_string(),
             },
         }
@@ -349,6 +354,7 @@ impl Object {
         if let Shape::Group { children } = &self.shape {
             out.extend(children.iter().flat_map(Object::all_ids));
         }
+        out.extend(self.contents.iter().flat_map(Object::all_ids));
         out
     }
 
@@ -626,7 +632,7 @@ impl Document {
         let id = ObjectId(self.alloc_id());
         let page = self.active_page_mut();
         let layer = page.active_layer;
-        page.objects.push(Object { id, name: None, shape, style, transform: Affine::IDENTITY, locked: false, layer });
+        page.objects.push(Object { id, name: None, shape, style, transform: Affine::IDENTITY, locked: false, layer, contents: Vec::new() });
         page.settle_layers();
         id
     }
@@ -644,6 +650,9 @@ impl Document {
             for child in children {
                 self.renumber(child);
             }
+        }
+        for content in &mut obj.contents {
+            self.renumber(content);
         }
     }
 

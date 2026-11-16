@@ -115,6 +115,7 @@ pub struct AppState {
     pub export: ExportDialog,
     pub step_repeat: crate::edit_tools::StepRepeat,
     pub copy_properties: crate::edit_tools::CopyProperties,
+    pub powerclip: crate::edit_tools::PowerClipState,
     /// Last status message (e.g. "Exported …").
     pub status: Option<String>,
     clipboard: Vec<Object>,
@@ -154,6 +155,7 @@ impl AppState {
             export: ExportDialog::default(),
             step_repeat: Default::default(),
             copy_properties: Default::default(),
+            powerclip: Default::default(),
             status: None,
             clipboard: Vec::new(),
             clipboard_text: String::new(),
@@ -328,6 +330,10 @@ impl VectorStudioApp {
             Command::JoinCurves => (doc.can_join_curves(&state.selection, vs_core::curves::JOIN_TOLERANCE), None),
             Command::ConvertOutline => (doc.can_convert_outline(&state.selection), None),
             Command::ConvertText => (doc.can_convert_text(&state.selection), None),
+            Command::ClipPlaceInside => (doc.can_place_inside(&state.selection), None),
+            Command::ClipExtract => (doc.can_extract_contents(&state.selection), None),
+            Command::ClipEdit => (crate::edit_tools::can_edit_contents(state), None),
+            Command::ClipFinishEdit => (state.powerclip.editing.is_some(), None),
             _ => (true, None),
         }
     }
@@ -483,6 +489,27 @@ impl VectorStudioApp {
                     s.selection = vec![id];
                     s.tools.nodes.clear();
                 }
+                Ok(())
+            }
+            Command::ClipPlaceInside => {
+                s.copy_properties.picking = false;
+                s.powerclip.picking = true;
+                Ok(())
+            }
+            Command::ClipExtract => {
+                let out = s.doc.extract_contents(&s.selection);
+                if !out.is_empty() {
+                    s.selection = out;
+                    s.marquee_selection = None;
+                }
+                Ok(())
+            }
+            Command::ClipEdit => {
+                crate::edit_tools::edit_contents(s);
+                Ok(())
+            }
+            Command::ClipFinishEdit => {
+                crate::edit_tools::finish_contents(s);
                 Ok(())
             }
             Command::ConvertText => {
@@ -642,6 +669,8 @@ impl VectorStudioApp {
         if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
             if s.copy_properties.picking {
                 s.copy_properties.picking = false;
+            } else if s.powerclip.picking {
+                s.powerclip.picking = false;
             } else if s.tool == Tool::Crop && s.tools.crop.is_some() {
                 s.tools.crop = None;
             } else if s.tools.has_open_path() {

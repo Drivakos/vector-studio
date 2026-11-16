@@ -20,6 +20,7 @@ mod transform;
 mod edit;
 mod objects;
 mod layers;
+mod powerclip;
 mod files;
 mod pages;
 mod view;
