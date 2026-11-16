@@ -31,6 +31,8 @@ pub struct Guide {
 pub struct SnapOptions {
     /// Grid spacing in points, when snapping to the grid.
     pub grid: Option<f64>,
+    /// Pixel size in points, when snapping to the pixel grid.
+    pub pixels: Option<f64>,
     pub guides: bool,
     pub objects: bool,
     pub page: bool,
@@ -42,6 +44,7 @@ pub struct Snapper {
     xs: Vec<f64>,
     ys: Vec<f64>,
     grid: Option<f64>,
+    pixels: Option<f64>,
     threshold: f64,
 }
 
@@ -57,7 +60,12 @@ impl Snapper {
     /// Targets on `page` for `options`, ignoring the objects in `exclude` (the ones being
     /// moved or edited). `threshold` is the snap distance in points.
     pub fn new(page: &Page, options: &SnapOptions, exclude: &[ObjectId], threshold: f64) -> Self {
-        let mut s = Self { grid: options.grid.filter(|g| *g > 0.0), threshold, ..Self::default() };
+        let mut s = Self {
+            grid: options.grid.filter(|g| *g > 0.0),
+            pixels: options.pixels.filter(|g| *g > 0.0),
+            threshold,
+            ..Self::default()
+        };
         if options.guides {
             for g in &page.guides {
                 match g.axis {
@@ -81,16 +89,17 @@ impl Snapper {
     }
 
     pub fn is_active(&self) -> bool {
-        self.grid.is_some() || !self.xs.is_empty() || !self.ys.is_empty()
+        self.grid.is_some() || self.pixels.is_some() || !self.xs.is_empty() || !self.ys.is_empty()
     }
 
     /// The nearest target to `v` within the threshold.
     fn nearest(&self, v: f64, targets: &[f64]) -> Option<f64> {
-        let grid = self.grid.map(|g| (v / g).round() * g);
+        let on = |g: f64| (v / g).round() * g;
         targets
             .iter()
             .copied()
-            .chain(grid)
+            .chain(self.grid.map(on))
+            .chain(self.pixels.map(on))
             .filter(|t| (t - v).abs() <= self.threshold)
             .min_by(|a, b| (a - v).abs().total_cmp(&(b - v).abs()))
     }
@@ -132,6 +141,17 @@ mod tests {
         doc.active_page_mut().guides.push(Guide { axis: GuideAxis::Vertical, position: 100.0 });
         doc.active_page_mut().guides.push(Guide { axis: GuideAxis::Horizontal, position: 50.0 });
         doc
+    }
+
+    #[test]
+    fn pixels_snap_to_the_pixel_grid() {
+        let doc = Document::default();
+        // 300 dpi: a pixel is 0.24 pt.
+        let opts = SnapOptions { pixels: Some(72.0 / 300.0), ..Default::default() };
+        let s = Snapper::new(doc.active_page(), &opts, &[], 1.0);
+        assert!(s.is_active());
+        let p = s.point(Point::new(10.05, 3.0));
+        assert!((p.x - 10.08).abs() < 1e-9 && (p.y - 3.12).abs() < 1e-9, "{p:?}");
     }
 
     #[test]

@@ -39,6 +39,7 @@ pub struct Prefs {
     pub snap_guidelines: bool,
     pub snap_objects: bool,
     pub snap_page: bool,
+    pub snap_pixels: bool,
 }
 
 impl Default for Prefs {
@@ -57,6 +58,7 @@ impl Default for Prefs {
             snap_guidelines: true,
             snap_objects: false,
             snap_page: false,
+            snap_pixels: false,
         }
     }
 }
@@ -68,6 +70,7 @@ impl Prefs {
             SnapTarget::Guidelines => &self.snap_guidelines,
             SnapTarget::Objects => &self.snap_objects,
             SnapTarget::Page => &self.snap_page,
+            SnapTarget::Pixels => &self.snap_pixels,
         }
     }
 
@@ -77,6 +80,7 @@ impl Prefs {
             SnapTarget::Guidelines => &mut self.snap_guidelines,
             SnapTarget::Objects => &mut self.snap_objects,
             SnapTarget::Page => &mut self.snap_page,
+            SnapTarget::Pixels => &mut self.snap_pixels,
         }
     }
 }
@@ -274,6 +278,8 @@ impl AppState {
         let p = &self.prefs;
         vs_core::SnapOptions {
             grid: (p.snap_grid && p.show_grid).then_some(p.grid_spacing),
+            // The pixels of Pixels view: the Export window's resolution.
+            pixels: p.snap_pixels.then(|| 72.0 / self.export.dpi),
             guides: p.snap_guidelines && p.show_guidelines,
             objects: p.snap_objects,
             page: p.snap_page,

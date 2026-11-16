@@ -18,10 +18,11 @@ pub enum SnapTarget {
     Guidelines,
     Objects,
     Page,
+    Pixels,
 }
 
 impl SnapTarget {
-    pub const ALL: [SnapTarget; 4] = [SnapTarget::Grid, SnapTarget::Guidelines, SnapTarget::Objects, SnapTarget::Page];
+    pub const ALL: [SnapTarget; 5] = [SnapTarget::Pixels, SnapTarget::Grid, SnapTarget::Guidelines, SnapTarget::Objects, SnapTarget::Page];
 
     /// The View › Snap To label.
     pub fn label(self) -> &'static str {
@@ -30,6 +31,7 @@ impl SnapTarget {
             SnapTarget::Guidelines => "Guidelines",
             SnapTarget::Objects => "Objects",
             SnapTarget::Page => "Page",
+            SnapTarget::Pixels => "Pixels",
         }
     }
 }
@@ -216,6 +218,7 @@ impl Command {
             "view.snap_guidelines" => ToggleSnap(SnapTarget::Guidelines),
             "view.snap_objects" => ToggleSnap(SnapTarget::Objects),
             "view.snap_page" => ToggleSnap(SnapTarget::Page),
+            "view.snap_pixels" => ToggleSnap(SnapTarget::Pixels),
             "view.status_bar" => ToggleStatusBar,
             "view.color_palette" => TogglePalette,
             "layout.insert_page" => InsertPage,
@@ -336,6 +339,7 @@ impl Command {
         Command::ToggleSnap(SnapTarget::Guidelines),
         Command::ToggleSnap(SnapTarget::Objects),
         Command::ToggleSnap(SnapTarget::Page),
+        Command::ToggleSnap(SnapTarget::Pixels),
         Command::ToggleStatusBar,
         Command::TogglePalette,
         Command::InsertPage,

@@ -370,7 +370,6 @@ fn act(state: &mut AppState, action: Action, resp: &egui::Response, out: &mut Ve
         }
         Action::SnapTo => {
             egui::Popup::menu(resp).show(|ui| {
-                ui.add_enabled(false, egui::Button::new("Pixels"));
                 for target in crate::commands::SnapTarget::ALL {
                     let on = *state.prefs.snap_flag(target);
                     if ui.add(egui::Button::new(target.label()).selected(on)).clicked() {

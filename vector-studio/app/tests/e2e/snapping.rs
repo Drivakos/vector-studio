@@ -152,3 +152,24 @@ fn select_all_guidelines_selects_them_in_red_and_delete_removes_them() {
     app.shortcut(Modifiers::COMMAND, Key::Z);
     assert_eq!(guides(&app).len(), 2, "undo brings them back");
 }
+
+/// Whether `v` is a whole number of 300 dpi pixels (0.24 pt).
+fn on_pixel(v: f64) -> bool {
+    let n = v / 0.24;
+    (n - n.round()).abs() < 1e-4
+}
+
+#[test]
+fn snap_to_pixels_puts_new_shapes_on_the_export_pixel_grid() {
+    let mut app = E2e::new();
+    app.draw_rect(100.1, 100.1, 200.05, 150.05);
+    let b = app.bounds(0);
+    assert!(!on_pixel(b.x0), "off by default: {b:?}");
+
+    app.menu(&["View", "Snap To", "Pixels"]);
+    assert!(app.state().prefs.snap_pixels);
+    app.draw_rect(100.1, 300.1, 200.05, 350.05);
+    let b = app.bounds(1);
+    assert!([b.x0, b.y0, b.x1, b.y1].into_iter().all(on_pixel), "{b:?}");
+    assert!(close(b.x0, 100.08) && close(b.x1, 200.16), "{b:?}");
+}
