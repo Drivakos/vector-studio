@@ -142,7 +142,7 @@ pub fn print_window(ctx: &egui::Context, state: &mut AppState) {
     let pages = chosen_pages(state);
     let mut open = true;
     let mut go = false;
-    egui::Window::new("Print Drawing")
+    egui::Window::new("Print")
         .collapsible(false)
         .resizable(false)
         .open(&mut open)
@@ -188,8 +188,8 @@ pub fn print_window(ctx: &egui::Context, state: &mut AppState) {
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 let ready = d.printer.is_some() && pages.is_some();
-                go = ui.add_enabled(ready, egui::Button::new("Print")).clicked();
-                if ui.button("Cancel").clicked() {
+                go = crate::a11y::window_button(ui, ready, "Print", "Print").clicked();
+                if crate::a11y::window_button(ui, true, "Cancel", "Print").clicked() {
                     d.open = false;
                 }
             });

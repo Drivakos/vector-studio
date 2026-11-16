@@ -33,3 +33,11 @@ pub fn icon_button(ui: &mut egui::Ui, icon: impl Into<egui::WidgetText>, tip: &s
     self::name(&resp, &format!("{tip} (docker)"));
     resp.on_hover_text(tip)
 }
+
+/// A button in a window, labelled `label` and named "`label` (`window`)", so it is not
+/// confused with the same button in another window or the window's own title.
+pub fn window_button(ui: &mut egui::Ui, enabled: bool, label: &str, window: &str) -> Response {
+    let resp = ui.add_enabled(enabled, egui::Button::new(label));
+    self::name(&resp, &format!("{label} ({window})"));
+    resp
+}

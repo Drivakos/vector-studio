@@ -222,27 +222,32 @@ pub fn import_path(state: &mut AppState, path: &Path) {
     let result = std::fs::read(path).map_err(vs_io::IoError::from).and_then(|data| {
         if svg { vs_io::import_svg(&data) } else { vs_io::import_bitmap(&data).map(|o| vec![o]) }
     });
-    match result {
-        Ok(objects) => {
-            let Some(bounds) = objects.iter().map(|o| o.world_bounds()).reduce(|a, b| a.union(b)) else {
-                error(state, "Could not import", format!("{}: the file draws nothing that can be imported", path.display()));
-                return;
-            };
-            // Larger than the page: scaled down to fit it, as a placed image would be.
-            let page = state.doc.active_page().bounds();
-            let k = (page.width() / bounds.width()).min(page.height() / bounds.height()).min(1.0);
-            let fit = Affine::translate(page.center().to_vec2()) * Affine::scale(k) * Affine::translate(-bounds.center().to_vec2());
-            let objects: Vec<_> = objects.into_iter().map(|mut o| {
-                o.transform = fit * o.transform;
-                o
-            }).collect();
-            state.selection = state.doc.paste_objects(&objects, Vec2::ZERO);
-            state.marquee_selection = None;
-            state.tools.nodes.clear();
-            state.status = Some(format!("Imported {}", path.display()));
-        }
+    match result.map(|objects| place_on_page(state, objects)) {
+        Ok(true) => state.status = Some(format!("Imported {}", path.display())),
+        Ok(false) => error(state, "Could not import", format!("{}: the file draws nothing that can be imported", path.display())),
         Err(e) => error(state, "Could not import", format!("{}: {e}", path.display())),
     }
+}
+
+/// Add `objects` centred on the active page, scaled down to fit it when larger (as a
+/// placed image would be), and select them. Returns false if there is nothing to place.
+pub fn place_on_page(state: &mut AppState, objects: Vec<vs_core::Object>) -> bool {
+    let Some(bounds) = objects.iter().map(|o| o.world_bounds()).reduce(|a, b| a.union(b)) else { return false };
+    let page = state.doc.active_page().bounds();
+    let ratio = |p: f64, b: f64| if b > 1e-9 { p / b } else { 1.0 };
+    let k = ratio(page.width(), bounds.width()).min(ratio(page.height(), bounds.height())).min(1.0);
+    let fit = Affine::translate(page.center().to_vec2()) * Affine::scale(k) * Affine::translate(-bounds.center().to_vec2());
+    let objects: Vec<_> = objects
+        .into_iter()
+        .map(|mut o| {
+            o.transform = fit * o.transform;
+            o
+        })
+        .collect();
+    state.selection = state.doc.paste_objects(&objects, Vec2::ZERO);
+    state.marquee_selection = None;
+    state.tools.nodes.clear();
+    true
 }
 
 /// Ask where to export, then write the file.
@@ -367,7 +372,7 @@ pub fn document_properties_window(ctx: &egui::Context, state: &mut AppState) {
             });
             ui.label(egui::RichText::new("Separate keywords with commas. Notes are kept in the drawing only.").weak().small());
             ui.add_space(8.0);
-            done = ui.button("OK").clicked();
+            done = crate::a11y::window_button(ui, true, "OK", "Document Properties").clicked();
         });
     state.show_document_properties = open && !done;
 }

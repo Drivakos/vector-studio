@@ -262,13 +262,13 @@ fn edit_text_window_changes_the_words_or_leaves_them() {
     app.shortcut(Modifiers::COMMAND | Modifiers::SHIFT, Key::T);
     assert_eq!(app.value("Text (edit text)"), "Hello");
     retype(&mut app, "Goodbye");
-    app.click("Cancel");
+    app.click("Cancel (Edit Text)");
     assert_eq!(text(&app, 0).content, "Hello", "Cancel leaves it");
 
     app.menu(&["Text", "Edit Text…"]);
     retype(&mut app, "Goodbye");
     assert_eq!(text(&app, 0).content, "Hello", "nothing changes before OK");
-    app.click("OK");
+    app.click("OK (Edit Text)");
     assert!(!app.exists("Text (edit text)"));
     assert_eq!(text(&app, 0).content, "Goodbye");
     app.shortcut(Modifiers::COMMAND, Key::Z);

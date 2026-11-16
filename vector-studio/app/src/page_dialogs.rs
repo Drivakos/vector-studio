@@ -28,8 +28,8 @@ pub fn go_to_page_window(ctx: &egui::Context, state: &mut AppState) {
             });
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                go = ui.button("Go").clicked();
-                cancel = ui.button("Cancel").clicked();
+                go = crate::a11y::window_button(ui, true, "Go", "Go to Page").clicked();
+                cancel = crate::a11y::window_button(ui, true, "Cancel", "Go to Page").clicked();
             });
         });
     state.go_to_page = (open && !go && !cancel).then_some(number);
@@ -97,7 +97,7 @@ pub fn page_background_window(ctx: &egui::Context, state: &mut AppState) {
                 }
             });
             ui.add_space(8.0);
-            done = ui.button("OK").clicked();
+            done = crate::a11y::window_button(ui, true, "OK", "Page Background").clicked();
         });
     state.doc.background = background;
     if open && !done {

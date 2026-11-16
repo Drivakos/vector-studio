@@ -251,7 +251,7 @@ fn document_properties_are_saved_exported_and_undoable() {
     app.fill("Title (document properties)", "Shop sign");
     app.fill("Author (document properties)", "A. Person");
     app.fill("Keywords (document properties)", "sign, red");
-    app.click("OK");
+    app.click("OK (Document Properties)");
     assert!(!app.exists("Title (document properties)"));
     let p = &app.doc().properties;
     assert_eq!((p.title.as_str(), p.author.as_str(), p.keyword_list()), ("Shop sign", "A. Person", vec!["sign".to_owned(), "red".to_owned()]));
@@ -269,7 +269,7 @@ fn document_properties_are_saved_exported_and_undoable() {
     app.shortcut(Modifiers::COMMAND, Key::S);
     app.menu(&["File", "Document Properties…"]);
     assert_eq!(app.value("Title (document properties)"), "Shop sign");
-    app.click("OK");
+    app.click("OK (Document Properties)");
     assert_eq!(vs_io::open_document(&path).unwrap().properties.author, "A. Person", "saved in the drawing");
 
     app.shortcut(Modifiers::COMMAND, Key::Z);
@@ -281,8 +281,8 @@ fn document_properties_are_saved_exported_and_undoable() {
 fn print_sends_the_chosen_pages_to_the_chosen_printer() {
     let mut app = E2e::new();
     app.shortcut(Modifiers::COMMAND, Key::P);
-    assert!(!app.is_enabled("Print"), "no printer to print to");
-    app.click("Cancel");
+    assert!(!app.is_enabled("Print (Print)"), "no printer to print to");
+    app.click("Cancel (Print)");
     assert!(!app.exists("Copies"));
 
     {
@@ -296,9 +296,9 @@ fn print_sends_the_chosen_pages_to_the_chosen_printer() {
     app.menu(&["File", "Print…"]);
     app.fill("Copies", "2");
     app.fill("Page range", "5");
-    assert!(!app.is_enabled("Print"), "there is no page 5");
+    assert!(!app.is_enabled("Print (Print)"), "there is no page 5");
     app.fill("Page range", "1, 3");
-    app.click("Print");
+    app.click("Print (Print)");
     assert!(!app.exists("Copies"), "the window closes");
     let (job, pdf) = app.script.borrow().printed[0].clone();
     assert_eq!((job.printer.as_str(), job.copies, job.title.as_str()), ("Studio", 2, "Untitled-1"), "the default printer");
@@ -308,7 +308,7 @@ fn print_sends_the_chosen_pages_to_the_chosen_printer() {
     app.click("Printer");
     app.click("Office");
     app.click("Current page");
-    app.click("Print");
+    app.click("Print (Print)");
     let (job, pdf) = app.script.borrow().printed[1].clone();
     assert_eq!((job.printer.as_str(), job.copies), ("Office", 2), "settings are kept between prints");
     assert!(String::from_utf8_lossy(&pdf).contains("/Count 1"));

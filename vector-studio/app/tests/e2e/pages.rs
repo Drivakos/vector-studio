@@ -110,14 +110,14 @@ fn layout_menu_renames_the_page_and_goes_to_a_page() {
     app.menu(&["Layout", "Go to Page…"]);
     assert_eq!(app.value("Page number (go to page)"), "1", "starts at the active page");
     app.fill("Page number (go to page)", "3");
-    app.click("Go");
+    app.click("Go (Go to Page)");
     assert_eq!(active(&app), 2);
     assert!(!app.exists("Page number (go to page)"), "the window closes");
 
     app.menu(&["Layout", "Go to Page…"]);
     app.fill("Page number (go to page)", "9");
     assert_eq!(app.value("Page number (go to page)"), "3", "limited to the pages there are");
-    app.click("Cancel");
+    app.click("Cancel (Go to Page)");
     assert_eq!(active(&app), 2);
 }
 
@@ -168,7 +168,7 @@ fn page_background_shows_exports_when_asked_and_undoes() {
     assert!(app.is_selected("No background"));
     app.click("Solid colour");
     app.fill("Background colour (hex)", "#ffcc00");
-    app.click("OK");
+    app.click("OK (Page Background)");
     assert!(!app.exists("Background colour (hex)"));
     let paper = app.pixel(300.0, 400.0);
     assert_eq!(&paper[..3], &[0xff, 0xcc, 0x00], "the page shows the background");
@@ -188,7 +188,7 @@ fn page_background_shows_exports_when_asked_and_undoes() {
     app.menu(&["Layout", "Page Background…"]);
     assert_eq!(app.value("Background colour (hex)"), "#ffcc00");
     app.click("Print and export background");
-    app.click("OK");
+    app.click("OK (Page Background)");
     assert_eq!(app.doc().background.map(|b| b.print_and_export), Some(false));
     let svg = export_svg(&mut app, "screen-only.svg");
     assert!(!svg.contains("<rect"), "shown on screen only: {svg}");

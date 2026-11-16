@@ -46,6 +46,7 @@ Names must be unique on screen, or a test cannot tell widgets apart.
 | Palette | `Swatch` + colour: `Swatch Red` |
 | Page navigator | Tooltip, and `Page tab` + page name |
 | Outline choices | Group + choice: `Corners Round`, `Caps Square` |
+| Window buttons | Label + window title: `OK (Paste Special)`, `Go (Go to Page)` |
 
 ## Coverage
 

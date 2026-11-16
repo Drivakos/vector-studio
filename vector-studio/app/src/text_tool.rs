@@ -348,8 +348,8 @@ pub fn edit_text_window(ctx: &egui::Context, state: &mut AppState) {
             crate::a11y::add(ui, egui::TextEdit::multiline(&mut content).desired_width(360.0).desired_rows(6), "Text (edit text)");
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                ok = ui.button("OK").clicked();
-                cancel = ui.button("Cancel").clicked();
+                ok = crate::a11y::window_button(ui, true, "OK", "Edit Text").clicked();
+                cancel = crate::a11y::window_button(ui, true, "Cancel", "Edit Text").clicked();
             });
         });
     if ok {
