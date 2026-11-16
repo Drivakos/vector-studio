@@ -542,18 +542,67 @@ pub fn document_to_pdf(doc: &Document) -> Result<Vec<u8>, IoError> {
 /// The pages at `indices` (0-based, in that order) as a PDF. Indices past the last page
 /// are skipped.
 pub fn pages_to_pdf(doc: &Document, indices: &[usize]) -> Result<Vec<u8>, IoError> {
+    pages_to_print_pdf(doc, indices, &PrintMarks::default())
+}
+
+/// What a print-ready PDF adds around each page.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PrintMarks {
+    /// How far the artwork runs past the page edge, in points.
+    pub bleed: f64,
+    /// Lines outside the corners showing where to trim.
+    pub crop_marks: bool,
+}
+
+impl PrintMarks {
+    /// Gap between the bleed and the start of a crop mark, in points.
+    pub const MARK_GAP: f64 = 6.0;
+    /// Length of a crop mark, in points.
+    pub const MARK_LENGTH: f64 = 18.0;
+
+    /// Space added on every side of the page.
+    pub fn margin(&self) -> f64 {
+        self.bleed.max(0.0) + if self.crop_marks { Self::MARK_GAP + Self::MARK_LENGTH } else { 0.0 }
+    }
+}
+
+/// Like [`pages_to_pdf`], with each sheet grown by `marks`: the artwork runs `bleed` past
+/// the page edge (the bleed box), the page itself is the trim box, and crop marks sit
+/// outside the bleed at the corners.
+pub fn pages_to_print_pdf(doc: &Document, indices: &[usize], marks: &PrintMarks) -> Result<Vec<u8>, IoError> {
     use krilla::page::PageSettings;
     use krilla::paint::FillRule;
+    use vs_core::kurbo::{Affine, Rect, Shape as _};
 
+    let bleed = marks.bleed.max(0.0);
+    let m = marks.margin();
     let mut pdf = krilla::Document::new();
     pdf.set_metadata(pdf_metadata(&doc.properties));
     for page in indices.iter().filter_map(|&i| doc.pages().get(i)) {
-        let settings = PageSettings::from_wh(page.size.width as f32, page.size.height as f32)
+        let (w, h) = (page.size.width, page.size.height);
+        let pdf_rect = |r: Rect| krilla::geom::Rect::from_ltrb(r.x0 as f32, r.y0 as f32, r.x1 as f32, r.y1 as f32);
+        let mut settings = PageSettings::from_wh((w + 2.0 * m) as f32, (h + 2.0 * m) as f32)
             .ok_or_else(|| IoError::Pdf("invalid page size".into()))?;
+        if m > 0.0 {
+            settings = settings
+                .with_trim_box(pdf_rect(Rect::new(m, m, m + w, m + h)))
+                .with_bleed_box(pdf_rect(Rect::new(m - bleed, m - bleed, m + w + bleed, m + h + bleed)));
+        }
         let mut pdf_page = pdf.start_page_with(settings);
         let mut surface = pdf_page.surface();
+        if marks.crop_marks {
+            draw_crop_marks(&mut surface, w, h, m, bleed);
+        }
+        let [a, b, c, d, e, f] = Affine::translate((m, m)).as_coeffs().map(|v| v as f32);
+        surface.push_transform(&krilla::geom::Transform::from_row(a, b, c, d, e, f));
+        // Artwork shows up to the bleed and no further.
+        let sheet = Rect::new(-bleed, -bleed, w + bleed, h + bleed).to_path(0.1);
+        let clipped = m > 0.0 && pdf_path(&sheet).is_some();
+        if clipped && let Some(clip) = pdf_path(&sheet) {
+            surface.push_clip_path(&clip, &FillRule::NonZero);
+        }
         if let Some(bg) = doc.exported_background() {
-            let paper = vs_core::kurbo::Shape::to_path(&page.bounds(), 0.1);
+            let paper = sheet.clone();
             if let Some(path) = pdf_path(&paper) {
                 surface.set_fill(Some(krilla::paint::Fill { paint: krilla::color::rgb::Color::new(bg.r, bg.g, bg.b).into(), ..Default::default() }));
                 surface.set_stroke(None);
@@ -569,10 +618,39 @@ pub fn pages_to_pdf(doc: &Document, indices: &[usize]) -> Result<Vec<u8>, IoErro
                 surface.pop();
             }
         }
+        if clipped {
+            surface.pop();
+        }
+        surface.pop();
         surface.finish();
         pdf_page.finish();
     }
     pdf.finish().map_err(|e| IoError::Pdf(format!("{e:?}")))
+}
+
+/// Crop marks for a `w` × `h` page placed `m` in from the sheet's edges: two short lines
+/// at each corner, in line with the page edges, starting outside the bleed.
+fn draw_crop_marks(surface: &mut krilla::surface::Surface<'_>, w: f64, h: f64, m: f64, bleed: f64) {
+    use vs_core::kurbo::{BezPath, Point};
+    let start = bleed + PrintMarks::MARK_GAP;
+    let end = start + PrintMarks::MARK_LENGTH;
+    let mut path = BezPath::new();
+    for (x, sx) in [(m, -1.0), (m + w, 1.0)] {
+        for (y, sy) in [(m, -1.0), (m + h, 1.0)] {
+            path.move_to(Point::new(x + sx * start, y));
+            path.line_to(Point::new(x + sx * end, y));
+            path.move_to(Point::new(x, y + sy * start));
+            path.line_to(Point::new(x, y + sy * end));
+        }
+    }
+    let Some(path) = pdf_path(&path) else { return };
+    surface.set_fill(None);
+    surface.set_stroke(Some(krilla::paint::Stroke {
+        paint: krilla::color::rgb::Color::new(0, 0, 0).into(),
+        width: 0.25,
+        ..Default::default()
+    }));
+    surface.draw_path(&path);
 }
 
 /// The PDF's document information from the drawing's properties.
@@ -908,6 +986,21 @@ mod tests {
         }
         let reopened = document_from_str(&document_to_string(&doc).unwrap()).unwrap();
         assert_eq!(reopened.properties, doc.properties);
+    }
+
+    #[test]
+    fn print_ready_pdf_adds_bleed_crop_marks_and_page_boxes() {
+        let doc = sample();
+        let plain = String::from_utf8_lossy(&pages_to_pdf(&doc, &[0]).unwrap()).into_owned();
+        assert!(!plain.contains("/TrimBox"), "a plain PDF has no print boxes");
+        let marks = PrintMarks { bleed: 9.0, crop_marks: true };
+        assert_eq!(marks.margin(), 33.0);
+        let pdf = String::from_utf8_lossy(&pages_to_print_pdf(&doc, &[0], &marks).unwrap()).into_owned();
+        assert!(pdf.contains("/MediaBox[0 0 661.2756 907.8898]"), "the sheet grows by the margin on every side");
+        assert!(pdf.contains("/TrimBox[33 33 628.2756 874.8898]"), "the page is the trim box");
+        assert!(pdf.contains("/BleedBox[24 24 637.2756 883.8898]"), "the bleed box");
+        let bleed_only = String::from_utf8_lossy(&pages_to_print_pdf(&doc, &[0], &PrintMarks { bleed: 9.0, crop_marks: false }).unwrap()).into_owned();
+        assert!(bleed_only.contains("/MediaBox[0 0 613.2756 859.8898]"));
     }
 
     #[test]

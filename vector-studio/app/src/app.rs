@@ -132,6 +132,7 @@ pub struct AppState {
     pub page_background: Option<crate::page_dialogs::PageBackgroundDialog>,
     /// Where templates are kept; tests point it at a temporary folder.
     pub templates_dir: Option<PathBuf>,
+    pub export_for: Option<crate::export_for::ExportFor>,
     pub save_template: Option<crate::templates::SaveTemplateDialog>,
     pub new_from_template: Option<crate::templates::NewFromTemplateDialog>,
     pub show_document_properties: bool,
@@ -258,6 +259,7 @@ impl AppState {
             go_to_page: None,
             page_background: None,
             templates_dir: crate::templates::default_dir(),
+            export_for: None,
             save_template: None,
             new_from_template: None,
             show_document_properties: false,
@@ -535,6 +537,14 @@ impl VectorStudioApp {
             }
             Command::DocumentProperties => {
                 let _: () = s.show_document_properties = true;
+                Ok(())
+            }
+            Command::ExportForWeb => {
+                s.export_for = Some(crate::export_for::ExportFor::web());
+                Ok(())
+            }
+            Command::ExportPrintPdf => {
+                s.export_for = Some(crate::export_for::ExportFor::print_pdf());
                 Ok(())
             }
             Command::SaveAsTemplate => {
@@ -1235,6 +1245,7 @@ impl eframe::App for VectorStudioApp {
         crate::page_dialogs::go_to_page_window(&ctx, &mut self.state);
         crate::page_dialogs::page_background_window(&ctx, &mut self.state);
         crate::templates::save_window(&ctx, &mut self.state);
+        crate::export_for::export_for_window(&ctx, &mut self.state);
         crate::templates::new_window(&ctx, &mut self.state);
         crate::edit_tools::copy_properties_window(&ctx, &mut self.state);
         self.settle(&ctx);

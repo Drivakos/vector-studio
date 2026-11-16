@@ -76,6 +76,7 @@ Names must be unique on screen, or a test cannot tell widgets apart.
 | Revert (cancel, confirm, only after changes to a saved file), Close and Close All (unsaved prompt, new drawing) | `files.rs` |
 | Document Properties (fields, SVG metadata, saved in the drawing, undo) | `files.rs` |
 | Save as Template (name, replace prompt), New from Template (list, Open, Browse…, untitled result) | `files.rs` |
+| Export For Web (72 dpi PNG, pixel size, extension added), Print-Ready PDF (trim and bleed boxes, cancel keeps the window) | `files.rs` |
 | Print (no printer, default printer, copies, page range and current page, the PDF sent; the print queue is scripted) | `files.rs` |
 | Group, Ungroup, Ungroup All, Lock, Unlock, Unlock All | `groups.rs` |
 | Join Curves (Object menu) closing two nearly-touching paths, Convert Outline to Object (Cmd+Shift+Q) and how it renders | `curves.rs` |

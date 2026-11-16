@@ -8,6 +8,7 @@ pub mod chrome;
 pub mod commands;
 pub mod dockers;
 pub mod edit_tools;
+pub mod export_for;
 pub mod files;
 pub mod fill_ui;
 pub mod free_transform;

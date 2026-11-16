@@ -355,3 +355,36 @@ fn save_as_template_then_new_from_template_starts_an_untitled_copy() {
     assert_eq!(app.script.borrow().shown.last().map(String::as_str), Some("New from Template"));
     assert_eq!(app.objects().len(), 1);
 }
+
+#[test]
+fn export_for_web_writes_a_screen_resolution_png_and_print_ready_pdf_adds_bleed() {
+    let mut app = E2e::new();
+    let dir = temp_dir("export-for");
+    app.draw_rect(100.0, 100.0, 200.0, 150.0);
+
+    app.menu(&["File", "Export For", "Web…"]);
+    assert_eq!(app.value("Resolution (web)"), "72 dpi");
+    app.script.borrow_mut().save_paths.push_back(dir.join("web"));
+    app.click("Export… (Export For Web)");
+    assert_eq!(app.script.borrow().shown.last().map(String::as_str), Some("Export For Web"));
+    let png = std::fs::read(dir.join("web.png")).expect("the PNG, extension added");
+    let size = app.doc().active_page().size;
+    let (w, h) = (u32::from_be_bytes(png[16..20].try_into().unwrap()), u32::from_be_bytes(png[20..24].try_into().unwrap()));
+    assert_eq!((w, h), (size.width.ceil() as u32, size.height.ceil() as u32), "one pixel per point");
+    assert!(!app.exists("Resolution (web)"), "the window closes");
+
+    app.menu(&["File", "Export For", "Print-Ready PDF…"]);
+    assert_eq!(app.value("Bleed"), "3.0 mm");
+    app.script.borrow_mut().save_paths.push_back(dir.join("print.pdf"));
+    app.click("Export… (Print-Ready PDF)");
+    let pdf = String::from_utf8_lossy(&std::fs::read(dir.join("print.pdf")).unwrap()).into_owned();
+    assert!(pdf.contains("/TrimBox") && pdf.contains("/BleedBox"), "print boxes");
+
+    // Cancelling the save dialog keeps the window open.
+    app.menu(&["File", "Export For", "Print-Ready PDF…"]);
+    app.click("Crop marks");
+    app.click("Export… (Print-Ready PDF)");
+    assert!(app.exists("Bleed"));
+    app.click("Cancel (Print-Ready PDF)");
+    assert!(!app.exists("Bleed"));
+}
