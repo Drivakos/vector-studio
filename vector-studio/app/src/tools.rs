@@ -49,11 +49,13 @@ pub struct ToolSettings {
     /// Graph Paper: cells across and down.
     pub graph_columns: u32,
     pub graph_rows: u32,
+    /// The outline the Common Shapes tool draws.
+    pub common_shape: vs_core::construct::CommonShape,
 }
 
 impl Default for ToolSettings {
     fn default() -> Self {
-        Self { polygon_sides: 5, star_points: 5, star_inner_ratio: 0.5, text: vs_core::Text::new(""), eraser_size: DEFAULT_ERASER_SIZE, spiral_turns: 4, graph_columns: 4, graph_rows: 3 }
+        Self { polygon_sides: 5, star_points: 5, star_inner_ratio: 0.5, text: vs_core::Text::new(""), eraser_size: DEFAULT_ERASER_SIZE, spiral_turns: 4, graph_columns: 4, graph_rows: 3, common_shape: Default::default() }
     }
 }
 
@@ -183,7 +185,7 @@ impl View {
 }
 
 fn is_shape_tool(tool: Tool) -> bool {
-    matches!(tool, Tool::Rectangle | Tool::Ellipse | Tool::Polygon | Tool::Star)
+    matches!(tool, Tool::Rectangle | Tool::Ellipse | Tool::Polygon | Tool::Star | Tool::CommonShapes)
 }
 
 pub fn is_implemented(tool: Tool) -> bool {
@@ -985,6 +987,7 @@ fn creation_shape(tool: Tool, rect: kurbo::Rect, settings: &ToolSettings) -> Opt
         Tool::Ellipse => Shape::Ellipse { rect, arc: None },
         Tool::Polygon => Shape::Polygon { rect, sides: settings.polygon_sides },
         Tool::Star => Shape::Star { rect, points: settings.star_points, inner_ratio: settings.star_inner_ratio },
+        Tool::CommonShapes => Shape::Curve { path: vs_core::construct::common_shape(settings.common_shape, rect) },
         _ => return None,
     })
 }
@@ -1615,6 +1618,7 @@ pub fn hint(state: &AppState) -> String {
             Some(_) => "Ungroup to edit the nodes of each object".into(),
             None => "Click an object to edit its nodes".into(),
         },
+        Tool::CommonShapes => "Drag to draw the shape chosen on the property bar · Ctrl/Cmd keeps it in a square · Shift from the centre".into(),
         Tool::Rectangle | Tool::Ellipse | Tool::Polygon | Tool::Star => {
             "Drag to draw · Cmd constrains to equal sides · Shift draws from the centre".into()
         }

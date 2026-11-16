@@ -149,6 +149,15 @@ pub fn property_bar_ui(ui: &mut egui::Ui, state: &mut AppState, out: &mut Vec<Co
                     state.tools.settings.spiral_turns = turns as u32;
                 }
             }
+            Tool::CommonShapes => {
+                let current = state.tools.settings.common_shape;
+                let combo = egui::ComboBox::from_id_salt("common_shape").selected_text(current.label()).height(400.0).show_ui(ui, |ui| {
+                    for shape in vs_core::construct::CommonShape::ALL {
+                        ui.selectable_value(&mut state.tools.settings.common_shape, shape, shape.label());
+                    }
+                });
+                crate::a11y::name(&combo.response, "Common shape");
+            }
             Tool::GraphPaper => {
                 let s = &mut state.tools.settings;
                 let mut columns = f64::from(s.graph_columns);

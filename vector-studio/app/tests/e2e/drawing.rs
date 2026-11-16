@@ -145,3 +145,22 @@ fn graph_paper_draws_a_group_of_equal_rectangles() {
     assert_eq!(app.selection(), vec![group.id]);
     assert!(crate::support::rect_close(app.bounds(0), 100.0, 100.0, 350.0, 200.0), "{:?}", app.bounds(0));
 }
+
+#[test]
+fn common_shapes_draw_the_shape_chosen_on_the_property_bar() {
+    let mut app = E2e::new();
+    app.flyout_tool("Polygon", "Common Shapes");
+    assert_eq!(app.value("Common shape"), "Triangle");
+    app.drag_doc((100.0, 100.0), (200.0, 180.0));
+    assert!(matches!(app.objects()[0].shape, Shape::Curve { .. }));
+    assert!(rect_close(app.bounds(0), 100.0, 100.0, 200.0, 180.0), "{:?}", app.bounds(0));
+
+    assert_eq!(app.state().tool, vector_studio::toolbox::Tool::CommonShapes, "the tool stays");
+    app.click("Common shape");
+    app.click("Arrow right");
+    app.drag_doc((300.0, 100.0), (400.0, 160.0));
+    let Shape::Curve { path } = &app.objects()[1].shape else { panic!() };
+    let tip = path.elements().iter().filter_map(|e| e.end_point()).any(|p| close(p.x, 400.0) && close(p.y, 130.0));
+    assert!(tip, "the arrow points right, its tip at the middle of the right edge");
+    assert_eq!(app.selection(), vec![app.ids()[1]]);
+}

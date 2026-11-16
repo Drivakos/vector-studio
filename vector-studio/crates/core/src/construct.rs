@@ -1,4 +1,5 @@
-//! Paths the drawing tools build from a few points: B-splines, 3-point curves, spirals.
+//! Paths the drawing tools build from a few points: B-splines, 3-point curves, spirals,
+//! common shapes and graph paper.
 
 use std::f64::consts::TAU;
 
@@ -87,6 +88,117 @@ pub fn spiral(rect: Rect, turns: u32) -> BezPath {
     path
 }
 
+/// A ready-made outline of the Common Shapes tool.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CommonShape {
+    #[default]
+    Triangle,
+    RightTriangle,
+    Parallelogram,
+    Trapezoid,
+    Diamond,
+    Hexagon,
+    Cross,
+    ArrowRight,
+    ArrowLeft,
+    ArrowUp,
+    ArrowDown,
+    Heart,
+    Callout,
+}
+
+impl CommonShape {
+    pub const ALL: [CommonShape; 13] = [
+        CommonShape::Triangle,
+        CommonShape::RightTriangle,
+        CommonShape::Parallelogram,
+        CommonShape::Trapezoid,
+        CommonShape::Diamond,
+        CommonShape::Hexagon,
+        CommonShape::Cross,
+        CommonShape::ArrowRight,
+        CommonShape::ArrowLeft,
+        CommonShape::ArrowUp,
+        CommonShape::ArrowDown,
+        CommonShape::Heart,
+        CommonShape::Callout,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            CommonShape::Triangle => "Triangle",
+            CommonShape::RightTriangle => "Right triangle",
+            CommonShape::Parallelogram => "Parallelogram",
+            CommonShape::Trapezoid => "Trapezoid",
+            CommonShape::Diamond => "Diamond",
+            CommonShape::Hexagon => "Hexagon",
+            CommonShape::Cross => "Cross",
+            CommonShape::ArrowRight => "Arrow right",
+            CommonShape::ArrowLeft => "Arrow left",
+            CommonShape::ArrowUp => "Arrow up",
+            CommonShape::ArrowDown => "Arrow down",
+            CommonShape::Heart => "Heart",
+            CommonShape::Callout => "Callout",
+        }
+    }
+
+    /// Corners in a unit square (0..1 across and down), for the straight-sided shapes.
+    fn corners(self) -> &'static [(f64, f64)] {
+        match self {
+            CommonShape::Triangle => &[(0.5, 0.0), (1.0, 1.0), (0.0, 1.0)],
+            CommonShape::RightTriangle => &[(0.0, 0.0), (1.0, 1.0), (0.0, 1.0)],
+            CommonShape::Parallelogram => &[(0.25, 0.0), (1.0, 0.0), (0.75, 1.0), (0.0, 1.0)],
+            CommonShape::Trapezoid => &[(0.25, 0.0), (0.75, 0.0), (1.0, 1.0), (0.0, 1.0)],
+            CommonShape::Diamond => &[(0.5, 0.0), (1.0, 0.5), (0.5, 1.0), (0.0, 0.5)],
+            CommonShape::Hexagon => &[(0.25, 0.0), (0.75, 0.0), (1.0, 0.5), (0.75, 1.0), (0.25, 1.0), (0.0, 0.5)],
+            CommonShape::Cross => &[
+                (1.0 / 3.0, 0.0), (2.0 / 3.0, 0.0), (2.0 / 3.0, 1.0 / 3.0), (1.0, 1.0 / 3.0), (1.0, 2.0 / 3.0), (2.0 / 3.0, 2.0 / 3.0),
+                (2.0 / 3.0, 1.0), (1.0 / 3.0, 1.0), (1.0 / 3.0, 2.0 / 3.0), (0.0, 2.0 / 3.0), (0.0, 1.0 / 3.0), (1.0 / 3.0, 1.0 / 3.0),
+            ],
+            CommonShape::ArrowRight | CommonShape::ArrowLeft | CommonShape::ArrowUp | CommonShape::ArrowDown => {
+                &[(0.0, 0.25), (0.6, 0.25), (0.6, 0.0), (1.0, 0.5), (0.6, 1.0), (0.6, 0.75), (0.0, 0.75)]
+            }
+            CommonShape::Callout => &[(0.0, 0.0), (1.0, 0.0), (1.0, 0.75), (0.45, 0.75), (0.2, 1.0), (0.25, 0.75), (0.0, 0.75)],
+            CommonShape::Heart => &[],
+        }
+    }
+}
+
+/// The outline of `shape` filling `rect`, closed.
+pub fn common_shape(shape: CommonShape, rect: Rect) -> BezPath {
+    let at = |x: f64, y: f64| Point::new(rect.x0 + x * rect.width(), rect.y0 + y * rect.height());
+    let mut path = BezPath::new();
+    if shape == CommonShape::Heart {
+        // Two lobes meeting in a dip at the top and a point at the bottom.
+        path.move_to(at(0.5, 0.25));
+        path.curve_to(at(0.5, 0.08), at(0.4, 0.0), at(0.25, 0.0));
+        path.curve_to(at(0.1, 0.0), at(0.0, 0.12), at(0.0, 0.3));
+        path.curve_to(at(0.0, 0.6), at(0.4, 0.75), at(0.5, 1.0));
+        path.curve_to(at(0.6, 0.75), at(1.0, 0.6), at(1.0, 0.3));
+        path.curve_to(at(1.0, 0.12), at(0.9, 0.0), at(0.75, 0.0));
+        path.curve_to(at(0.6, 0.0), at(0.5, 0.08), at(0.5, 0.25));
+        path.close_path();
+        return path;
+    }
+    // Arrows are drawn pointing right, then turned within the unit square.
+    let turn = |(x, y): (f64, f64)| match shape {
+        CommonShape::ArrowLeft => (1.0 - x, y),
+        CommonShape::ArrowDown => (y, x),
+        CommonShape::ArrowUp => (y, 1.0 - x),
+        _ => (x, y),
+    };
+    for (i, c) in shape.corners().iter().enumerate() {
+        let (x, y) = turn(*c);
+        if i == 0 {
+            path.move_to(at(x, y));
+        } else {
+            path.line_to(at(x, y));
+        }
+    }
+    path.close_path();
+    path
+}
+
 /// Graph Paper: `rect` split into `columns` × `rows` equal cells, row by row from the
 /// top left.
 pub fn graph_paper(rect: Rect, columns: u32, rows: u32) -> Vec<Rect> {
@@ -105,6 +217,25 @@ pub fn graph_paper(rect: Rect, columns: u32, rows: u32) -> Vec<Rect> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn common_shapes_fill_their_box_and_arrows_point_their_way() {
+        let rect = Rect::new(10.0, 20.0, 110.0, 70.0);
+        for shape in CommonShape::ALL {
+            let path = common_shape(shape, rect);
+            let b = path.bounding_box();
+            assert!((b.x0 - 10.0).abs() < 0.5 && (b.x1 - 110.0).abs() < 0.5 && (b.y0 - 20.0).abs() < 0.5 && (b.y1 - 70.0).abs() < 0.5, "{shape:?}: {b:?}");
+            assert!(matches!(path.elements().last(), Some(kurbo::PathEl::ClosePath)), "{shape:?} is closed");
+        }
+        let tip = |shape| {
+            let path = common_shape(shape, Rect::new(0.0, 0.0, 10.0, 10.0));
+            path.elements().iter().filter_map(|e| e.end_point()).find(|p| [(10.0, 5.0), (0.0, 5.0), (5.0, 0.0), (5.0, 10.0)].contains(&(p.x, p.y)))
+        };
+        assert_eq!(tip(CommonShape::ArrowRight), Some(Point::new(10.0, 5.0)));
+        assert_eq!(tip(CommonShape::ArrowLeft), Some(Point::new(0.0, 5.0)));
+        assert_eq!(tip(CommonShape::ArrowUp), Some(Point::new(5.0, 0.0)));
+        assert_eq!(tip(CommonShape::ArrowDown), Some(Point::new(5.0, 10.0)));
+    }
 
     #[test]
     fn graph_paper_cells_tile_the_rectangle() {
