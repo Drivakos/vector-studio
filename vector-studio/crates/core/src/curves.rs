@@ -126,7 +126,7 @@ impl Document {
 
 /// The area `path` covers under the non-zero rule, as non-overlapping contours that the
 /// renderer's even-odd fill draws the same.
-fn nonzero_region(path: &BezPath) -> Option<BezPath> {
+pub fn nonzero_region(path: &BezPath) -> Option<BezPath> {
     let mut out = BezPath::new();
     for contour in binary_op(path, &BezPath::new(), FillRule::NonZero, BinaryOp::Union).ok()?.contours() {
         if contour.path.area().abs() > TINY {

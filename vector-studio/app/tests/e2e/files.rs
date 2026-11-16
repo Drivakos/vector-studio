@@ -125,3 +125,46 @@ fn export_window_writes_svg_png_and_pdf() {
     app.click("Cancel");
     assert!(!app.exists("Export…"));
 }
+
+#[test]
+fn import_places_an_svg_in_the_middle_of_the_page_selected_and_undoable() {
+    let dir = temp_dir("import");
+    let path = dir.join("logo.svg");
+    std::fs::write(
+        &path,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100">
+            <rect width="96" height="96" fill="#ff0000"/>
+            <circle cx="150" cy="48" r="48" fill="#0000ff" stroke="#000" stroke-width="4"/>
+        </svg>"##,
+    )
+    .unwrap();
+    let mut app = E2e::new();
+    app.draw_rect(10.0, 10.0, 20.0, 20.0);
+    app.script.borrow_mut().open_paths.push_back(path.clone());
+    app.shortcut(Modifiers::COMMAND, Key::I);
+    assert_eq!(app.script.borrow().shown.last().map(String::as_str), Some("Import"));
+
+    assert_eq!(app.objects().len(), 2, "the drawing comes in as one group");
+    let group = &app.objects()[1];
+    assert_eq!(app.selection(), vec![group.id], "and is selected");
+    let vs_core::Shape::Group { children } = &group.shape else { panic!("group") };
+    assert_eq!(children.len(), 2);
+    let page = app.doc().active_page().bounds();
+    let b = group.world_bounds();
+    assert!((b.center() - page.center()).hypot() < 0.01, "centred on the page: {b:?}");
+    assert!((b.width() - 148.5).abs() < 0.01, "the circle ends at 198 px, which is 148.5 pt: {b:?}");
+
+    // The red square shows on the canvas where it landed.
+    app.click_doc(10.0, 400.0);
+    let px = app.pixel(b.x0 + 10.0, b.center().y);
+    assert!(px[0] > 200 && px[1] < 60 && px[2] < 60, "red: {px:?}");
+
+    app.shortcut(Modifiers::COMMAND, Key::Z);
+    assert_eq!(app.objects().len(), 1, "Undo takes the import back");
+
+    std::fs::write(&path, "not svg").unwrap();
+    app.script.borrow_mut().open_paths.push_back(path);
+    app.menu(&["File", "Import…"]);
+    assert!(app.script.borrow().errors.last().is_some_and(|e| e.starts_with("Could not import")), "{:?}", app.script.borrow().errors);
+    assert_eq!(app.objects().len(), 1);
+}

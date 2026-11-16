@@ -341,6 +341,10 @@ impl VectorStudioApp {
             },
             Command::Save => Ok(_ = files::save(s, false)),
             Command::SaveAs => Ok(_ = files::save(s, true)),
+            Command::Import => {
+                files::import(s);
+                Ok(())
+            }
             Command::Export => {
                 let _: () = s.export.open = true;
                 Ok(())

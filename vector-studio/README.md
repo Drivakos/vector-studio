@@ -65,11 +65,11 @@ Phase 1 drawing:
 | Arrange | Align (L R T B E C, P = centre to page): one object aligns to the page, several to the last selected. Distribute (three or more objects; Align and Distribute docker and Object menu): left, centres, right or spacing, horizontally or vertically, between the two outermost objects. Order: front, back, forward, backward, reverse order. Convert to Curves (Cmd+Q / Ctrl+Q), which also converts every member of a group |
 | Edit | Undo/redo (every finished gesture is one step), cut/copy/paste (copy also puts SVG on the system clipboard), duplicate (offset set in the property bar), delete, select all, arrow nudge (distance set in the property bar, default 1 mm; Shift ×10) |
 | Objects docker | Every page's objects top-first; click to select, Shift/Cmd-click to add, double-click to rename, order and delete buttons |
-| Files | New, Open, Save, Save As (`.vstudio`), unsaved-changes prompt on New/Open/close, `•` in the title when unsaved. Export: SVG (current page), PNG (current page, dpi, transparent or white), PDF (all pages) |
+| Files | New, Open, Save, Save As (`.vstudio`), unsaved-changes prompt on New/Open/close, `•` in the title when unsaved. Export: SVG (current page), PNG (current page, dpi, transparent or white), PDF (all pages). Import (`Cmd+I`): SVG, as editable curves centred on the page and selected (several shapes come in as a group; shapes, groups, solid and fountain fills, outlines and opacity are kept; text, bitmaps, patterns, clipping, masks and filters are not yet) |
 
 ## Tests
 
-`cargo test --workspace` runs about 215 tests. The 84 end-to-end tests drive the whole app through its window on a real GPU. Every feature and change ships with one. See [TESTING.md](TESTING.md).
+`cargo test --workspace` runs about 220 tests. The 85 end-to-end tests drive the whole app through its window on a real GPU. Every feature and change ships with one. See [TESTING.md](TESTING.md).
 
 ## Shortcuts
 

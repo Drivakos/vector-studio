@@ -59,7 +59,7 @@ Names must be unique on screen, or a test cannot tell widgets apart.
 | Undo / redo, copy (SVG on the clipboard), cut, paste, duplicate offset, delete, select all, nudge | `edit.rs` |
 | Objects docker: select, Shift-select, rename, order, delete | `objects.rs` |
 | Page navigator, Pages docker, page size / orientation / width, Layout menu, PageUp / PageDown | `pages.rs` |
-| Save, Save As, Open, command-line file, damaged file, unsaved-changes prompt, Export SVG / PNG / PDF | `files.rs` |
+| Save, Save As, Open, command-line file, damaged file, unsaved-changes prompt, Export SVG / PNG / PDF, Import SVG (Cmd+I and menu, placement, undo, bad file) | `files.rs` |
 | Group, Ungroup, Ungroup All, Lock, Unlock, Unlock All | `groups.rs` |
 | Join Curves (Object menu) closing two nearly-touching paths, Convert Outline to Object (Cmd+Shift+Q) and how it renders | `curves.rs` |
 | Shaping (Weld, Trim, Intersect, Simplify, Front/Back Minus, Boundary: property bar and Object > Shaping), the target rule (marquee vs Shift-click), Combine (Cmd+L) with even-odd holes, Break Apart (Cmd+K) | `shaping.rs` |

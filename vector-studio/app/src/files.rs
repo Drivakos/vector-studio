@@ -167,6 +167,32 @@ pub fn open_path(state: &mut AppState, path: &Path) {
     }
 }
 
+/// Ask for an SVG file and place what it draws in the middle of the page, selected.
+pub fn import(state: &mut AppState) {
+    let Some(path) = state.dialogs.open_file("Import", "SVG image", "svg") else {
+        return;
+    };
+    import_path(state, &path);
+}
+
+pub fn import_path(state: &mut AppState, path: &Path) {
+    let result = std::fs::read(path).map_err(vs_io::IoError::from).and_then(|data| vs_io::import_svg(&data));
+    match result {
+        Ok(objects) => {
+            let Some(bounds) = objects.iter().map(|o| o.world_bounds()).reduce(|a, b| a.union(b)) else {
+                error(state, "Could not import", format!("{}: the file draws nothing that can be imported", path.display()));
+                return;
+            };
+            let offset = state.doc.active_page().bounds().center() - bounds.center();
+            state.selection = state.doc.paste_objects(&objects, offset);
+            state.marquee_selection = None;
+            state.tools.nodes.clear();
+            state.status = Some(format!("Imported {}", path.display()));
+        }
+        Err(e) => error(state, "Could not import", format!("{}: {e}", path.display())),
+    }
+}
+
 /// Ask where to export, then write the file.
 pub fn export(state: &mut AppState) {
     let settings = state.export.clone();

@@ -1,4 +1,8 @@
-//! File formats: the native document format, and SVG / PNG / PDF export.
+//! File formats: the native document format, SVG / PNG / PDF export and SVG import.
+
+mod import;
+
+pub use import::import_svg;
 
 use std::fmt::Write as _;
 use std::path::Path;
@@ -22,6 +26,7 @@ pub enum IoError {
     UnknownExtension(String),
     Png(String),
     Pdf(String),
+    Svg(String),
 }
 
 impl std::fmt::Display for IoError {
@@ -34,6 +39,7 @@ impl std::fmt::Display for IoError {
             IoError::UnknownExtension(e) => write!(f, "cannot export to .{e}; use .svg, .png or .pdf"),
             IoError::Png(e) => write!(f, "PNG export failed: {e}"),
             IoError::Pdf(e) => write!(f, "PDF export failed: {e}"),
+            IoError::Svg(e) => write!(f, "not a readable SVG file ({e})"),
         }
     }
 }
