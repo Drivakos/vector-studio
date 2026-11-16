@@ -311,6 +311,9 @@ pub struct Object {
     /// transforms are relative to this object's, so they move with it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub contents: Vec<Object>,
+    /// A clone follows this master's shape, fill and outline until it is edited itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clone_of: Option<ObjectId>,
 }
 
 impl Object {
@@ -343,6 +346,7 @@ impl Object {
             _ => match &self.shape {
                 Shape::Group { children } => format!("Group of {} objects", children.len()),
                 shape if !self.contents.is_empty() => format!("PowerClip {}", shape.kind_label()),
+                shape if self.clone_of.is_some() => format!("Clone {}", shape.kind_label()),
                 shape => shape.kind_label().to_string(),
             },
         }
@@ -488,9 +492,12 @@ impl std::error::Error for DocumentError {}
 pub struct Document {
     pub title: String,
     pub display_unit: Unit,
-    pages: Vec<Page>,
+    pub(crate) pages: Vec<Page>,
     active_page: usize,
     next_id: u64,
+    /// What each clone last took from its master (see [`Document::sync_clones`]).
+    #[serde(skip)]
+    pub(crate) clone_sync: crate::clones::CloneSync,
 }
 
 impl Default for Document {
@@ -508,6 +515,7 @@ impl Document {
             pages: Vec::new(),
             active_page: 0,
             next_id: 1,
+            clone_sync: Default::default(),
         };
         let size = PAGE_PRESETS[1].size(Orientation::Portrait);
         let page = doc.make_page(size);
@@ -632,7 +640,7 @@ impl Document {
         let id = ObjectId(self.alloc_id());
         let page = self.active_page_mut();
         let layer = page.active_layer;
-        page.objects.push(Object { id, name: None, shape, style, transform: Affine::IDENTITY, locked: false, layer, contents: Vec::new() });
+        page.objects.push(Object { id, name: None, shape, style, transform: Affine::IDENTITY, locked: false, layer, contents: Vec::new(), clone_of: None });
         page.settle_layers();
         id
     }

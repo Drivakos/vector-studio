@@ -224,6 +224,7 @@ impl Document {
             locked: false,
             layer,
             contents: Vec::new(),
+            clone_of: None,
         };
         objects.insert(top - below_top, group);
         Some(id)

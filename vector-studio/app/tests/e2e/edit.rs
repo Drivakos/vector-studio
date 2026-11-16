@@ -209,3 +209,36 @@ fn repeat_does_the_last_move_rotation_or_command_again() {
     app.shortcut(egui::Modifiers::COMMAND, egui::Key::R);
     assert_eq!(app.objects().len(), 3, "Duplicate ran again");
 }
+
+#[test]
+fn clones_follow_their_master_until_edited_themselves() {
+    let mut app = E2e::new();
+    let master = app.draw_rect(100.0, 100.0, 150.0, 150.0);
+    app.click("Swatch Red");
+    app.menu(&["Edit", "Clone"]);
+    assert_eq!(app.objects().len(), 2);
+    let clone = app.ids()[1];
+    assert_eq!(app.selection(), vec![clone]);
+    assert_eq!(app.objects()[1].clone_of, Some(master));
+    assert_eq!(app.objects()[1].label(), "Clone Rectangle");
+    let offset = app.bounds(1).x0 - app.bounds(0).x0;
+    let (cx, cy) = (app.bounds(1).center().x, app.bounds(1).center().y);
+    assert!(offset.abs() > 1.0, "placed like a duplicate");
+
+    // The master's new fill shows on the clone.
+    app.click_doc(103.0, 103.0);
+    assert_eq!(app.selection(), vec![master]);
+    app.click("Swatch Yellow");
+    let px = app.pixel(cx + 20.0, cy + 20.0);
+    assert!(px[0] > 200 && px[1] > 200 && px[2] < 60, "the clone turned yellow: {px:?}");
+
+    // Its own fill breaks the link.
+    app.click_doc(cx + 20.0, cy + 20.0);
+    assert_eq!(app.selection(), vec![clone]);
+    app.click("Swatch Red");
+    assert_eq!(app.objects()[1].clone_of, None);
+    app.click_doc(103.0, 103.0);
+    app.click("Swatch Yellow");
+    let px = app.pixel(cx + 20.0, cy + 20.0);
+    assert!(px[0] > 200 && px[1] < 60, "stays red: {px:?}");
+}

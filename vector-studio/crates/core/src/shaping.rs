@@ -128,6 +128,7 @@ impl Document {
                     locked: false,
                     layer,
                     contents: Vec::new(),
+                    clone_of: None,
                 };
                 // On top of the selection, so the new object shows.
                 self.active_page_mut().objects.insert(picked[last] + 1, obj);

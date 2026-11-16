@@ -147,6 +147,7 @@ impl Repeatable {
         matches!(
             cmd,
             Command::Duplicate
+                | Command::Clone
                 | Command::Align(_)
                 | Command::CenterToPage
                 | Command::Distribute(_)
@@ -358,6 +359,7 @@ impl VectorStudioApp {
             Command::ToggleRulers => (true, Some(state.prefs.show_rulers)),
             Command::ToggleGrid => (true, Some(state.prefs.show_grid)),
             Command::Repeat => (state.has_selection() && state.last_action.is_some(), None),
+            Command::Clone => (doc.can_clone(&state.selection), None),
             Command::ViewMode(mode) => (true, Some(state.view_mode == mode)),
             Command::ToggleGuidelines => (true, Some(state.prefs.show_guidelines)),
             Command::ToggleSnap(target) => (true, Some(*state.prefs.snap_flag(target))),
@@ -489,6 +491,15 @@ impl VectorStudioApp {
             Command::Duplicate => {
                 let [dx, dy] = s.prefs.duplicate_offset;
                 s.selection = s.doc.duplicate_objects(&s.selection, Vec2::new(dx, dy));
+                Ok(())
+            }
+            Command::Clone => {
+                let [dx, dy] = s.prefs.duplicate_offset;
+                let clones = s.doc.clone_objects(&s.selection, Vec2::new(dx, dy));
+                if !clones.is_empty() {
+                    s.selection = clones;
+                    s.marquee_selection = None;
+                }
                 Ok(())
             }
             Command::SelectAllNodes => {
@@ -848,6 +859,7 @@ impl VectorStudioApp {
             s.last_tool = s.tool;
         }
         s.doc.settle_layers();
+        s.doc.sync_clones();
         let page = s.doc.active_page();
         s.selection.retain(|id| page.object(*id).is_some_and(|o| page.is_selectable(o)));
         let target = match s.selection.as_slice() {
