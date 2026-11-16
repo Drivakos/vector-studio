@@ -66,3 +66,40 @@ fn transform_docker_position_proportional_size_and_rotation() {
     app.click("Mirror vertically (docker)");
     assert!(app.objects()[0].transform.determinant() < 0.0, "mirrored");
 }
+
+#[test]
+fn free_transform_rotates_reflects_scales_and_skews_about_the_press_point() {
+    let mut app = E2e::new();
+    app.draw_rect(100.0, 100.0, 200.0, 200.0);
+    app.flyout_tool("Pick", "Free Transform");
+    assert!(app.is_selected("Free rotation"), "rotation is the first mode");
+    let undo = |app: &mut E2e| {
+        app.shortcut(egui::Modifiers::COMMAND, egui::Key::Z);
+        assert!(rect_close(app.bounds(0), 100.0, 100.0, 200.0, 200.0), "undone");
+    };
+
+    // Sweep a quarter turn around the top-left corner.
+    app.stroke_doc(&[(100.0, 100.0), (200.0, 100.0), (100.0, 200.0)]);
+    assert!(rect_close(app.bounds(0), 0.0, 100.0, 100.0, 200.0), "rotated 90° about the press point: {:?}", app.bounds(0));
+    undo(&mut app);
+
+    app.click("Free angle reflection");
+    app.drag_doc((250.0, 50.0), (250.0, 300.0));
+    assert!(rect_close(app.bounds(0), 300.0, 100.0, 400.0, 200.0), "mirrored across x = 250: {:?}", app.bounds(0));
+    undo(&mut app);
+
+    app.click("Free scale");
+    app.drag_doc((100.0, 100.0), (200.0, 200.0));
+    assert!(rect_close(app.bounds(0), 100.0, 100.0, 300.0, 300.0), "moving by the size doubles it: {:?}", app.bounds(0));
+    undo(&mut app);
+
+    app.click("Free skew");
+    app.drag_doc((100.0, 200.0), (200.0, 205.0));
+    assert!(rect_close(app.bounds(0), 0.0, 100.0, 200.0, 200.0), "slanted 45° along the bottom edge: {:?}", app.bounds(0));
+    undo(&mut app);
+
+    app.click_doc(500.0, 500.0);
+    assert!(app.selection().is_empty(), "a click on empty space deselects");
+    app.click_doc(100.0, 150.0);
+    assert_eq!(app.selection().len(), 1, "a click on an object selects it");
+}

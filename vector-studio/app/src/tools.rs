@@ -10,6 +10,7 @@ use vs_core::nodes::{self, HandleRef};
 use vs_core::{ObjectId, Shape, Style};
 
 use crate::app::AppState;
+use crate::free_transform::FreeMode;
 use crate::toolbox::Tool;
 
 /// Pick distance for objects, nodes and handles, in screen points.
@@ -64,6 +65,9 @@ enum Drag {
     /// `grab` is where the pointer took the handle, relative to the bounds point it controls.
     Scale { handle: usize, bounds: kurbo::Rect, grab: Vec2, originals: Originals },
     Rotate { center: Point, start_angle: f64, originals: Originals },
+    /// Free Transform: about `anchor`; `start` is where the pointer was once the drag began,
+    /// `size` the selection's width and height.
+    Free { anchor: Point, start: Option<Point>, size: Vec2, originals: Originals },
     Create { start: Point },
     Freehand { points: Vec<Point> },
     PenHandle { node: Point },
@@ -108,6 +112,7 @@ struct PenPath {
 #[derive(Default)]
 pub struct ToolState {
     pub pick_mode: PickMode,
+    pub free_mode: crate::free_transform::FreeMode,
     /// Selected nodes (path element indices) of the object being shape-edited.
     pub nodes: Vec<usize>,
     pub settings: ToolSettings,
@@ -175,7 +180,7 @@ fn is_shape_tool(tool: Tool) -> bool {
 
 pub fn is_implemented(tool: Tool) -> bool {
     is_shape_tool(tool)
-        || matches!(tool, Tool::Pick | Tool::FreehandPick | Tool::Shape | Tool::Zoom | Tool::Pan | Tool::Freehand | Tool::Bezier | Tool::Pen | Tool::Text)
+        || matches!(tool, Tool::Pick | Tool::FreehandPick | Tool::FreeTransform | Tool::Shape | Tool::Zoom | Tool::Pan | Tool::Freehand | Tool::Bezier | Tool::Pen | Tool::Text)
         || matches!(tool, Tool::InteractiveFill | Tool::Transparency | Tool::ColorEyedropper | Tool::AttributesEyedropper)
         || matches!(tool, Tool::Crop | Tool::Knife | Tool::Eraser)
         || matches!(tool, Tool::TwoPointLine | Tool::Polyline | Tool::BSpline | Tool::Spiral)
@@ -271,6 +276,7 @@ fn press(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers, dou
                 state.tools.drag = Some(Drag::Lasso { points: vec![p], add });
             }
         }
+        Tool::FreeTransform => press_free(state, view, p, mods),
         Tool::Shape => press_shape(state, view, p, mods, double),
         Tool::Freehand => state.tools.drag = Some(Drag::Freehand { points: vec![p] }),
         Tool::Bezier | Tool::Pen => press_pen(state, view, p),
@@ -405,6 +411,24 @@ fn press_pick(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers
             state.tools.drag = Some(Drag::Move { press: p, start: p, originals, moved: false, was_selected });
         }
         None => state.tools.drag = Some(Drag::Marquee { start: p, add: mods.shift }),
+    }
+}
+
+/// Free Transform: an unselected object is selected (Shift adds it); anywhere else, with
+/// something selected, a drag transforms the selection about the press point.
+fn press_free(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers) {
+    let hit = state.doc.active_page().hit_test(p, view.doc_len(HIT)).filter(|id| !state.selection.contains(id));
+    if let Some(hit) = hit {
+        if !mods.shift {
+            state.selection.clear();
+        }
+        state.selection.push(hit);
+        state.marquee_selection = None;
+    } else if let Some(b) = state.doc.active_page().bounds_of(&state.selection) {
+        let size = Vec2::new(b.width(), b.height());
+        state.tools.drag = Some(Drag::Free { anchor: p, start: None, size, originals: selection_originals(state) });
+    } else {
+        state.tools.drag = Some(Drag::Marquee { start: p, add: mods.shift });
     }
 }
 
@@ -650,6 +674,15 @@ fn drag_to(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers) {
             }
             apply(state, &originals, Affine::rotate_about(angle, center));
             Drag::Rotate { center, start_angle, originals }
+        }
+        Drag::Free { anchor, mut start, size, originals } => {
+            if start.is_none() && view.screen_dist(anchor, p) > DRAG_START {
+                start = Some(p);
+            }
+            if let Some(s) = start {
+                apply(state, &originals, crate::free_transform::transform(state.tools.free_mode, anchor, s, p, size, constrain(mods)));
+            }
+            Drag::Free { anchor, start, size, originals }
         }
         Drag::Freehand { mut points } => {
             if points.last().is_none_or(|l| view.screen_dist(*l, p) > 1.5) {
@@ -906,6 +939,13 @@ fn release(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers) {
             }
         }
         Drag::Move { moved: true, originals, .. } | Drag::Scale { originals, .. } | Drag::Rotate { originals, .. } => remember_drag(state, &originals),
+        Drag::Free { start: Some(_), originals, .. } => remember_drag(state, &originals),
+        // A click on empty space clears the selection.
+        Drag::Free { anchor, start: None, .. } => {
+            if state.doc.active_page().hit_test(anchor, view.doc_len(HIT)).is_none() {
+                state.selection.clear();
+            }
+        }
         Drag::Move { moved: false, was_selected: true, .. } => {
             state.tools.pick_mode = match state.tools.pick_mode {
                 PickMode::Scale => PickMode::Rotate,
@@ -1236,6 +1276,13 @@ pub fn draw_overlay(painter: &egui::Painter, state: &AppState, canvas: Rect) {
             let pts: Vec<Pos2> = points.iter().map(|p| view.screen(*p)).collect();
             painter.add(egui::Shape::line(pts, Stroke::new(1.0, Color32::BLACK)));
         }
+        Some(Drag::Free { anchor, .. }) => {
+            let a = view.screen(*anchor);
+            painter.circle_stroke(a, 4.0, Stroke::new(1.5, ACCENT));
+            if let Some(p) = state.tools.pointer {
+                painter.line_segment([a, view.screen(p)], thin);
+            }
+        }
         Some(Drag::Lasso { points, .. }) => {
             let pts: Vec<Pos2> = points.iter().map(|p| view.screen(*p)).collect();
             painter.add(egui::Shape::closed_line(pts, thin));
@@ -1368,6 +1415,16 @@ pub fn hint(state: &AppState) -> String {
         Tool::Pick => "Click an object to select it, or drag a box around objects".into(),
         Tool::FreehandPick if n > 0 => format!("{selected} · drag a loop around objects to select them · Shift adds"),
         Tool::FreehandPick => "Drag a loop around objects to select them, or click an object".into(),
+        Tool::FreeTransform if n > 0 => {
+            let what = match state.tools.free_mode {
+                FreeMode::Rotate => "drag around the point you press to rotate (Cmd for 15° steps)",
+                FreeMode::Reflect => "drag a line to reflect across (Cmd for 15° steps)",
+                FreeMode::Scale => "drag away from or towards the point you press to scale (Cmd frees the proportions)",
+                FreeMode::Skew => "drag across the point you press to skew",
+            };
+            format!("{selected} · {what}")
+        }
+        Tool::FreeTransform => "Click an object to transform it, or drag a box around objects".into(),
         Tool::Shape => match shape_target(state).and_then(|id| state.doc.active_page().object(id)) {
             Some(o) if matches!(o.shape, Shape::Curve { .. }) => {
                 "Drag nodes or handles · double-click a line to add a node, a node to delete it".into()
