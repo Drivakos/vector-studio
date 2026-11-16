@@ -338,3 +338,35 @@ pub fn export_window(ctx: &egui::Context, state: &mut AppState) {
         export(state);
     }
 }
+
+/// File > Document Properties: title, subject, author, copyright, keywords and notes.
+/// Edits apply to the document as they are typed.
+pub fn document_properties_window(ctx: &egui::Context, state: &mut AppState) {
+    if !state.show_document_properties {
+        return;
+    }
+    let mut open = true;
+    let mut done = false;
+    egui::Window::new("Document Properties")
+        .collapsible(false)
+        .resizable(false)
+        .open(&mut open)
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .show(ctx, |ui| {
+            let p = &mut state.doc.properties;
+            egui::Grid::new("document_properties").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
+                for (label, value) in [("Title", &mut p.title), ("Subject", &mut p.subject), ("Author", &mut p.author), ("Copyright", &mut p.copyright), ("Keywords", &mut p.keywords)] {
+                    ui.label(format!("{label}:"));
+                    crate::a11y::add(ui, egui::TextEdit::singleline(value).desired_width(260.0), &format!("{label} (document properties)"));
+                    ui.end_row();
+                }
+                ui.label("Notes:");
+                crate::a11y::add(ui, egui::TextEdit::multiline(&mut p.notes).desired_width(260.0).desired_rows(4), "Notes (document properties)");
+                ui.end_row();
+            });
+            ui.label(egui::RichText::new("Separate keywords with commas. Notes are kept in the drawing only.").weak().small());
+            ui.add_space(8.0);
+            done = ui.button("OK").clicked();
+        });
+    state.show_document_properties = open && !done;
+}

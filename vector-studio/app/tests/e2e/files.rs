@@ -241,3 +241,38 @@ fn revert_reloads_the_saved_file_and_close_starts_a_new_drawing() {
     assert_eq!(app.state().file_path, None);
     assert_eq!(vs_io::open_document(&path).unwrap().active_page().objects.len(), 1, "the file is untouched");
 }
+
+#[test]
+fn document_properties_are_saved_exported_and_undoable() {
+    let dir = temp_dir("properties");
+    let mut app = E2e::new();
+    app.draw_rect(100.0, 100.0, 200.0, 200.0);
+    app.menu(&["File", "Document Properties…"]);
+    app.fill("Title (document properties)", "Shop sign");
+    app.fill("Author (document properties)", "A. Person");
+    app.fill("Keywords (document properties)", "sign, red");
+    app.click("OK");
+    assert!(!app.exists("Title (document properties)"));
+    let p = &app.doc().properties;
+    assert_eq!((p.title.as_str(), p.author.as_str(), p.keyword_list()), ("Shop sign", "A. Person", vec!["sign".to_owned(), "red".to_owned()]));
+
+    app.shortcut(Modifiers::COMMAND, Key::E);
+    app.click("Export format");
+    app.click("SVG - Scalable Vector Graphics");
+    app.script.borrow_mut().save_paths.push_back(dir.join("sign.svg"));
+    app.click("Export…");
+    let svg = std::fs::read_to_string(dir.join("sign.svg")).unwrap();
+    assert!(svg.contains("<title>Shop sign</title>") && svg.contains("<dc:creator>A. Person</dc:creator>"), "{svg}");
+
+    let path = dir.join("sign.vstudio");
+    app.script.borrow_mut().save_paths.push_back(path.clone());
+    app.shortcut(Modifiers::COMMAND, Key::S);
+    app.menu(&["File", "Document Properties…"]);
+    assert_eq!(app.value("Title (document properties)"), "Shop sign");
+    app.click("OK");
+    assert_eq!(vs_io::open_document(&path).unwrap().properties.author, "A. Person", "saved in the drawing");
+
+    app.shortcut(Modifiers::COMMAND, Key::Z);
+    assert_eq!(app.doc().properties.keywords, "", "the last field typed is undone");
+    assert_eq!(app.doc().properties.author, "A. Person");
+}

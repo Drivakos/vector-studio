@@ -111,6 +111,7 @@ pub struct AppState {
     /// The page number in the open Go to Page window (1-based).
     pub go_to_page: Option<usize>,
     pub page_background: Option<crate::page_dialogs::PageBackgroundDialog>,
+    pub show_document_properties: bool,
     pub renaming_object: Option<(ObjectId, String)>,
     /// The layer (page index, layer) being renamed in the Objects docker.
     pub renaming_layer: Option<(usize, vs_core::LayerId, String)>,
@@ -215,6 +216,7 @@ impl AppState {
             renaming_page: None,
             go_to_page: None,
             page_background: None,
+            show_document_properties: false,
             renaming_object: None,
             renaming_layer: None,
             interaction: CanvasInteraction::default(),
@@ -453,6 +455,10 @@ impl VectorStudioApp {
             Command::SaveAs => Ok(_ = files::save(s, true)),
             Command::Import => {
                 files::import(s);
+                Ok(())
+            }
+            Command::DocumentProperties => {
+                let _: () = s.show_document_properties = true;
                 Ok(())
             }
             Command::Export => {
@@ -1048,6 +1054,7 @@ impl eframe::App for VectorStudioApp {
         }
 
         files::export_window(&ctx, &mut self.state);
+        files::document_properties_window(&ctx, &mut self.state);
         crate::page_dialogs::go_to_page_window(&ctx, &mut self.state);
         crate::page_dialogs::page_background_window(&ctx, &mut self.state);
         crate::edit_tools::copy_properties_window(&ctx, &mut self.state);

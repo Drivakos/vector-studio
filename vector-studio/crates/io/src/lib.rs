@@ -167,7 +167,7 @@ pub fn export(doc: &Document, path: &Path, options: &ExportOptions) -> Result<Ex
     let format = ExportFormat::from_path(path)?;
     let background = doc.exported_background();
     let bytes = match format {
-        ExportFormat::Svg => svg_of_page(doc.active_page(), background).into_bytes(),
+        ExportFormat::Svg => svg_of_page(doc.active_page(), background, Some(&doc.properties)).into_bytes(),
         ExportFormat::Png => {
             let options = ExportOptions { background: background.or(options.background), ..*options };
             page_to_png(doc.active_page(), &options)?
@@ -335,11 +335,12 @@ fn num(v: f64) -> String {
 
 /// SVG 1.1 document of one page; 1 user unit = 1 pt.
 pub fn page_to_svg(page: &Page) -> String {
-    svg_of_page(page, None)
+    svg_of_page(page, None, None)
 }
 
-/// [`page_to_svg`] with a rectangle of `background` under everything.
-fn svg_of_page(page: &Page, background: Option<Rgba>) -> String {
+/// [`page_to_svg`] with a rectangle of `background` under everything, and `properties`
+/// as the title, description and Dublin Core metadata.
+fn svg_of_page(page: &Page, background: Option<Rgba>, properties: Option<&vs_core::DocumentProperties>) -> String {
     let (w, h) = (page.size.width, page.size.height);
     let mut out = String::new();
     let _ = writeln!(out, r#"<?xml version="1.0" encoding="UTF-8"?>"#);
@@ -348,6 +349,9 @@ fn svg_of_page(page: &Page, background: Option<Rgba>) -> String {
         r#"<svg xmlns="http://www.w3.org/2000/svg" version="1.1" width="{}pt" height="{}pt" viewBox="0 0 {} {}">"#,
         num(w), num(h), num(w), num(h)
     );
+    if let Some(p) = properties.filter(|p| !p.is_empty()) {
+        write_svg_metadata(&mut out, p);
+    }
     if let Some(bg) = background {
         let _ = writeln!(out, r#"  <rect width="{}" height="{}" fill="{}"/>"#, num(w), num(h), hex(bg));
     }
@@ -356,6 +360,32 @@ fn svg_of_page(page: &Page, background: Option<Rgba>) -> String {
     }
     out.push_str("</svg>\n");
     out
+}
+
+/// `<title>`, `<desc>` and an RDF block of Dublin Core terms for the filled-in properties.
+fn write_svg_metadata(out: &mut String, p: &vs_core::DocumentProperties) {
+    if !p.title.is_empty() {
+        let _ = writeln!(out, "  <title>{}</title>", xml_escape(&p.title));
+    }
+    if !p.subject.is_empty() {
+        let _ = writeln!(out, "  <desc>{}</desc>", xml_escape(&p.subject));
+    }
+    let keywords = p.keyword_list().join(", ");
+    let terms = [("title", &p.title), ("description", &p.subject), ("creator", &p.author), ("rights", &p.copyright), ("subject", &keywords)];
+    if terms.iter().all(|(_, v)| v.is_empty()) {
+        return;
+    }
+    out.push_str("  <metadata>\n");
+    out.push_str(r#"    <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:dc="http://purl.org/dc/elements/1.1/">"#);
+    out.push_str("\n      <rdf:Description rdf:about=\"\">\n");
+    for (term, value) in terms.iter().filter(|(_, v)| !v.is_empty()) {
+        let _ = writeln!(out, "        <dc:{term}>{}</dc:{term}>", xml_escape(value));
+    }
+    out.push_str("      </rdf:Description>\n    </rdf:RDF>\n  </metadata>\n");
+}
+
+fn xml_escape(text: &str) -> String {
+    text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
 
 /// Keep exported coordinates short: 3 decimals of a point is far below print resolution.
@@ -494,6 +524,7 @@ pub fn document_to_pdf(doc: &Document) -> Result<Vec<u8>, IoError> {
     use krilla::paint::FillRule;
 
     let mut pdf = krilla::Document::new();
+    pdf.set_metadata(pdf_metadata(&doc.properties));
     for page in doc.pages() {
         let settings = PageSettings::from_wh(page.size.width as f32, page.size.height as f32)
             .ok_or_else(|| IoError::Pdf("invalid page size".into()))?;
@@ -520,6 +551,26 @@ pub fn document_to_pdf(doc: &Document) -> Result<Vec<u8>, IoError> {
         pdf_page.finish();
     }
     pdf.finish().map_err(|e| IoError::Pdf(format!("{e:?}")))
+}
+
+/// The PDF's document information from the drawing's properties.
+fn pdf_metadata(p: &vs_core::DocumentProperties) -> krilla::metadata::Metadata {
+    let mut m = krilla::metadata::Metadata::new().creator("Vector Studio".to_owned());
+    let set = |v: &str| (!v.is_empty()).then(|| v.to_owned());
+    if let Some(v) = set(&p.title) {
+        m = m.title(v);
+    }
+    if let Some(v) = set(&p.subject) {
+        m = m.description(v);
+    }
+    if let Some(v) = set(&p.author) {
+        m = m.authors(vec![v]);
+    }
+    let keywords = p.keyword_list();
+    if !keywords.is_empty() {
+        m = m.keywords(keywords);
+    }
+    m
 }
 
 /// Draw one leaf on a PDF page.
@@ -805,6 +856,36 @@ mod tests {
         assert!(!page_to_svg(doc.active_page()).contains("<rect"), "the clipboard copy has no background");
         assert_ne!(document_to_pdf(&doc).unwrap(), plain_pdf, "the PDF pages are painted");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn properties_become_svg_and_pdf_metadata_and_survive_save() {
+        let mut doc = sample();
+        assert!(!svg_of_page(doc.active_page(), None, Some(&doc.properties)).contains("<metadata"), "nothing to say");
+        doc.properties = vs_core::DocumentProperties {
+            title: "Logo <draft>".into(),
+            subject: "Shop sign".into(),
+            author: "A. Person".into(),
+            copyright: "CC BY 4.0".into(),
+            keywords: "red, star".into(),
+            notes: "private".into(),
+        };
+        let svg = svg_of_page(doc.active_page(), None, Some(&doc.properties));
+        assert!(svg.contains("<title>Logo &lt;draft&gt;</title>"), "{svg}");
+        assert!(svg.contains("<desc>Shop sign</desc>"));
+        for term in ["<dc:creator>A. Person</dc:creator>", "<dc:rights>CC BY 4.0</dc:rights>", "<dc:subject>red, star</dc:subject>"] {
+            assert!(svg.contains(term), "{term} in {svg}");
+        }
+        assert!(!svg.contains("private"), "notes stay in the drawing");
+        resvg::usvg::Tree::from_str(&svg, &resvg::usvg::Options::default()).expect("still valid SVG");
+        assert!(!page_to_svg(doc.active_page()).contains("<title>"), "not on the clipboard");
+
+        let pdf = String::from_utf8_lossy(&document_to_pdf(&doc).unwrap()).into_owned();
+        for entry in ["/Title(Logo <draft>)", "/Subject(Shop sign)", "/Keywords(red, star)", "/Author(A. Person)"] {
+            assert!(pdf.contains(entry), "{entry} in the PDF info");
+        }
+        let reopened = document_from_str(&document_to_string(&doc).unwrap()).unwrap();
+        assert_eq!(reopened.properties, doc.properties);
     }
 
     #[test]

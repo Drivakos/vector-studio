@@ -494,6 +494,32 @@ pub struct Background {
     pub print_and_export: bool,
 }
 
+/// File > Document Properties: what the drawing is, for people and other apps. Title,
+/// subject, author, copyright and keywords are exported to SVG and PDF; notes stay in
+/// the drawing's own file.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DocumentProperties {
+    pub title: String,
+    pub subject: String,
+    pub author: String,
+    pub copyright: String,
+    /// Separated by commas or semicolons.
+    pub keywords: String,
+    pub notes: String,
+}
+
+impl DocumentProperties {
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// The keywords one by one, trimmed, without empty ones.
+    pub fn keyword_list(&self) -> Vec<String> {
+        self.keywords.split([',', ';']).map(str::trim).filter(|k| !k.is_empty()).map(str::to_owned).collect()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DocumentError {
     LastPage,
@@ -521,6 +547,8 @@ pub struct Document {
     /// The page background; `None` is plain white paper that is not exported.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub background: Option<Background>,
+    #[serde(default, skip_serializing_if = "DocumentProperties::is_empty")]
+    pub properties: DocumentProperties,
     /// What each clone last took from its master (see [`Document::sync_clones`]).
     #[serde(skip)]
     pub(crate) clone_sync: crate::clones::CloneSync,
@@ -542,6 +570,7 @@ impl Document {
             active_page: 0,
             next_id: 1,
             background: None,
+            properties: DocumentProperties::default(),
             clone_sync: Default::default(),
         };
         let size = PAGE_PRESETS[1].size(Orientation::Portrait);
@@ -572,7 +601,7 @@ impl Document {
     /// Whether `other` has the same drawing: pages and document settings, ignoring view
     /// state such as the active page. Undo steps and unsaved changes follow this.
     pub fn same_content(&self, other: &Document) -> bool {
-        self.pages == other.pages && self.background == other.background
+        self.pages == other.pages && self.background == other.background && self.properties == other.properties
     }
 
     /// The background colour to print and export, if there is one.
@@ -861,6 +890,17 @@ mod tests {
         moved.insert_page_after(0).unwrap();
         moved.set_active_page(0).unwrap();
         assert!(!moved.same_content(&before));
+    }
+
+    #[test]
+    fn properties_split_keywords_and_count_as_content() {
+        let mut doc = Document::default();
+        let before = doc.clone();
+        doc.properties.keywords = " logo, blue ;; print ".into();
+        assert_eq!(doc.properties.keyword_list(), vec!["logo", "blue", "print"]);
+        assert!(!doc.same_content(&before));
+        let json = serde_json::to_string(&before).unwrap();
+        assert!(!json.contains("properties"), "left out of files while empty");
     }
 
     #[test]
