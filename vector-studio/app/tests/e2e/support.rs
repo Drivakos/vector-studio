@@ -12,6 +12,7 @@ use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};
 use vector_studio::app::AppState;
 use vector_studio::files::{Dialogs, Unsaved};
+use vector_studio::paste_special::ClipboardText;
 use vector_studio::printing::{PrintJob, Printing};
 use vector_studio::{Startup, VectorStudioApp};
 use vs_core::kurbo::{Point, Rect};
@@ -30,6 +31,8 @@ pub struct Script {
     pub default_printer: Option<String>,
     /// Jobs sent to the printer, with the PDF each one printed.
     pub printed: Vec<(PrintJob, Vec<u8>)>,
+    /// What the scripted system clipboard holds, for Paste Special.
+    pub clipboard: Option<String>,
     /// Titles of every dialog shown, in order.
     pub shown: Vec<String>,
     pub errors: Vec<String>,
@@ -83,6 +86,14 @@ impl Printing for ScriptedPrinting {
     }
 }
 
+struct ScriptedClipboard(Rc<RefCell<Script>>);
+
+impl ClipboardText for ScriptedClipboard {
+    fn text(&mut self) -> Option<String> {
+        self.0.borrow().clipboard.clone()
+    }
+}
+
 pub struct E2e {
     pub h: Harness<'static, VectorStudioApp>,
     pub script: Rc<RefCell<Script>>,
@@ -105,6 +116,7 @@ impl E2e {
             .build_eframe(move |cc| VectorStudioApp::new(cc, startup));
         h.state_mut().state_mut().dialogs = Box::new(ScriptedDialogs(script.clone()));
         h.state_mut().state_mut().printing = Box::new(ScriptedPrinting(script.clone()));
+        h.state_mut().state_mut().clipboard_source = Box::new(ScriptedClipboard(script.clone()));
         let mut app = Self { h, script, mods: Modifiers::NONE };
         app.run();
         app

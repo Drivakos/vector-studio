@@ -61,6 +61,7 @@ Names must be unique on screen, or a test cannot tell widgets apart.
 | Cmd+Q Convert to Curves (groups too); Shape tool on ellipses (pie, arc, Change direction), polygons and stars | `nodes.rs` |
 | Undo / redo, copy (SVG on the clipboard), cut, paste, duplicate offset, delete, select all, nudge, Step and Repeat docker (spacing and offset), Copy Properties From (choices, pick, Esc), Select All Nodes (menu and Cmd+A in the Shape tool) | `edit.rs` |
 | Repeat: a drag, a rotate button, Duplicate | `edit.rs` |
+| Paste Special: empty clipboard, our objects in place, SVG as curves centred, plain text as artistic text, undo (the system clipboard is scripted) | `edit.rs` |
 | Clone: linked copy, master's fill shows on the clone (pixels), clone's own fill breaks the link | `edit.rs` |
 | Objects docker: select, Shift-select, rename, order, delete | `objects.rs` |
 | Layers: add, hide, lock, move objects, rename, delete, undo | `layers.rs` |

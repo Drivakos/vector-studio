@@ -242,3 +242,48 @@ fn clones_follow_their_master_until_edited_themselves() {
     let px = app.pixel(cx + 20.0, cy + 20.0);
     assert!(px[0] > 200 && px[1] < 60, "stays red: {px:?}");
 }
+
+#[test]
+fn paste_special_pastes_objects_svg_or_plain_text() {
+    let mut app = E2e::new();
+    app.menu(&["Edit", "Paste Special…"]);
+    assert!(app.exists("The clipboard is empty."));
+    assert!(!app.is_enabled("OK (Paste Special)"));
+    app.click("Cancel (Paste Special)");
+
+    let rect = app.draw_rect(100.0, 100.0, 200.0, 150.0);
+    app.click_doc(100.0, 125.0);
+    app.h.event(Event::Copy);
+    app.run();
+    let ours = app.state().system_clipboard_text().to_owned();
+    app.script.borrow_mut().clipboard = Some(ours);
+
+    app.menu(&["Edit", "Paste Special…"]);
+    assert!(app.is_selected("Vector Studio objects"), "our own copy comes first");
+    assert!(app.exists("SVG drawing (as curves)") && app.exists("Plain text (as artistic text)"));
+    app.click("OK (Paste Special)");
+    assert_eq!(app.objects().len(), 2);
+    assert_eq!(app.objects()[1].shape, app.doc().active_page().object(rect).unwrap().shape, "the same rectangle");
+    assert_eq!(app.bounds(1), app.bounds(0), "where it was");
+
+    app.menu(&["Edit", "Paste Special…"]);
+    app.click("SVG drawing (as curves)");
+    app.click("OK (Paste Special)");
+    let svg = app.objects().last().unwrap();
+    assert!(matches!(svg.shape, vs_core::Shape::Curve { .. }), "{:?}", svg.shape);
+    let page = app.doc().active_page().bounds();
+    assert!((svg.world_bounds().center() - page.center()).hypot() < 1.0, "centred on the page");
+    assert_eq!(app.selection(), vec![svg.id]);
+
+    app.script.borrow_mut().clipboard = Some("Hello\r\nworld".into());
+    app.menu(&["Edit", "Paste Special…"]);
+    assert!(!app.exists("Vector Studio objects"), "the clipboard holds something else now");
+    assert!(!app.exists("SVG drawing (as curves)"));
+    app.click("OK (Paste Special)");
+    match &app.objects().last().unwrap().shape {
+        vs_core::Shape::Text(t) => assert_eq!(t.content, "Hello\nworld"),
+        other => panic!("not text: {other:?}"),
+    }
+    app.shortcut(Modifiers::COMMAND, Key::Z);
+    assert_eq!(app.objects().len(), 3, "one undo step");
+}

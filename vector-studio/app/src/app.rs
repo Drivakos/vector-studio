@@ -111,6 +111,9 @@ pub struct AppState {
     pub printing: Box<dyn crate::printing::Printing>,
     pub print: crate::printing::PrintDialog,
     pub find: crate::find_ui::FindState,
+    /// The system clipboard, for Paste Special; tests swap in a scripted one.
+    pub clipboard_source: Box<dyn crate::paste_special::ClipboardText>,
+    pub paste_special: Option<crate::paste_special::PasteSpecialDialog>,
     /// The text object and its words in the open Edit Text window.
     pub edit_text: Option<(ObjectId, String)>,
     pub renaming_page: Option<(usize, String)>,
@@ -223,6 +226,8 @@ impl AppState {
             print: Default::default(),
             find: Default::default(),
             edit_text: None,
+            clipboard_source: Box::new(crate::paste_special::SystemClipboard),
+            paste_special: None,
             renaming_page: None,
             go_to_page: None,
             page_background: None,
@@ -266,6 +271,11 @@ impl AppState {
     /// The SVG text the last copy put on the system clipboard.
     pub fn system_clipboard_text(&self) -> &str {
         &self.clipboard_text
+    }
+
+    /// The objects of the last copy or cut.
+    pub fn internal_clipboard(&self) -> &[Object] {
+        &self.clipboard
     }
 
     pub fn selected_objects(&self) -> impl Iterator<Item = &Object> {
@@ -506,6 +516,10 @@ impl VectorStudioApp {
             Command::Paste => {
                 let objects = s.clipboard.clone();
                 s.selection = s.doc.paste_objects(&objects, Vec2::ZERO);
+                Ok(())
+            }
+            Command::PasteSpecial => {
+                crate::paste_special::open(s);
                 Ok(())
             }
             Command::Delete => {
@@ -1080,6 +1094,7 @@ impl eframe::App for VectorStudioApp {
         files::document_properties_window(&ctx, &mut self.state);
         crate::printing::print_window(&ctx, &mut self.state);
         crate::text_tool::edit_text_window(&ctx, &mut self.state);
+        crate::paste_special::paste_special_window(&ctx, &mut self.state);
         crate::page_dialogs::go_to_page_window(&ctx, &mut self.state);
         crate::page_dialogs::page_background_window(&ctx, &mut self.state);
         crate::edit_tools::copy_properties_window(&ctx, &mut self.state);

@@ -18,6 +18,7 @@ pub mod outline;
 pub mod page_dialogs;
 pub mod paint_tools;
 pub mod panels;
+pub mod paste_special;
 pub mod printing;
 pub mod text_tool;
 pub mod theme;
