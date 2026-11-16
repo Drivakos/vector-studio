@@ -91,15 +91,16 @@ impl GpuCanvas {
         id
     }
 
-    /// Render the active page for a canvas of `size` physical pixels. Returns the egui
-    /// texture to show and where it goes, in logical points from the canvas corner.
-    fn render(&mut self, state: &AppState, size: [u32; 2], pixels_per_point: f64) -> Option<(egui::TextureId, Rect)> {
+    /// Render the active page as `view` shows it, for a canvas of `size` physical
+    /// pixels. Returns the egui texture to show and where it goes, in logical points
+    /// from the canvas corner.
+    fn render(&mut self, state: &AppState, view: &View, size: [u32; 2], pixels_per_point: f64) -> Option<(egui::TextureId, Rect)> {
         if size[0] == 0 || size[1] == 0 {
             return None;
         }
         // Pixels view: draw the export-resolution bitmap's pixels, shown magnified.
-        let grid = (state.view_mode == vs_render::ViewMode::Pixels)
-            .then(|| vs_render::pixel_grid(&state.viewport, size, pixels_per_point, state.export.dpi))
+        let grid = (view.mode == vs_render::ViewMode::Pixels)
+            .then(|| vs_render::pixel_grid(&view.viewport, size, pixels_per_point, state.export.dpi))
             .flatten();
         let (viewport, ppp, size, place) = match grid {
             Some(g) => {
@@ -108,7 +109,7 @@ impl GpuCanvas {
             }
             None => {
                 let shown = vec2(size[0] as f32, size[1] as f32) / pixels_per_point as f32;
-                (state.viewport, pixels_per_point, size, Rect::from_min_size(Pos2::ZERO, shown))
+                (view.viewport, pixels_per_point, size, Rect::from_min_size(Pos2::ZERO, shown))
             }
         };
         let id = self.ensure_target(size);
@@ -118,10 +119,10 @@ impl GpuCanvas {
             page: state.doc.background.map_or(self.colors.page, |b| vs_render::to_color(b.color)),
             ..self.colors
         };
-        build_page_scene(&mut self.scene, state.doc.active_page(), &viewport, ppp, &colors, state.view_mode);
+        build_page_scene(&mut self.scene, state.doc.active_page(), &viewport, ppp, &colors, view.mode);
         let target = self.target.as_ref()?;
         let params = RenderParams {
-            base_color: self.colors.pasteboard,
+            base_color: view.pasteboard.unwrap_or(self.colors.pasteboard),
             width: size[0],
             height: size[1],
             antialiasing_method: AaConfig::Area,
@@ -138,6 +139,14 @@ impl GpuCanvas {
         }
         Some((id, place))
     }
+}
+
+/// What the canvas shows: the page through `viewport`, drawn in `mode`, on the desk
+/// colour unless `pasteboard` gives another.
+struct View {
+    viewport: vs_render::Viewport,
+    mode: vs_render::ViewMode,
+    pasteboard: Option<vs_render::vello::peniko::Color>,
 }
 
 /// Transient canvas interaction state (not persisted).
@@ -181,7 +190,8 @@ pub fn canvas_pane_ui(
         (canvas_rect.height() * ppp).round().max(0.0) as u32,
     ];
     let painter = ui.painter_at(canvas_rect);
-    match gpu.render(state, size_px, ppp as f64) {
+    let view = View { viewport: state.viewport, mode: state.view_mode, pasteboard: None };
+    match gpu.render(state, &view, size_px, ppp as f64) {
         Some((tex, place)) => {
             let place = place.translate(canvas_rect.min.to_vec2());
             painter.image(tex, place, Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0)), Color32::WHITE);
@@ -415,4 +425,20 @@ fn page_tabs_ui(ui: &mut egui::Ui, state: &mut AppState, rect: Rect, commands: &
             }
         });
     });
+}
+
+/// Full-Screen Preview: the page alone, fitted to the window on black, with no tools,
+/// selection or guides. Its placement is kept in `state.preview` (tests read it).
+pub fn preview_ui(ui: &mut egui::Ui, state: &mut AppState, gpu: &mut GpuCanvas) {
+    let rect = ui.available_rect_before_wrap();
+    ui.allocate_rect(rect, Sense::hover());
+    let mut viewport = vs_render::Viewport::default();
+    viewport.fit(state.doc.active_page().bounds(), kurbo::Size::new(rect.width() as f64, rect.height() as f64), FIT_MARGIN);
+    state.preview = Some(crate::app::Preview { viewport, rect });
+    let ppp = ui.ctx().pixels_per_point();
+    let size = [(rect.width() * ppp).round().max(0.0) as u32, (rect.height() * ppp).round().max(0.0) as u32];
+    let view = View { viewport, mode: vs_render::ViewMode::Enhanced, pasteboard: Some(vs_render::vello::peniko::Color::BLACK) };
+    if let Some((tex, place)) = gpu.render(state, &view, size, ppp as f64) {
+        ui.painter_at(rect).image(tex, place.translate(rect.min.to_vec2()), Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0)), Color32::WHITE);
+    }
 }

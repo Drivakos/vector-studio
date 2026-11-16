@@ -86,6 +86,7 @@ Names must be unique on screen, or a test cannot tell widgets apart.
 | The 13 units in the property bar and the Properties docker | `units.rs` |
 | Zoom (keys, toolbar, Zoom tool), Pan tool, rulers, dockers, palette, status bar | `view.rs` |
 | Pixels view mode: one colour per export-resolution pixel on screen, back to Enhanced | `view.rs` |
+| Full-Screen Preview: F9 and the View menu, page pixels on black, no chrome, a key or a click ends it without acting | `view.rs` |
 | View modes: Wireframe from the View menu (pixels: no fill, grey outline), Enhanced from the View Modes dropdown | `view.rs` |
 
 Not covered end to end:

@@ -131,6 +131,8 @@ pub struct AppState {
     pub powerclip: crate::edit_tools::PowerClipState,
     /// How the canvas draws objects (not saved).
     pub view_mode: vs_render::ViewMode,
+    /// Full-Screen Preview is on.
+    pub preview: Option<Preview>,
     /// What Edit > Repeat does again.
     pub last_action: Option<Repeatable>,
     /// Last status message (e.g. "Exported …").
@@ -144,6 +146,14 @@ pub struct AppState {
     nodes_owner: Option<ObjectId>,
     window_title: String,
     close_confirmed: bool,
+}
+
+/// Full-Screen Preview's placement of the page.
+#[derive(Clone, Copy, Debug)]
+pub struct Preview {
+    pub viewport: Viewport,
+    /// The window area the page is shown in.
+    pub rect: egui::Rect,
 }
 
 /// Something Edit > Repeat (Cmd+R) can do again to the current selection.
@@ -240,6 +250,7 @@ impl AppState {
             copy_properties: Default::default(),
             powerclip: Default::default(),
             view_mode: Default::default(),
+            preview: None,
             last_action: None,
             status: None,
             clipboard: Vec::new(),
@@ -726,6 +737,13 @@ impl VectorStudioApp {
                 s.view_mode = mode;
                 Ok(())
             }
+            Command::FullScreenPreview => {
+                crate::text_tool::finish(s);
+                tools::cancel(s);
+                s.preview = Some(Preview { viewport: s.viewport, rect: egui::Rect::NOTHING });
+                ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(true));
+                Ok(())
+            }
             Command::ToggleGuidelines => {
                 let _: () = s.prefs.show_guidelines ^= true;
                 Ok(())
@@ -807,6 +825,20 @@ impl VectorStudioApp {
 
     /// Keys the canvas owns. Skipped while a text field has focus.
     fn handle_keys(&mut self, ctx: &egui::Context, commands: &mut Vec<Command>) {
+        if self.state.preview.is_some() {
+            // Any key or click ends Full-Screen Preview, and does nothing else.
+            let leave = ctx.input_mut(|i| {
+                let ends = |e: &egui::Event| matches!(e, egui::Event::Key { pressed: true, .. } | egui::Event::PointerButton { pressed: true, .. });
+                let any = i.events.iter().any(ends);
+                i.events.retain(|e| !matches!(e, egui::Event::Key { .. } | egui::Event::PointerButton { .. }));
+                any
+            });
+            if leave {
+                self.state.preview = None;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
+            }
+            return;
+        }
         if ctx.egui_wants_keyboard_input() {
             return;
         }
@@ -1005,6 +1037,18 @@ impl eframe::App for VectorStudioApp {
             commands.extend(menu.drain());
         }
         self.handle_keys(&ctx, &mut commands);
+
+        if self.state.preview.is_some() {
+            egui::CentralPanel::default()
+                .frame(egui::Frame::new().fill(egui::Color32::BLACK))
+                .show(ui, |ui| {
+                    if let Some(canvas) = self.canvas.as_mut() {
+                        crate::canvas::preview_ui(ui, &mut self.state, canvas);
+                    }
+                });
+            self.settle(&ctx);
+            return;
+        }
 
         let native = self.has_native_menu();
         if !native {

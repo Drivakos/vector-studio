@@ -161,3 +161,43 @@ fn pixels_view_shows_the_page_as_export_resolution_pixels() {
     app.click("Enhanced (view modes)");
     assert!(!rows(&mut app).iter().all(|r| uniform(r)));
 }
+
+/// The colour Full-Screen Preview shows at document point (`x`, `y`).
+fn preview_pixel(app: &mut E2e, x: f64, y: f64) -> [u8; 4] {
+    let preview = app.state().preview.expect("in Full-Screen Preview");
+    let p = preview.viewport.doc_to_screen(vs_core::kurbo::Point::new(x, y));
+    let at = preview.rect.min + egui::vec2(p.x as f32, p.y as f32);
+    let ppp = app.h.ctx.pixels_per_point();
+    let img = app.h.render().expect("render");
+    img.get_pixel((at.x * ppp) as u32, (at.y * ppp) as u32).0
+}
+
+#[test]
+fn full_screen_preview_shows_only_the_page_until_a_key_or_click() {
+    let mut app = E2e::new();
+    let rect = app.draw_rect(100.0, 100.0, 200.0, 200.0);
+    app.click("Swatch Red");
+    app.key(Key::F9);
+    assert!(app.state().preview.is_some());
+    assert!(!app.exists("Pick") && !app.exists("Swatch Red"), "no toolbox or palette");
+    let red = preview_pixel(&mut app, 150.0, 150.0);
+    assert!(red[0] > 200 && red[1] < 60, "the drawing: {red:?}");
+    let paper = preview_pixel(&mut app, 400.0, 600.0);
+    assert_eq!(&paper[..3], &[255, 255, 255], "the page");
+    let desk = app.state().preview.unwrap().rect.min + egui::vec2(3.0, 3.0);
+    let img = app.h.render().unwrap();
+    let ppp = app.h.ctx.pixels_per_point();
+    assert_eq!(&img.get_pixel((desk.x * ppp) as u32, (desk.y * ppp) as u32).0[..3], &[0, 0, 0], "on black");
+
+    app.key(Key::Delete);
+    assert!(app.state().preview.is_none(), "a key ends it");
+    assert!(app.exists("Pick"));
+    assert_eq!(app.ids(), vec![rect], "and does nothing else");
+    assert_eq!(app.selection(), vec![rect]);
+
+    app.menu(&["View", "Full-Screen Preview"]);
+    assert!(app.state().preview.is_some());
+    app.click_doc(500.0, 700.0);
+    assert!(app.state().preview.is_none(), "so does a click");
+    assert_eq!(app.selection(), vec![rect], "which selects nothing");
+}
