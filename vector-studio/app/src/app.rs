@@ -107,6 +107,9 @@ pub struct AppState {
     pub canvas_rect: egui::Rect,
     /// Native file and message dialogs; tests swap in scripted ones.
     pub dialogs: Box<dyn files::Dialogs>,
+    /// The system's printers; tests swap in a scripted one.
+    pub printing: Box<dyn crate::printing::Printing>,
+    pub print: crate::printing::PrintDialog,
     pub renaming_page: Option<(usize, String)>,
     /// The page number in the open Go to Page window (1-based).
     pub go_to_page: Option<usize>,
@@ -213,6 +216,8 @@ impl AppState {
             canvas_size: egui::Vec2::ZERO,
             canvas_rect: egui::Rect::NOTHING,
             dialogs: Box::new(files::NativeDialogs),
+            printing: Box::new(crate::printing::SystemPrinting),
+            print: Default::default(),
             renaming_page: None,
             go_to_page: None,
             page_background: None,
@@ -455,6 +460,10 @@ impl VectorStudioApp {
             Command::SaveAs => Ok(_ = files::save(s, true)),
             Command::Import => {
                 files::import(s);
+                Ok(())
+            }
+            Command::Print => {
+                crate::printing::open(s);
                 Ok(())
             }
             Command::DocumentProperties => {
@@ -1055,6 +1064,7 @@ impl eframe::App for VectorStudioApp {
 
         files::export_window(&ctx, &mut self.state);
         files::document_properties_window(&ctx, &mut self.state);
+        crate::printing::print_window(&ctx, &mut self.state);
         crate::page_dialogs::go_to_page_window(&ctx, &mut self.state);
         crate::page_dialogs::page_background_window(&ctx, &mut self.state);
         crate::edit_tools::copy_properties_window(&ctx, &mut self.state);

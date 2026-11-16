@@ -69,6 +69,7 @@ Names must be unique on screen, or a test cannot tell widgets apart.
 | Save, Save As, Open, command-line file, damaged file, unsaved-changes prompt, Export SVG / PNG / PDF, Import SVG (Cmd+I and menu, placement, undo, bad file), Import PNG (bitmap drawn on the canvas, selection, fit to page) | `files.rs` |
 | Revert (cancel, confirm, only after changes to a saved file), Close and Close All (unsaved prompt, new drawing) | `files.rs` |
 | Document Properties (fields, SVG metadata, saved in the drawing, undo) | `files.rs` |
+| Print (no printer, default printer, copies, page range and current page, the PDF sent; the print queue is scripted) | `files.rs` |
 | Group, Ungroup, Ungroup All, Lock, Unlock, Unlock All | `groups.rs` |
 | Join Curves (Object menu) closing two nearly-touching paths, Convert Outline to Object (Cmd+Shift+Q) and how it renders | `curves.rs` |
 | Crop tool (Enter, Esc, double-click on the selection, canvas result, undo), Knife tool, Eraser tool (size from the property bar, canvas result) | `cutting.rs` |

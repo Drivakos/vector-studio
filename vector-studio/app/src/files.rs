@@ -25,7 +25,8 @@ impl Default for ExportDialog {
     }
 }
 
-fn file_stem(state: &AppState) -> String {
+/// The drawing's name: its file name without the extension, or its title until saved.
+pub fn file_stem(state: &AppState) -> String {
     state
         .file_path
         .as_deref()

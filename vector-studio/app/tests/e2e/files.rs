@@ -276,3 +276,40 @@ fn document_properties_are_saved_exported_and_undoable() {
     assert_eq!(app.doc().properties.keywords, "", "the last field typed is undone");
     assert_eq!(app.doc().properties.author, "A. Person");
 }
+
+#[test]
+fn print_sends_the_chosen_pages_to_the_chosen_printer() {
+    let mut app = E2e::new();
+    app.shortcut(Modifiers::COMMAND, Key::P);
+    assert!(!app.is_enabled("Print"), "no printer to print to");
+    app.click("Cancel");
+    assert!(!app.exists("Copies"));
+
+    {
+        let mut s = app.script.borrow_mut();
+        s.printers = vec!["Office".into(), "Studio".into()];
+        s.default_printer = Some("Studio".into());
+    }
+    app.draw_rect(100.0, 100.0, 200.0, 200.0);
+    app.click("Insert page after");
+    app.click("Insert page after");
+    app.menu(&["File", "Print…"]);
+    app.fill("Copies", "2");
+    app.fill("Page range", "5");
+    assert!(!app.is_enabled("Print"), "there is no page 5");
+    app.fill("Page range", "1, 3");
+    app.click("Print");
+    assert!(!app.exists("Copies"), "the window closes");
+    let (job, pdf) = app.script.borrow().printed[0].clone();
+    assert_eq!((job.printer.as_str(), job.copies, job.title.as_str()), ("Studio", 2, "Untitled-1"), "the default printer");
+    assert!(pdf.starts_with(b"%PDF-") && String::from_utf8_lossy(&pdf).contains("/Count 2"), "pages 1 and 3");
+
+    app.shortcut(Modifiers::COMMAND, Key::P);
+    app.click("Printer");
+    app.click("Office");
+    app.click("Current page");
+    app.click("Print");
+    let (job, pdf) = app.script.borrow().printed[1].clone();
+    assert_eq!((job.printer.as_str(), job.copies), ("Office", 2), "settings are kept between prints");
+    assert!(String::from_utf8_lossy(&pdf).contains("/Count 1"));
+}

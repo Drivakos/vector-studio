@@ -12,6 +12,7 @@ use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};
 use vector_studio::app::AppState;
 use vector_studio::files::{Dialogs, Unsaved};
+use vector_studio::printing::{PrintJob, Printing};
 use vector_studio::{Startup, VectorStudioApp};
 use vs_core::kurbo::{Point, Rect};
 use vs_core::{Document, Object, ObjectId};
@@ -24,6 +25,11 @@ pub struct Script {
     pub unsaved: VecDeque<Unsaved>,
     /// Answers to OK/Cancel questions.
     pub confirms: VecDeque<bool>,
+    /// Printers the scripted print system offers, and its default.
+    pub printers: Vec<String>,
+    pub default_printer: Option<String>,
+    /// Jobs sent to the printer, with the PDF each one printed.
+    pub printed: Vec<(PrintJob, Vec<u8>)>,
     /// Titles of every dialog shown, in order.
     pub shown: Vec<String>,
     pub errors: Vec<String>,
@@ -63,6 +69,20 @@ impl Dialogs for ScriptedDialogs {
     }
 }
 
+struct ScriptedPrinting(Rc<RefCell<Script>>);
+
+impl Printing for ScriptedPrinting {
+    fn printers(&mut self) -> (Vec<String>, Option<String>) {
+        let s = self.0.borrow();
+        (s.printers.clone(), s.default_printer.clone())
+    }
+
+    fn print(&mut self, pdf: &[u8], job: &PrintJob) -> Result<(), String> {
+        self.0.borrow_mut().printed.push((job.clone(), pdf.to_vec()));
+        Ok(())
+    }
+}
+
 pub struct E2e {
     pub h: Harness<'static, VectorStudioApp>,
     pub script: Rc<RefCell<Script>>,
@@ -84,6 +104,7 @@ impl E2e {
             .wgpu()
             .build_eframe(move |cc| VectorStudioApp::new(cc, startup));
         h.state_mut().state_mut().dialogs = Box::new(ScriptedDialogs(script.clone()));
+        h.state_mut().state_mut().printing = Box::new(ScriptedPrinting(script.clone()));
         let mut app = Self { h, script, mods: Modifiers::NONE };
         app.run();
         app

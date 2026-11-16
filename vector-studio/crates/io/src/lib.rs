@@ -520,12 +520,19 @@ fn pdf_image(surface: &mut krilla::surface::Surface<'_>, b: &vs_core::Bitmap, tr
 
 /// Every page of the document as a PDF, 1 unit = 1 pt.
 pub fn document_to_pdf(doc: &Document) -> Result<Vec<u8>, IoError> {
+    let all: Vec<usize> = (0..doc.page_count()).collect();
+    pages_to_pdf(doc, &all)
+}
+
+/// The pages at `indices` (0-based, in that order) as a PDF. Indices past the last page
+/// are skipped.
+pub fn pages_to_pdf(doc: &Document, indices: &[usize]) -> Result<Vec<u8>, IoError> {
     use krilla::page::PageSettings;
     use krilla::paint::FillRule;
 
     let mut pdf = krilla::Document::new();
     pdf.set_metadata(pdf_metadata(&doc.properties));
-    for page in doc.pages() {
+    for page in indices.iter().filter_map(|&i| doc.pages().get(i)) {
         let settings = PageSettings::from_wh(page.size.width as f32, page.size.height as f32)
             .ok_or_else(|| IoError::Pdf("invalid page size".into()))?;
         let mut pdf_page = pdf.start_page_with(settings);
@@ -886,6 +893,16 @@ mod tests {
         }
         let reopened = document_from_str(&document_to_string(&doc).unwrap()).unwrap();
         assert_eq!(reopened.properties, doc.properties);
+    }
+
+    #[test]
+    fn pages_to_pdf_takes_the_pages_asked_for() {
+        let mut doc = sample();
+        doc.insert_page_after(0).unwrap();
+        doc.insert_page_after(1).unwrap();
+        let count = |pdf: Vec<u8>| String::from_utf8_lossy(&pdf).contains("/Count 2");
+        assert!(count(pages_to_pdf(&doc, &[0, 2]).unwrap()));
+        assert!(count(pages_to_pdf(&doc, &[1, 2, 9]).unwrap()), "pages that do not exist are skipped");
     }
 
     #[test]
