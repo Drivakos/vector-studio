@@ -143,6 +143,7 @@ pub struct AppState {
     pub columns: Option<crate::text_menu::ColumnsDialog>,
     /// The list style chosen in the open Bullets and Numbering window.
     pub bullets: Option<Option<vs_core::ListStyle>>,
+    pub drop_cap: Option<crate::text_menu::DropCapDialog>,
     pub save_template: Option<crate::templates::SaveTemplateDialog>,
     pub new_from_template: Option<crate::templates::NewFromTemplateDialog>,
     pub show_document_properties: bool,
@@ -275,6 +276,7 @@ impl AppState {
             show_text_statistics: false,
             columns: None,
             bullets: None,
+            drop_cap: None,
             save_template: None,
             new_from_template: None,
             show_document_properties: false,
@@ -498,6 +500,7 @@ impl VectorStudioApp {
             Command::ChangeCase => (!crate::text_menu::case_targets(state).is_empty(), None),
             Command::Columns => (!crate::text_menu::column_targets(state).is_empty(), None),
             Command::Bullets => (!crate::text_menu::list_targets(state).is_empty(), None),
+            Command::DropCap => (!crate::text_menu::column_targets(state).is_empty(), None),
             Command::StraightenText => (doc.can_straighten_text(&state.selection), None),
             Command::ClipPlaceInside => (doc.can_place_inside(&state.selection), None),
             Command::ClipExtract => (doc.can_extract_contents(&state.selection), None),
@@ -565,6 +568,11 @@ impl VectorStudioApp {
             Command::Columns => {
                 crate::text_tool::finish(s);
                 crate::text_menu::open_columns(s);
+                Ok(())
+            }
+            Command::DropCap => {
+                crate::text_tool::finish(s);
+                crate::text_menu::open_drop_cap(s);
                 Ok(())
             }
             Command::Bullets => {
@@ -1299,6 +1307,7 @@ impl eframe::App for VectorStudioApp {
         crate::text_menu::statistics_window(&ctx, &mut self.state);
         crate::text_menu::columns_window(&ctx, &mut self.state);
         crate::text_menu::bullets_window(&ctx, &mut self.state);
+        crate::text_menu::drop_cap_window(&ctx, &mut self.state);
         crate::templates::new_window(&ctx, &mut self.state);
         crate::edit_tools::copy_properties_window(&ctx, &mut self.state);
         self.settle(&ctx);

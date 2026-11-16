@@ -481,3 +481,29 @@ fn bullets_and_numbering_mark_each_paragraph() {
     app.shortcut(Modifiers::COMMAND, Key::Z);
     assert_eq!(text(&app, 0).list, Some(vs_core::ListStyle::Numbered), "undo");
 }
+
+#[test]
+fn drop_cap_enlarges_the_first_letter_beside_the_first_lines() {
+    let mut app = E2e::new();
+    app.key(Key::F8);
+    app.drag_doc((100.0, 100.0), (300.0, 400.0));
+    app.type_text("Many upon a time there was a drop cap beside the words");
+    app.key(Key::Escape);
+    let first = app.objects()[0].world_path().bounding_box();
+
+    app.menu(&["Text", "Drop Cap…"]);
+    app.click("Use drop cap");
+    assert_eq!(app.value("Lines dropped"), "3");
+    app.click("OK (Drop Cap)");
+    let t = text(&app, 0);
+    assert_eq!(t.drop_cap, 3);
+    let l = t.layout();
+    assert!(l.lines[0].carets[1] > t.size && (l.lines[2].carets[0] - l.lines[0].carets[1]).abs() < 1e-9, "three lines beside it");
+    assert!(any_dark(&mut app, 100.0, 100.0 + l.lines[1].baseline - 5.0, 112.0, 100.0 + l.lines[1].baseline + 5.0), "the big letter fills the second line's height");
+    assert!(app.objects()[0].world_path().bounding_box() != first);
+
+    app.menu(&["Text", "Drop Cap…"]);
+    app.click("Use drop cap");
+    app.click("OK (Drop Cap)");
+    assert_eq!(text(&app, 0).drop_cap, 0, "off again");
+}

@@ -92,6 +92,7 @@ Names must be unique on screen, or a test cannot tell widgets apart.
 | Show Nonprinting Characters (off by default, dot in a space, ¶ at the end) | `text.rs` |
 | Columns (flow into the next column, gutter, no overflow, undo) | `text.rs` |
 | Bullets and Numbering (bullet drawn, words indented, numbers, none, undo) | `text.rs` |
+| Drop Cap (lines beside it, letter drawn large, off again) | `text.rs` |
 | Find and Replace: Cmd+F, Enter, Find next across pages and round, Match case, not found, Replace one, Replace all, undo | `find.rs` |
 | Fit Text to Path: along an ellipse, pixels on the curve, edit in Properties, Straighten Text | `text.rs` |
 | Grid (toolbar, menu, drawn on the canvas, spacing in the docker), guidelines (dragged from both rulers, drawn, moved with Pick, removed on the ruler, undo, hidden, Select All Guidelines, click and Shift-click selection, Delete), snapping to pixels, grid, guidelines, objects and page, alignment guides (move and draw), dynamic guides (draw), Snap To on/off | `snapping.rs` |

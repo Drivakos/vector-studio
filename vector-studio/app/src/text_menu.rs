@@ -1,4 +1,5 @@
-//! Text menu windows: Change Case, Text Statistics, Columns, and Bullets and Numbering.
+//! Text menu windows: Change Case, Text Statistics, Columns, Bullets and Numbering, and
+//! Drop Cap.
 
 use vs_core::text_tools::{Case, TextStats, change_case};
 use vs_core::{ObjectId, Shape};
@@ -239,5 +240,64 @@ pub fn bullets_window(ctx: &egui::Context, state: &mut AppState) {
         }
     } else if open && !cancel {
         state.bullets = Some(list);
+    }
+}
+
+/// The open Drop Cap window: whether to use one, and how many lines it drops.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DropCapDialog {
+    on: bool,
+    lines: u32,
+}
+
+pub fn open_drop_cap(state: &mut AppState) {
+    let current = state.selected_objects().find_map(|o| match &o.shape {
+        Shape::Text(t) if t.is_paragraph() => Some(t.drop_cap),
+        _ => None,
+    });
+    let lines = current.unwrap_or(0);
+    state.drop_cap = Some(DropCapDialog { on: lines >= 2, lines: if lines >= 2 { lines } else { 3 } });
+}
+
+/// The Drop Cap window: on or off and the lines dropped, for the selected paragraph
+/// text. OK applies. A drop cap replaces bullets or numbers.
+pub fn drop_cap_window(ctx: &egui::Context, state: &mut AppState) {
+    let Some(mut d) = state.drop_cap.take() else { return };
+    let mut open = true;
+    let (mut ok, mut cancel) = (false, false);
+    egui::Window::new("Drop Cap")
+        .collapsible(false)
+        .resizable(false)
+        .open(&mut open)
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .show(ctx, |ui| {
+            crate::a11y::add(ui, egui::Checkbox::new(&mut d.on, "Use drop cap"), "Use drop cap");
+            ui.add_enabled_ui(d.on, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Lines dropped:");
+                    crate::a11y::add(ui, egui::DragValue::new(&mut d.lines).range(2..=10).speed(0.1), "Lines dropped");
+                });
+            });
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                ok = crate::a11y::window_button(ui, true, "OK", "Drop Cap").clicked();
+                cancel = crate::a11y::window_button(ui, true, "Cancel", "Drop Cap").clicked();
+            });
+        });
+    if ok {
+        let ids = column_targets(state);
+        let page = state.doc.active_page_mut();
+        for id in ids {
+            if let Some(obj) = page.object_mut(id)
+                && let Shape::Text(t) = &mut obj.shape
+            {
+                t.drop_cap = if d.on { d.lines } else { 0 };
+                if d.on {
+                    t.list = None;
+                }
+            }
+        }
+    } else if open && !cancel {
+        state.drop_cap = Some(d);
     }
 }

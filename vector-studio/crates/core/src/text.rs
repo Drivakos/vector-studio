@@ -104,6 +104,14 @@ pub struct Text {
     /// Bullets or numbers before each paragraph. Not on text fitted to a path.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub list: Option<ListStyle>,
+    /// Paragraph text without a list: the first letter drops this many lines (2 or
+    /// more) and the first lines wrap beside it; 0 for none.
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub drop_cap: u32,
+}
+
+fn is_zero_u32(n: &u32) -> bool {
+    *n == 0
 }
 
 fn one() -> u32 {
@@ -136,6 +144,7 @@ impl Text {
             columns: 1,
             gutter: 0.0,
             list: None,
+            drop_cap: 0,
         }
     }
 
@@ -200,7 +209,7 @@ impl Text {
     pub fn to_path(&self) -> BezPath {
         let frame = self.frame.map(|f| (f.width.to_bits(), f.height.to_bits()));
         let guide = self.on_path.as_ref().map(BezPath::to_svg);
-        let columns = (self.columns, self.gutter.to_bits(), self.list);
+        let columns = (self.columns, self.gutter.to_bits(), self.list, self.drop_cap);
         let key = (self.content.clone(), self.family.clone(), self.style.clone(), self.size.to_bits(), self.align, frame, guide, columns);
         let cache = PATHS.get_or_init(Mutex::default);
         if let Some(path) = cache.lock().expect("text cache").get(&key) {
@@ -216,7 +225,7 @@ impl Text {
     }
 }
 
-type PathKey = (String, String, String, u64, TextAlign, Option<(u64, u64)>, Option<String>, (u32, u64, Option<ListStyle>));
+type PathKey = (String, String, String, u64, TextAlign, Option<(u64, u64)>, Option<String>, (u32, u64, Option<ListStyle>, u32));
 static PATHS: OnceLock<Mutex<HashMap<PathKey, BezPath>>> = OnceLock::new();
 
 /// One laid-out line.
@@ -340,12 +349,28 @@ fn layout(text: &Text) -> TextLayout {
             widest + text.size * 0.5
         }
     };
+    // Drop cap: the first letter of the first paragraph, `drop_cap` lines tall, its top at
+    // the first line's capitals and its foot on the last dropped line's baseline.
+    let drop = (text.drop_cap >= 2 && frame.is_some() && text.list.is_none())
+        .then(|| text.content.chars().next().filter(|c| *c != '\n'))
+        .flatten()
+        .map(|ch| {
+            let n = text.drop_cap as usize;
+            let cap_height = metrics.cap_height.map(f64::from).filter(|h| *h > 0.0).unwrap_or(ascent * 0.7);
+            let cap_size = text.size * ((n - 1) as f64 * line_height + cap_height) / cap_height;
+            let gid = charmap.map(ch).unwrap_or(GlyphId::NOTDEF);
+            let advance = font.glyph_metrics(Size::new(cap_size as f32), location).advance_width(gid).unwrap_or(0.0);
+            DropCap { gid, size: cap_size, indent: f64::from(advance) + text.size * 0.2, lines: n }
+        });
     let mut number = 0;
     let mut path = BezPath::new();
     let mut lines = Vec::new();
     let mut overflow = false;
     let mut start = 0;
-    for paragraph in text.content.split('\n') {
+    for (para, paragraph) in text.content.split('\n').enumerate() {
+        let drop = drop.as_ref().filter(|_| para == 0);
+        // How far line `k` of this paragraph is pushed right by the drop cap.
+        let beside = |k: usize| drop.filter(|d| k < d.lines).map_or(0.0, |d| d.indent);
         let glyphs: Vec<(char, GlyphId, f64)> = paragraph
             .chars()
             .map(|ch| {
@@ -354,8 +379,18 @@ fn layout(text: &Text) -> TextLayout {
             })
             .collect();
         let advance: Vec<f64> = glyphs.iter().map(|g| g.2).collect();
+        let chars: Vec<char> = glyphs.iter().map(|g| g.0).collect();
         let ranges = match frame {
-            Some(_) => wrap(&glyphs.iter().map(|g| g.0).collect::<Vec<_>>(), &advance, (columns[0].1 - indent).max(1.0)),
+            // The dropped letter stands beside the lines, so they wrap without it.
+            Some(_) if drop.is_some() => {
+                let mut r: Vec<_> = wrap_with(&chars[1..], &advance[1..], |k| (columns[0].1 - indent - beside(k)).max(1.0))
+                    .into_iter()
+                    .map(|r| r.start + 1..r.end + 1)
+                    .collect();
+                r[0].start = 0;
+                r
+            }
+            Some(_) => wrap(&chars, &advance, (columns[0].1 - indent).max(1.0)),
             None => std::iter::once(0..glyphs.len()).collect(),
         };
         let marked = text.list.is_some() && !glyphs.is_empty();
@@ -375,9 +410,12 @@ fn layout(text: &Text) -> TextLayout {
                 baseline = first_baseline;
             }
             row += 1;
-            let (left, col_width) = columns[column];
-            let (left, col_width) = (left + indent, col_width - indent);
-            let chars = &glyphs[range.clone()];
+            let (column_left, col_width) = columns[column];
+            let (left, col_width) = (column_left + indent + beside(k), col_width - indent - beside(k));
+            let line_chars = &glyphs[range.clone()];
+            // The dropped letter is drawn on its own; the line's words follow it.
+            let cap_here = drop.is_some() && k == 0 && !line_chars.is_empty();
+            let chars = if cap_here { &line_chars[1..] } else { line_chars };
             // Trailing spaces hang past the edge, so they do not count for alignment.
             let shown = chars.len() - chars.iter().rev().take_while(|g| g.0 == ' ').count();
             let width: f64 = chars[..shown].iter().map(|g| g.2).sum();
@@ -405,6 +443,14 @@ fn layout(text: &Text) -> TextLayout {
             }
             let mut x = x;
             let mut carets = vec![x];
+            if cap_here && let Some(d) = drop {
+                carets = vec![column_left, x];
+                let foot = baseline + (d.lines - 1) as f64 * line_height;
+                if !hidden && let Some(glyph) = outlines.get(d.gid) {
+                    let mut pen = Pen { path: &mut path, origin: Point::new(column_left, foot) };
+                    let _ = glyph.draw(DrawSettings::unhinted(Size::new(d.size as f32), location), &mut pen);
+                }
+            }
             for (_, gid, advance) in chars {
                 if !hidden && let Some(glyph) = outlines.get(*gid) {
                     let mut pen = Pen { path: &mut path, origin: Point::new(x, baseline) };
@@ -503,7 +549,21 @@ fn layout_on_path(text: &Text, guide: &BezPath, font: &FontRef, size: Size, asce
 
 /// Split one paragraph into lines no wider than `width`: break after the last space that
 /// fits, or inside a word longer than a line. Spaces at a break stay on the line before.
+/// The drop cap of paragraph text: its glyph and size, how far the lines beside it are
+/// pushed right, and how many lines it drops.
+struct DropCap {
+    gid: GlyphId,
+    size: f64,
+    indent: f64,
+    lines: usize,
+}
+
 fn wrap(chars: &[char], advance: &[f64], width: f64) -> Vec<std::ops::Range<usize>> {
+    wrap_with(chars, advance, |_| width)
+}
+
+/// Like [`wrap`], with line `k` (from 0) `width(k)` wide.
+fn wrap_with(chars: &[char], advance: &[f64], width: impl Fn(usize) -> f64) -> Vec<std::ops::Range<usize>> {
     let mut lines = Vec::new();
     let mut start = 0;
     let mut used = 0.0;
@@ -519,7 +579,7 @@ fn wrap(chars: &[char], advance: &[f64], width: f64) -> Vec<std::ops::Range<usiz
         }
         // Width of the line without its trailing spaces if this character joins it.
         let trailing: f64 = (start..i).rev().take_while(|k| chars[*k] == ' ').map(|k| advance[k]).sum();
-        if i > start && used - trailing + advance[i] > width + 1e-9 {
+        if i > start && used - trailing + advance[i] > width(lines.len()) + 1e-9 {
             let end = last_break.filter(|b| *b > start).unwrap_or(i);
             lines.push(start..end);
             start = end;
@@ -939,6 +999,32 @@ mod tests {
         let mut a = text("x");
         a.list = Some(ListStyle::Bullet);
         assert!(a.layout().bounds().x0 < 0.0 + 1e-9 && a.layout().lines[0].carets[0] > 0.0);
+    }
+
+    #[test]
+    fn a_drop_cap_spans_lines_and_the_first_lines_wrap_beside_it() {
+        let words = "Once upon a time there was a little drop cap that sat beside the words";
+        let plain = paragraph(words, 200.0, 400.0);
+        let mut t = plain.clone();
+        t.drop_cap = 3;
+        let l = t.layout();
+        assert!(l.lines.len() > plain.layout().lines.len() - 1);
+        assert_eq!(l.lines[0].carets[0], 0.0, "the caret before the drop cap is at the left edge");
+        let beside = l.lines[0].carets[1];
+        assert!(beside > t.size, "the words start past the big letter: {beside}");
+        assert!((l.lines[1].carets[0] - beside).abs() < 1e-9 && (l.lines[2].carets[0] - beside).abs() < 1e-9, "three lines beside it");
+        assert_eq!(l.lines[3].carets[0], 0.0, "the fourth line is back at the edge");
+        // The letter reaches down to the third baseline.
+        let cap = t.to_path().bounding_box();
+        assert!(cap.y1 > l.lines[2].baseline - 1.0, "{cap:?}");
+        let count: usize = l.lines.iter().map(|x| x.carets.len() - 1).sum();
+        assert_eq!(count, words.chars().count(), "every character is on a line");
+        // Not with a list, nor on artistic text.
+        t.list = Some(ListStyle::Bullet);
+        assert!(t.layout().lines[0].carets[0] > 0.0 && t.layout().lines[1].carets[0] == t.layout().lines[0].carets[0]);
+        let mut a = text("Big");
+        a.drop_cap = 3;
+        assert_eq!(a.layout(), text("Big").layout());
     }
 
     #[test]
