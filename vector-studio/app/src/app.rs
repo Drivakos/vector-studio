@@ -721,6 +721,13 @@ impl VectorStudioApp {
                 crate::page_dialogs::open_go_to_page(s);
                 Ok(())
             }
+            Command::InsertPageNumber => {
+                crate::text_tool::finish(s);
+                let font = s.tools.settings.text.clone();
+                s.selection = vec![s.doc.insert_page_number(&font)];
+                s.marquee_selection = None;
+                Ok(())
+            }
             Command::ToggleDocker(kind) => {
                 s.dockers.toggle(kind);
                 Ok(())
@@ -873,6 +880,7 @@ impl VectorStudioApp {
         }
         s.doc.settle_layers();
         s.doc.sync_clones();
+        s.doc.sync_page_numbers();
         let page = s.doc.active_page();
         s.selection.retain(|id| page.object(*id).is_some_and(|o| page.is_selectable(o)));
         let target = match s.selection.as_slice() {

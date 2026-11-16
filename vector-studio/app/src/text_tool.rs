@@ -53,6 +53,10 @@ pub fn press(state: &mut AppState, p: Point, tolerance: f64) {
     let hit = text_at(state, p, tolerance);
     let edit = match hit {
         Some((id, transform)) => {
+            // Typing into a page number makes it plain text.
+            if let Some(t) = text_mut(state, id) {
+                t.field = None;
+            }
             let caret = text_of(state, id).map_or(0, |(t, _)| t.layout().index_at(transform.inverse() * p));
             TextEdit { id, caret }
         }

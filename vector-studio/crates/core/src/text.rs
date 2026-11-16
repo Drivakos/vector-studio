@@ -44,6 +44,13 @@ impl TextAlign {
     }
 }
 
+/// What a text field shows. Its text is kept up to date by the document.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum TextField {
+    /// The number of the page the text is on.
+    PageNumber,
+}
+
 /// Text. Artistic text (no frame): in local space the first line's baseline runs along
 /// y = 0, and x = 0 is where lines start (left), meet in the middle (center) or end
 /// (right). Paragraph text: the frame's top-left corner is the origin, and lines are
@@ -64,6 +71,10 @@ pub struct Text {
     /// sit on it, aligned to its start, middle or end by `align`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub on_path: Option<BezPath>,
+    /// A field: the content is filled in by the document (see
+    /// [`crate::Document::sync_page_numbers`]). Typing into it makes it plain text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field: Option<TextField>,
 }
 
 impl Text {
@@ -80,6 +91,7 @@ impl Text {
             align: TextAlign::Left,
             frame: None,
             on_path: None,
+            field: None,
         }
     }
 

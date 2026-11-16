@@ -678,6 +678,7 @@ impl Document {
         }
         self.active_page = self.active_page.min(self.pages.len() - 1);
         self.settle_layers();
+        self.sync_page_numbers();
         let max = self
             .pages
             .iter()

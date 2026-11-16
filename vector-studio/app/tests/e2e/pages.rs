@@ -120,3 +120,41 @@ fn layout_menu_renames_the_page_and_goes_to_a_page() {
     app.click("Cancel");
     assert_eq!(active(&app), 2);
 }
+
+fn text_content(app: &E2e, i: usize) -> String {
+    match &app.objects()[i].shape {
+        vs_core::Shape::Text(t) => t.content.clone(),
+        other => panic!("not text: {other:?}"),
+    }
+}
+
+#[test]
+fn page_numbers_show_and_follow_their_page() {
+    let mut app = E2e::new();
+    app.click("Insert page after");
+    app.menu(&["Layout", "Insert Page Number"]);
+    assert_eq!(app.objects().len(), 1);
+    assert_eq!(app.selection(), vec![app.objects()[0].id], "the new page number is selected");
+    assert_eq!(text_content(&app, 0), "2");
+    let size = app.doc().active_page().size;
+    let b = app.bounds(0);
+    assert!((b.center().x - size.width / 2.0).abs() < 1.0 && b.y1 > size.height - 40.0, "centred at the bottom: {b:?}");
+
+    app.click("Insert page before");
+    app.click("Next page");
+    assert_eq!(text_content(&app, 0), "3", "renumbered when a page is added before it");
+
+    // Typing into it makes it plain text, which stays as typed.
+    app.key(Key::F8);
+    let c = app.bounds(0).center();
+    app.click_doc(c.x, c.y);
+    app.type_text("0");
+    app.key(Key::Escape);
+    let typed = text_content(&app, 0);
+    assert_eq!(typed.len(), 2, "{typed}");
+    app.click("First page");
+    app.menu(&["Layout", "Delete Page"]);
+    app.click("Last page");
+    assert_eq!(app.doc().active_page_index(), 1);
+    assert_eq!(text_content(&app, 0), typed, "no longer a page number");
+}
