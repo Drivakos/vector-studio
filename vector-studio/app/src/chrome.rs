@@ -149,6 +149,17 @@ pub fn property_bar_ui(ui: &mut egui::Ui, state: &mut AppState, out: &mut Vec<Co
                     state.tools.settings.spiral_turns = turns as u32;
                 }
             }
+            Tool::GraphPaper => {
+                let s = &mut state.tools.settings;
+                let mut columns = f64::from(s.graph_columns);
+                if number_row(ui, Some(ICON_VIEW_COLUMN), "Graph paper columns", &mut columns, "", 1.0..=99.0, 1.0, 0) {
+                    s.graph_columns = columns as u32;
+                }
+                let mut rows = f64::from(s.graph_rows);
+                if number_row(ui, Some(ICON_TABLE_ROWS), "Graph paper rows", &mut rows, "", 1.0..=99.0, 1.0, 0) {
+                    s.graph_rows = rows as u32;
+                }
+            }
             Tool::Crop => {
                 let pending = state.tools.crop.is_some();
                 if icon_button(ui, ICON_CROP, "Crop", pending).clicked() {

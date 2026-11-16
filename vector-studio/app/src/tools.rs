@@ -46,11 +46,14 @@ pub struct ToolSettings {
     pub eraser_size: f64,
     /// How many times a new spiral turns.
     pub spiral_turns: u32,
+    /// Graph Paper: cells across and down.
+    pub graph_columns: u32,
+    pub graph_rows: u32,
 }
 
 impl Default for ToolSettings {
     fn default() -> Self {
-        Self { polygon_sides: 5, star_points: 5, star_inner_ratio: 0.5, text: vs_core::Text::new(""), eraser_size: DEFAULT_ERASER_SIZE, spiral_turns: 4 }
+        Self { polygon_sides: 5, star_points: 5, star_inner_ratio: 0.5, text: vs_core::Text::new(""), eraser_size: DEFAULT_ERASER_SIZE, spiral_turns: 4, graph_columns: 4, graph_rows: 3 }
     }
 }
 
@@ -97,6 +100,8 @@ enum Drag {
     FirstEdge { start: Point },
     /// Spiral tool: dragging out its box.
     Spiral { start: Point },
+    /// Graph Paper tool: dragging out the grid's box.
+    GraphPaper { start: Point },
 }
 
 /// A Bézier or Pen path being drawn, in document space.
@@ -186,7 +191,7 @@ pub fn is_implemented(tool: Tool) -> bool {
         || matches!(tool, Tool::Pick | Tool::FreehandPick | Tool::FreeTransform | Tool::Shape | Tool::Zoom | Tool::Pan | Tool::Freehand | Tool::Bezier | Tool::Pen | Tool::Text)
         || matches!(tool, Tool::InteractiveFill | Tool::Transparency | Tool::ColorEyedropper | Tool::AttributesEyedropper)
         || matches!(tool, Tool::Crop | Tool::Knife | Tool::VirtualSegmentDelete | Tool::Eraser)
-        || matches!(tool, Tool::TwoPointLine | Tool::Polyline | Tool::BSpline | Tool::Spiral)
+        || matches!(tool, Tool::TwoPointLine | Tool::Polyline | Tool::BSpline | Tool::Spiral | Tool::GraphPaper)
         || is_three_point(tool)
 }
 
@@ -292,7 +297,7 @@ fn snapper(state: &AppState, view: &View, exclude: &[ObjectId]) -> vs_core::Snap
 
 /// Tools whose every click and drag position snaps.
 fn snaps_pointer(tool: Tool) -> bool {
-    is_shape_tool(tool) || is_three_point(tool) || matches!(tool, Tool::Bezier | Tool::Pen | Tool::Text | Tool::TwoPointLine | Tool::Polyline | Tool::BSpline | Tool::Spiral)
+    is_shape_tool(tool) || is_three_point(tool) || matches!(tool, Tool::Bezier | Tool::Pen | Tool::Text | Tool::TwoPointLine | Tool::Polyline | Tool::BSpline | Tool::Spiral | Tool::GraphPaper)
         || matches!(tool, Tool::InteractiveFill | Tool::Transparency | Tool::ColorEyedropper | Tool::AttributesEyedropper)
 }
 
@@ -338,6 +343,7 @@ fn press(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers, dou
         }
         Tool::TwoPointLine => state.tools.drag = Some(Drag::Line { start: p }),
         Tool::Spiral => state.tools.drag = Some(Drag::Spiral { start: p }),
+        Tool::GraphPaper => state.tools.drag = Some(Drag::GraphPaper { start: p }),
         t if is_three_point(t) => match state.tools.first_edge.take() {
             Some((a, b)) => finish_three_point(state, a, b, p),
             None => state.tools.drag = Some(Drag::FirstEdge { start: p }),
@@ -1117,6 +1123,21 @@ fn release(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers) {
                 state.selection = vec![id];
             }
         }
+        Drag::GraphPaper { start } => {
+            let rect = creation_rect(start, p, mods);
+            if rect.width() * view.zoom >= 2.0 && rect.height() * view.zoom >= 2.0 {
+                let s = &state.tools.settings;
+                let cells = vs_core::construct::graph_paper(rect, s.graph_columns, s.graph_rows);
+                let ids: Vec<ObjectId> = cells
+                    .into_iter()
+                    .map(|rect| state.doc.add_object(Shape::Rectangle { rect, corner_radius: 0.0 }, Style::new_object()))
+                    .collect();
+                state.selection = match state.doc.group_objects(&ids) {
+                    Some(group) => vec![group],
+                    None => ids,
+                };
+            }
+        }
         Drag::TextFrame { start } => {
             let frame = kurbo::Rect::from_points(start, p);
             if frame.width() * view.zoom > DRAG_START && frame.height() * view.zoom > DRAG_START {
@@ -1447,6 +1468,15 @@ pub fn draw_overlay(painter: &egui::Painter, state: &AppState, canvas: Rect) {
                 path_to_screen(painter, &path, &view, thin);
             }
         }
+        Some(Drag::GraphPaper { start }) => {
+            if let Some(p) = state.tools.pointer {
+                let mods = painter.ctx().input(|i| i.modifiers);
+                let s = &state.tools.settings;
+                for cell in vs_core::construct::graph_paper(creation_rect(*start, p, mods), s.graph_columns, s.graph_rows) {
+                    painter.rect_stroke(Rect::from_two_pos(view.screen(cell.origin()), view.screen(Point::new(cell.x1, cell.y1))), 0.0, thin, egui::StrokeKind::Middle);
+                }
+            }
+        }
         Some(Drag::TextFrame { start }) => {
             if let Some(p) = state.tools.pointer {
                 let r = Rect::from_two_pos(view.screen(*start), view.screen(p));
@@ -1596,6 +1626,7 @@ pub fn hint(state: &AppState) -> String {
         Tool::Polyline => "Click to add straight segments · double-click, Enter or the first node finishes".into(),
         Tool::BSpline => "Click to place control points · double-click or Enter finishes; clicking the first point closes it".into(),
         Tool::Spiral => "Drag to draw a spiral · turns are on the property bar".into(),
+        Tool::GraphPaper => "Drag to draw a grid of rectangles · columns and rows are on the property bar · Ctrl/Cmd keeps the grid square".into(),
         t if is_three_point(t) && state.tools.first_edge.is_some() => "Click to set the third point · Esc cancels".into(),
         Tool::ThreePointCurve => "Drag from start to end, then click to set the curve".into(),
         Tool::ThreePointRectangle => "Drag one side, then click to set the height".into(),

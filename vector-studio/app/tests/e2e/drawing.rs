@@ -125,3 +125,23 @@ fn escape_finishes_a_path_then_clears_the_selection_then_picks_the_pick_tool() {
     app.key(Key::Escape);
     assert_eq!(app.state().tool, vector_studio::toolbox::Tool::Pick, "third Esc picks the Pick tool");
 }
+
+#[test]
+fn graph_paper_draws_a_group_of_equal_rectangles() {
+    let mut app = E2e::new();
+    app.flyout_tool("Polygon", "Graph Paper");
+    assert_eq!(app.value("Graph paper columns"), "4");
+    assert_eq!(app.value("Graph paper rows"), "3");
+    app.fill("Graph paper columns", "5");
+    app.fill("Graph paper rows", "2");
+    app.drag_doc((100.0, 100.0), (350.0, 200.0));
+    assert_eq!(app.objects().len(), 1, "one group");
+    let group = &app.objects()[0];
+    let vs_core::Shape::Group { children } = &group.shape else { panic!("a group: {:?}", group.shape) };
+    assert_eq!(children.len(), 10);
+    assert!(children.iter().all(|c| matches!(c.shape, vs_core::Shape::Rectangle { .. })));
+    let first = children[0].world_bounds();
+    assert!(crate::support::rect_close(first, 100.0, 100.0, 150.0, 150.0), "{first:?}");
+    assert_eq!(app.selection(), vec![group.id]);
+    assert!(crate::support::rect_close(app.bounds(0), 100.0, 100.0, 350.0, 200.0), "{:?}", app.bounds(0));
+}

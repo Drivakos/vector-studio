@@ -87,9 +87,34 @@ pub fn spiral(rect: Rect, turns: u32) -> BezPath {
     path
 }
 
+/// Graph Paper: `rect` split into `columns` × `rows` equal cells, row by row from the
+/// top left.
+pub fn graph_paper(rect: Rect, columns: u32, rows: u32) -> Vec<Rect> {
+    let (columns, rows) = (columns.max(1), rows.max(1));
+    let (w, h) = (rect.width() / f64::from(columns), rect.height() / f64::from(rows));
+    (0..rows)
+        .flat_map(|r| (0..columns).map(move |c| (c, r)))
+        .map(|(c, r)| {
+            let x0 = rect.x0 + f64::from(c) * w;
+            let y0 = rect.y0 + f64::from(r) * h;
+            Rect::new(x0, y0, x0 + w, y0 + h)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn graph_paper_cells_tile_the_rectangle() {
+        let cells = graph_paper(Rect::new(10.0, 20.0, 50.0, 50.0), 4, 3);
+        assert_eq!(cells.len(), 12);
+        assert_eq!(cells[0], Rect::new(10.0, 20.0, 20.0, 30.0));
+        assert_eq!(cells[5], Rect::new(20.0, 30.0, 30.0, 40.0), "second row, second column");
+        assert_eq!(cells[11], Rect::new(40.0, 40.0, 50.0, 50.0));
+        assert_eq!(graph_paper(Rect::new(0.0, 0.0, 1.0, 1.0), 0, 0).len(), 1);
+    }
     use kurbo::{ParamCurve, Shape as _};
 
     #[test]
