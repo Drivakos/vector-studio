@@ -1,4 +1,4 @@
-//! Windows of the Layout menu: Go to Page and Page Background.
+//! Windows of the Layout menu: Go to Page, Page Background and Document Options.
 
 use vs_core::{Background, Rgba};
 
@@ -102,5 +102,130 @@ pub fn page_background_window(ctx: &egui::Context, state: &mut AppState) {
     state.doc.background = background;
     if open && !done {
         state.page_background = Some(dialog);
+    }
+}
+
+/// The open Document Options window: settings as edited, in the units chosen in it,
+/// applied on OK.
+#[derive(Clone, Debug)]
+pub struct DocumentOptionsDialog {
+    unit: vs_core::Unit,
+    /// Page width and height, grid spacing, nudge, duplicate offset x and y, in `unit`.
+    width: f64,
+    height: f64,
+    all_pages: bool,
+    grid: f64,
+    nudge: f64,
+    duplicate: [f64; 2],
+}
+
+impl DocumentOptionsDialog {
+    /// Change the units the window shows, converting what was typed.
+    fn set_unit(&mut self, unit: vs_core::Unit) {
+        let k = self.unit.to_points(1.0) / unit.to_points(1.0);
+        let [dx, dy] = &mut self.duplicate;
+        for v in [&mut self.width, &mut self.height, &mut self.grid, &mut self.nudge, dx, dy] {
+            *v *= k;
+        }
+        self.unit = unit;
+    }
+}
+
+pub fn open_document_options(state: &mut AppState) {
+    let unit = state.doc.display_unit;
+    let size = state.doc.active_page().size;
+    let p = &state.prefs;
+    state.document_options = Some(DocumentOptionsDialog {
+        unit,
+        width: unit.from_points(size.width),
+        height: unit.from_points(size.height),
+        all_pages: false,
+        grid: unit.from_points(p.grid_spacing),
+        nudge: unit.from_points(p.nudge),
+        duplicate: p.duplicate_offset.map(|v| unit.from_points(v)),
+    });
+}
+
+fn apply_document_options(state: &mut AppState, d: &DocumentOptionsDialog) {
+    let pt = |v: f64| d.unit.to_points(v);
+    state.doc.display_unit = d.unit;
+    let size = vs_core::kurbo::Size::new(pt(d.width), pt(d.height));
+    if d.all_pages {
+        for i in 0..state.doc.page_count() {
+            if let Some(page) = state.doc.page_mut(i) {
+                page.size = size;
+            }
+        }
+    } else {
+        state.doc.active_page_mut().size = size;
+    }
+    state.prefs.grid_spacing = pt(d.grid);
+    state.prefs.nudge = pt(d.nudge);
+    state.prefs.duplicate_offset = d.duplicate.map(pt);
+}
+
+/// Layout > Document Options: units, page size, grid spacing, nudge and duplicate
+/// distance in one window. OK applies them, Cancel leaves everything as it was.
+pub fn document_options_window(ctx: &egui::Context, state: &mut AppState) {
+    let Some(mut d) = state.document_options.take() else { return };
+    let mut open = true;
+    let (mut ok, mut cancel) = (false, false);
+    egui::Window::new("Document Options")
+        .collapsible(false)
+        .resizable(false)
+        .open(&mut open)
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .show(ctx, |ui| {
+            egui::Grid::new("document_options_grid").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
+                ui.label("Units:");
+                let mut unit = d.unit;
+                let combo = egui::ComboBox::from_id_salt("document_options_units").selected_text(unit.label()).height(400.0).show_ui(ui, |ui| {
+                    for u in vs_core::Unit::ALL {
+                        ui.selectable_value(&mut unit, u, u.label());
+                    }
+                });
+                crate::a11y::name(&combo.response, "Units (document options)");
+                if unit != d.unit {
+                    d.set_unit(unit);
+                }
+                ui.end_row();
+                let unit = d.unit;
+                let field = |ui: &mut egui::Ui, v: &mut f64, min: f64, name: &str| {
+                    let drag = egui::DragValue::new(v).speed(unit.step() / 2.0).range(min..=f64::MAX).max_decimals(unit.decimals()).suffix(format!(" {}", unit.suffix()));
+                    crate::a11y::add(ui, drag, name);
+                };
+                ui.label("Page size:");
+                ui.horizontal(|ui| {
+                    field(ui, &mut d.width, unit.from_points(1.0), "Page width (document options)");
+                    ui.label("×");
+                    field(ui, &mut d.height, unit.from_points(1.0), "Page height (document options)");
+                });
+                ui.end_row();
+                ui.label("");
+                crate::a11y::add(ui, egui::Checkbox::new(&mut d.all_pages, "Apply to all pages"), "Apply to all pages");
+                ui.end_row();
+                ui.label("Grid spacing:");
+                field(ui, &mut d.grid, unit.from_points(0.5), "Grid spacing (document options)");
+                ui.end_row();
+                ui.label("Nudge:");
+                field(ui, &mut d.nudge, unit.from_points(0.01), "Nudge (document options)");
+                ui.end_row();
+                ui.label("Duplicate offset:");
+                ui.horizontal(|ui| {
+                    field(ui, &mut d.duplicate[0], f64::MIN, "Duplicate offset x (document options)");
+                    field(ui, &mut d.duplicate[1], f64::MIN, "Duplicate offset y (document options)");
+                });
+                ui.end_row();
+            });
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                ok = crate::a11y::window_button(ui, true, "OK", "Document Options").clicked();
+                cancel = crate::a11y::window_button(ui, true, "Cancel", "Document Options").clicked();
+            });
+        });
+    if ok {
+        apply_document_options(state, &d);
+    } else if open && !cancel {
+        state.document_options = Some(d);
     }
 }

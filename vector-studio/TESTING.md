@@ -72,6 +72,7 @@ Names must be unique on screen, or a test cannot tell widgets apart.
 | PowerClip: place inside (Esc cancels), clipped pixels, edit and finish, move with frame, extract; Create Empty Frame (the X in pixels, drop an object inside, undo) | `powerclip.rs` |
 | Page navigator, Pages docker, page size / orientation / width, Layout menu, PageUp / PageDown | `pages.rs` |
 | Rename Page (Layout menu, in the Pages docker), Go to Page (window, limited to the page count, Cancel), Insert Page Number (placement, renumbering, typing makes it plain text), Page Background (canvas pixels, SVG with and without Print and export, undo steps) | `pages.rs` |
+| Document Options (Cancel, OK, all pages, grid, nudge, units converting the fields) | `pages.rs` |
 | Save, Save As, Open, command-line file, damaged file, unsaved-changes prompt, Export SVG / PNG / PDF, Import SVG (Cmd+I and menu, placement, undo, bad file), Import PNG (bitmap drawn on the canvas, selection, fit to page) | `files.rs` |
 | Revert (cancel, confirm, only after changes to a saved file), Close and Close All (unsaved prompt, new drawing) | `files.rs` |
 | Document Properties (fields, SVG metadata, saved in the drawing, undo) | `files.rs` |

@@ -43,6 +43,7 @@ pub enum Command {
     SaveAsTemplate,
     ExportForWeb,
     ExportPrintPdf,
+    DocumentOptions,
     Open,
     /// Close (and Close All: there is one drawing open).
     Close,
@@ -142,6 +143,7 @@ impl Command {
             "file.save_as_template" => SaveAsTemplate,
             "file.export_web" => ExportForWeb,
             "file.export_print" => ExportPrintPdf,
+            "layout.document_options" => DocumentOptions,
             "file.save" => Save,
             "file.save_as" => SaveAs,
             "file.import" => Import,
@@ -266,6 +268,7 @@ impl Command {
         Command::SaveAsTemplate,
         Command::ExportForWeb,
         Command::ExportPrintPdf,
+        Command::DocumentOptions,
         Command::Open,
         Command::Close,
         Command::Revert,

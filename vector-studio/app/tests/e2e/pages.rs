@@ -244,3 +244,36 @@ fn page_sorter_shows_pages_picks_moves_and_goes_back_to_one() {
     assert_eq!(active(&app), 1);
     assert!(app.exists("Page tab Page 1"));
 }
+
+#[test]
+fn document_options_apply_on_ok_and_cancel_leaves_everything() {
+    let mut app = E2e::new();
+    app.menu(&["Layout", "Insert Page"]);
+    let a4 = app.doc().pages()[0].size;
+    let mm = |v: f64| vs_core::Unit::Millimeters.to_points(v);
+
+    app.menu(&["Layout", "Document Options…"]);
+    app.fill("Page width (document options)", "100");
+    app.click("Cancel (Document Options)");
+    assert!(!app.exists("Page width (document options)"));
+    assert_eq!(app.doc().active_page().size, a4, "Cancel changes nothing");
+
+    app.menu(&["Layout", "Document Options…"]);
+    app.fill("Page width (document options)", "100");
+    app.fill("Page height (document options)", "50");
+    app.click("Apply to all pages");
+    app.fill("Grid spacing (document options)", "10");
+    app.fill("Nudge (document options)", "2");
+    // Switching units converts what is in the window.
+    app.click("Units (document options)");
+    app.click("centimeters");
+    assert!(app.value("Page width (document options)").starts_with("10.00 cm"), "{}", app.value("Page width (document options)"));
+    app.click("OK (Document Options)");
+
+    assert_eq!(app.doc().display_unit, vs_core::Unit::Centimeters);
+    for page in app.doc().pages() {
+        assert!((page.size.width - mm(100.0)).abs() < 0.01 && (page.size.height - mm(50.0)).abs() < 0.01, "{:?}", page.size);
+    }
+    assert!((app.state().prefs.grid_spacing - mm(10.0)).abs() < 0.01);
+    assert!((app.state().prefs.nudge - mm(2.0)).abs() < 0.01);
+}
