@@ -37,6 +37,25 @@ impl Document {
         true
     }
 
+    /// Whether Create Empty Frame applies: a selected object can be a container and is
+    /// not a frame yet.
+    pub fn can_create_empty_frame(&self, ids: &[ObjectId]) -> bool {
+        self.active_page().objects.iter().any(|o| ids.contains(&o.id) && o.can_be_container() && !o.frame)
+    }
+
+    /// Create Empty Frame: make the selected objects that can hold contents into PowerClip
+    /// frames, which objects dropped on them go into. Returns them.
+    pub fn create_empty_frame(&mut self, ids: &[ObjectId]) -> Vec<ObjectId> {
+        let mut out = Vec::new();
+        for obj in &mut self.active_page_mut().objects {
+            if ids.contains(&obj.id) && obj.can_be_container() && !obj.frame {
+                obj.frame = true;
+                out.push(obj.id);
+            }
+        }
+        out
+    }
+
     /// Whether Extract Contents applies: an unlocked selected object has contents.
     pub fn can_extract_contents(&self, ids: &[ObjectId]) -> bool {
         self.active_page().objects.iter().any(|o| ids.contains(&o.id) && !o.locked && !o.contents.is_empty())
@@ -66,6 +85,19 @@ impl Document {
             i += 1 + n;
         }
         out
+    }
+}
+
+impl crate::Page {
+    /// The topmost unlocked PowerClip frame (see [`Object::frame`]) whose outline holds
+    /// `p`, other than those in `exclude`.
+    pub fn frame_at(&self, p: kurbo::Point, exclude: &[ObjectId]) -> Option<ObjectId> {
+        use kurbo::Shape as _;
+        self.objects
+            .iter()
+            .rev()
+            .find(|o| o.frame && !o.locked && !exclude.contains(&o.id) && o.world_path().winding(p) != 0)
+            .map(|o| o.id)
     }
 }
 
@@ -122,5 +154,27 @@ mod tests {
         doc.set_locked(&[frame], true);
         assert!(!doc.can_extract_contents(&[frame]));
         assert!(doc.extract_contents(&[frame]).is_empty());
+    }
+
+    #[test]
+    fn an_empty_frame_takes_objects_dropped_on_it() {
+        let mut doc = Document::default();
+        let frame = rect(&mut doc, Rect::new(0.0, 0.0, 100.0, 100.0), Rgba::WHITE);
+        let dot = rect(&mut doc, Rect::new(40.0, 40.0, 60.0, 60.0), Rgba::BLACK);
+        assert!(doc.can_create_empty_frame(&[frame]));
+        assert_eq!(doc.create_empty_frame(&[frame, dot]), vec![frame, dot]);
+        assert!(!doc.can_create_empty_frame(&[frame]), "already a frame");
+        assert_eq!(doc.active_page().object(frame).unwrap().label(), "Empty PowerClip Rectangle");
+        assert_eq!(doc.active_page().frame_at(Point::new(50.0, 50.0), &[]), Some(dot), "the topmost frame");
+        assert_eq!(doc.active_page().frame_at(Point::new(50.0, 50.0), &[dot]), Some(frame));
+        assert_eq!(doc.active_page().frame_at(Point::new(150.0, 50.0), &[]), None);
+        doc.active_page_mut().object_mut(dot).unwrap().frame = false;
+        assert!(doc.place_inside(&[dot], frame));
+        assert_eq!(doc.active_page().object(frame).unwrap().label(), "PowerClip Rectangle");
+        doc.extract_contents(&[frame]);
+        assert!(doc.active_page().object(frame).unwrap().frame, "a frame stays a frame when emptied");
+        let json = serde_json::to_string(&doc).unwrap();
+        let back: Document = serde_json::from_str(&json).unwrap();
+        assert!(back.active_page().object(frame).unwrap().frame, "saved");
     }
 }

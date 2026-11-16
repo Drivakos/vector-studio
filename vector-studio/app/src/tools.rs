@@ -946,7 +946,18 @@ fn release(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers) {
                 }
             }
         }
-        Drag::Move { moved: true, originals, .. } | Drag::Scale { originals, .. } | Drag::Rotate { originals, .. } => remember_drag(state, &originals),
+        // Dropped on a PowerClip frame made with Create Empty Frame: inside it.
+        Drag::Move { moved: true, originals, .. } => {
+            let ids: Vec<ObjectId> = originals.iter().map(|o| o.0).collect();
+            match state.doc.active_page().frame_at(p, &ids) {
+                Some(frame) if state.doc.place_inside(&ids, frame) => {
+                    state.selection = vec![frame];
+                    state.marquee_selection = None;
+                }
+                _ => remember_drag(state, &originals),
+            }
+        }
+        Drag::Scale { originals, .. } | Drag::Rotate { originals, .. } => remember_drag(state, &originals),
         Drag::Free { start: Some(_), originals, .. } => remember_drag(state, &originals),
         // A click on empty space clears the selection.
         Drag::Free { anchor, start: None, .. } => {
@@ -1183,6 +1194,13 @@ pub fn draw_overlay(painter: &egui::Painter, state: &AppState, canvas: Rect) {
     let thin = Stroke::new(1.0, ACCENT);
     crate::text_tool::draw_frames(painter, state, |p| view.screen(p));
     crate::text_tool::draw_caret(painter, state, |p| view.screen(p));
+    // An empty PowerClip frame shows an X across it.
+    for obj in page.objects.iter().filter(|o| o.frame && o.contents.is_empty()) {
+        let b = obj.world_bounds();
+        let s = Stroke::new(1.0, Color32::from_gray(0x90));
+        painter.line_segment([view.screen(Point::new(b.x0, b.y0)), view.screen(Point::new(b.x1, b.y1))], s);
+        painter.line_segment([view.screen(Point::new(b.x1, b.y0)), view.screen(Point::new(b.x0, b.y1))], s);
+    }
     if state.tool == Tool::InteractiveFill
         && let Some((_, g, t)) = crate::paint_tools::selected_gradient(state)
     {

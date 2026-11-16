@@ -329,6 +329,10 @@ pub struct Object {
     /// A clone follows this master's shape, fill and outline until it is edited itself.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub clone_of: Option<ObjectId>,
+    /// A PowerClip frame made with Create Empty Frame: it stays a frame while empty, and
+    /// objects dropped on it go inside.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub frame: bool,
 }
 
 impl Object {
@@ -361,6 +365,7 @@ impl Object {
             _ => match &self.shape {
                 Shape::Group { children } => format!("Group of {} objects", children.len()),
                 shape if !self.contents.is_empty() => format!("PowerClip {}", shape.kind_label()),
+                shape if self.frame => format!("Empty PowerClip {}", shape.kind_label()),
                 shape if self.clone_of.is_some() => format!("Clone {}", shape.kind_label()),
                 shape => shape.kind_label().to_string(),
             },
@@ -723,7 +728,7 @@ impl Document {
         let id = ObjectId(self.alloc_id());
         let page = self.active_page_mut();
         let layer = page.active_layer;
-        page.objects.push(Object { id, name: None, shape, style, transform: Affine::IDENTITY, locked: false, layer, contents: Vec::new(), clone_of: None });
+        page.objects.push(Object { id, name: None, shape, style, transform: Affine::IDENTITY, locked: false, layer, contents: Vec::new(), clone_of: None, frame: false });
         page.settle_layers();
         id
     }

@@ -52,3 +52,27 @@ fn place_inside_clips_on_screen_and_contents_can_be_edited_and_extracted() {
     assert!(is_red(app.pixel(410.0, 205.0)), "extracted where it showed");
     assert!(app.objects()[0].contents.is_empty());
 }
+
+#[test]
+fn an_empty_frame_shows_an_x_and_takes_an_object_dropped_on_it() {
+    let mut app = E2e::new();
+    let frame = app.draw_rect(100.0, 100.0, 300.0, 300.0);
+    app.click("Swatch Yellow");
+    app.menu(&["Object", MENU, "Create Empty Frame"]);
+    assert_eq!(app.objects()[0].label(), "Empty PowerClip Rectangle");
+    // Grey over yellow: blue shows only where the X's lines are.
+    let (on, off) = (app.pixel(150.0, 150.0), app.pixel(150.0, 200.0));
+    assert!(on[2] > 60 && off[2] < 30, "the X crosses the frame: {on:?} vs {off:?}");
+
+    let red = app.draw_rect(400.0, 180.0, 500.0, 220.0);
+    app.click("Swatch Red");
+    app.drag_doc((450.0, 200.0), (200.0, 200.0));
+    assert_eq!(app.ids(), vec![frame], "dropped inside the frame");
+    assert_eq!(app.objects()[0].contents[0].id, red);
+    assert_eq!(app.objects()[0].label(), "PowerClip Rectangle");
+    assert_eq!(app.selection(), vec![frame]);
+    assert!(is_red(app.pixel(200.0, 205.0)), "it shows where it was dropped");
+
+    app.shortcut(egui::Modifiers::COMMAND, Key::Z);
+    assert_eq!(app.ids(), vec![frame, red], "undo takes it out again");
+}

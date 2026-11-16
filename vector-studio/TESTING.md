@@ -67,7 +67,7 @@ Names must be unique on screen, or a test cannot tell widgets apart.
 | Clone: linked copy, master's fill shows on the clone (pixels), clone's own fill breaks the link | `edit.rs` |
 | Objects docker: select, Shift-select, rename, order, delete | `objects.rs` |
 | Layers: add, hide, lock, move objects, rename, delete, undo | `layers.rs` |
-| PowerClip: place inside (Esc cancels), clipped pixels, edit and finish, move with frame, extract | `powerclip.rs` |
+| PowerClip: place inside (Esc cancels), clipped pixels, edit and finish, move with frame, extract; Create Empty Frame (the X in pixels, drop an object inside, undo) | `powerclip.rs` |
 | Page navigator, Pages docker, page size / orientation / width, Layout menu, PageUp / PageDown | `pages.rs` |
 | Rename Page (Layout menu, in the Pages docker), Go to Page (window, limited to the page count, Cancel), Insert Page Number (placement, renumbering, typing makes it plain text), Page Background (canvas pixels, SVG with and without Print and export, undo steps) | `pages.rs` |
 | Save, Save As, Open, command-line file, damaged file, unsaved-changes prompt, Export SVG / PNG / PDF, Import SVG (Cmd+I and menu, placement, undo, bad file), Import PNG (bitmap drawn on the canvas, selection, fit to page) | `files.rs` |

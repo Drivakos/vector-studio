@@ -445,6 +445,7 @@ impl VectorStudioApp {
             Command::ClipPlaceInside => (doc.can_place_inside(&state.selection), None),
             Command::ClipExtract => (doc.can_extract_contents(&state.selection), None),
             Command::ClipEdit => (crate::edit_tools::can_edit_contents(state), None),
+            Command::ClipEmptyFrame => (doc.can_create_empty_frame(&state.selection), None),
             Command::ClipFinishEdit => (state.powerclip.editing.is_some(), None),
             _ => (true, None),
         }
@@ -676,6 +677,10 @@ impl VectorStudioApp {
                     s.selection = out;
                     s.marquee_selection = None;
                 }
+                Ok(())
+            }
+            Command::ClipEmptyFrame => {
+                s.doc.create_empty_frame(&s.selection);
                 Ok(())
             }
             Command::ClipEdit => {

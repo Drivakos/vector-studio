@@ -85,6 +85,8 @@ pub enum Command {
     ClipPlaceInside,
     ClipExtract,
     ClipEdit,
+    /// Make the selection into empty PowerClip frames.
+    ClipEmptyFrame,
     /// Put contents being edited back in their PowerClip (property bar button).
     ClipFinishEdit,
     ObjectProperties,
@@ -192,6 +194,7 @@ impl Command {
             "object.clip_place_inside" => ClipPlaceInside,
             "object.clip_extract" => ClipExtract,
             "object.clip_edit" => ClipEdit,
+            "object.clip_empty_frame" => ClipEmptyFrame,
             "object.properties" => ObjectProperties,
             "view.zoom_in" => ZoomIn,
             "view.zoom_out" => ZoomOut,
@@ -309,6 +312,7 @@ impl Command {
         Command::ClipPlaceInside,
         Command::ClipExtract,
         Command::ClipEdit,
+        Command::ClipEmptyFrame,
         Command::ObjectProperties,
         Command::ZoomIn,
         Command::ZoomOut,
