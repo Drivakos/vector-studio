@@ -1,7 +1,8 @@
 //! Artistic and paragraph text: fonts, line layout and glyph outlines.
 //!
 //! Artistic text breaks lines only at `\n`. Paragraph text sits in a frame: words wrap
-//! to its width, and lines below its bottom are hidden (the text overflows).
+//! to its width, and lines below its bottom are hidden (the text overflows). Text fitted
+//! to a path runs along a copy of that path, one glyph after another.
 //!
 //! Text is laid out one glyph per character with the font's advance widths (no kerning or
 //! complex shaping) and drawn as glyph outlines, so rendering, hit-testing, export and
@@ -59,6 +60,10 @@ pub struct Text {
     /// The paragraph frame's size; `None` for artistic text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub frame: Option<kurbo::Size>,
+    /// Artistic text fitted to a path: the path in this text's local space. The glyphs
+    /// sit on it, aligned to its start, middle or end by `align`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_path: Option<BezPath>,
 }
 
 impl Text {
@@ -74,6 +79,7 @@ impl Text {
             size: Self::DEFAULT_SIZE,
             align: TextAlign::Left,
             frame: None,
+            on_path: None,
         }
     }
 
@@ -128,7 +134,8 @@ impl Text {
     /// Glyph outlines in local space.
     pub fn to_path(&self) -> BezPath {
         let frame = self.frame.map(|f| (f.width.to_bits(), f.height.to_bits()));
-        let key = (self.content.clone(), self.family.clone(), self.style.clone(), self.size.to_bits(), self.align, frame);
+        let guide = self.on_path.as_ref().map(BezPath::to_svg);
+        let key = (self.content.clone(), self.family.clone(), self.style.clone(), self.size.to_bits(), self.align, frame, guide);
         let cache = PATHS.get_or_init(Mutex::default);
         if let Some(path) = cache.lock().expect("text cache").get(&key) {
             return path.clone();
@@ -143,7 +150,7 @@ impl Text {
     }
 }
 
-type PathKey = (String, String, String, u64, TextAlign, Option<(u64, u64)>);
+type PathKey = (String, String, String, u64, TextAlign, Option<(u64, u64)>, Option<String>);
 static PATHS: OnceLock<Mutex<HashMap<PathKey, BezPath>>> = OnceLock::new();
 
 /// One laid-out line.
@@ -164,7 +171,8 @@ pub struct TextLayout {
     pub ascent: f64,
     /// Depth below the baseline (positive).
     pub descent: f64,
-    /// Paragraph text: its frame in local space.
+    /// Paragraph text: its frame in local space. Text on a path: the area its glyphs
+    /// take (or the path's bounds while it is empty).
     pub frame: Option<Rect>,
     /// Paragraph text: some lines do not fit in the frame and are not drawn.
     pub overflow: bool,
@@ -226,6 +234,9 @@ fn layout(text: &Text) -> TextLayout {
     let charmap = font.charmap();
     let advances = font.glyph_metrics(size, location);
     let outlines = font.outline_glyphs();
+    if let Some(guide) = &text.on_path {
+        return layout_on_path(text, guide, &font, size, ascent, descent);
+    }
     let frame = text.frame.map(|f| Rect::from_origin_size(Point::ORIGIN, f));
     // Paragraph text starts with the first line's ascent inside the top of the frame.
     let first_baseline = if frame.is_some() { ascent } else { 0.0 };
@@ -278,6 +289,86 @@ fn layout(text: &Text) -> TextLayout {
         start += glyphs.len() + 1;
     }
     TextLayout { path, lines, ascent, descent, frame, overflow }
+}
+
+/// Accuracy of arc lengths along a text path, in points.
+const ARC_ACCURACY: f64 = 1e-3;
+
+/// The point `s` points along `path`, if it is that long.
+pub fn point_along(path: &BezPath, s: f64) -> Option<Point> {
+    use kurbo::{ParamCurve, ParamCurveArclen};
+    let mut left = s;
+    if left < 0.0 {
+        return None;
+    }
+    for seg in path.segments() {
+        let len = seg.arclen(ARC_ACCURACY);
+        if left <= len {
+            return Some(seg.eval(seg.inv_arclen(left, ARC_ACCURACY)));
+        }
+        left -= len;
+    }
+    None
+}
+
+/// Text along `guide`: each glyph's centre sits on the path at its distance along it,
+/// turned to the path's direction there. Line breaks count as spaces; glyphs past the
+/// end of the path are not drawn.
+fn layout_on_path(text: &Text, guide: &BezPath, font: &FontRef, size: Size, ascent: f64, descent: f64) -> TextLayout {
+    use kurbo::{Affine, ParamCurve, ParamCurveArclen, Shape as _};
+    let location = LocationRef::default();
+    let charmap = font.charmap();
+    let advances = font.glyph_metrics(size, location);
+    let outlines = font.outline_glyphs();
+    let glyphs: Vec<(GlyphId, f64)> = text
+        .content
+        .chars()
+        .map(|ch| {
+            let gid = charmap.map(if ch == '\n' { ' ' } else { ch }).unwrap_or(GlyphId::NOTDEF);
+            (gid, f64::from(advances.advance_width(gid).unwrap_or(0.0)))
+        })
+        .collect();
+    let segments: Vec<kurbo::PathSeg> = guide.segments().collect();
+    let lengths: Vec<f64> = segments.iter().map(|s| s.arclen(ARC_ACCURACY)).collect();
+    let total: f64 = lengths.iter().sum();
+    let width: f64 = glyphs.iter().map(|g| g.1).sum();
+    let start = match text.align {
+        TextAlign::Left => 0.0,
+        TextAlign::Center => (total - width) / 2.0,
+        TextAlign::Right => total - width,
+    };
+    // Point and direction (radians) at distance `s` along the path.
+    let at = |s: f64| -> Option<(Point, f64)> {
+        if !(0.0..=total).contains(&s) || segments.is_empty() {
+            return None;
+        }
+        let mut left = s;
+        for (seg, len) in segments.iter().zip(&lengths) {
+            if left <= *len || std::ptr::eq(seg, segments.last().expect("not empty")) {
+                let t = seg.inv_arclen(left.min(*len), ARC_ACCURACY);
+                let (a, b) = (seg.eval((t - 1e-4).max(0.0)), seg.eval((t + 1e-4).min(1.0)));
+                return Some((seg.eval(t), (b - a).atan2()));
+            }
+            left -= len;
+        }
+        None
+    };
+    let mut path = BezPath::new();
+    let mut carets = vec![start];
+    let mut s = start;
+    for (gid, advance) in glyphs {
+        if let (Some((p, angle)), Some(glyph)) = (at(s + advance / 2.0), outlines.get(gid)) {
+            let mut one = BezPath::new();
+            let mut pen = Pen { path: &mut one, origin: Point::new(-advance / 2.0, 0.0) };
+            let _ = glyph.draw(DrawSettings::unhinted(size, location), &mut pen);
+            one.apply_affine(Affine::translate(p.to_vec2()) * Affine::rotate(angle));
+            path.extend(one);
+        }
+        s += advance;
+        carets.push(s);
+    }
+    let area = if path.is_empty() { guide.bounding_box() } else { path.bounding_box() };
+    TextLayout { path, lines: vec![Line { start: 0, baseline: 0.0, carets }], ascent, descent, frame: Some(area), overflow: false }
 }
 
 /// Split one paragraph into lines no wider than `width`: break after the last space that
@@ -663,6 +754,37 @@ mod tests {
         assert_eq!(l.lines.len(), 3, "hidden lines still have carets");
         let b = short.to_path().bounding_box();
         assert!(b.y1 <= 30.5, "only the first line is drawn: {b:?}");
+    }
+
+    fn line(a: (f64, f64), b: (f64, f64)) -> BezPath {
+        let mut p = BezPath::new();
+        p.move_to(a);
+        p.line_to(b);
+        p
+    }
+
+    #[test]
+    fn text_on_a_path_follows_it_and_is_aligned_along_it() {
+        let flat = Text { on_path: Some(line((0.0, 0.0), (500.0, 0.0))), ..text("Hello") };
+        let straight = text("Hello").to_path().bounding_box();
+        let on = flat.to_path().bounding_box();
+        assert!((on.x0 - straight.x0).abs() < 0.01 && (on.y0 - straight.y0).abs() < 0.01, "a flat path matches plain text: {on:?} {straight:?}");
+
+        let down = Text { on_path: Some(line((0.0, 0.0), (0.0, 500.0))), ..text("Hello") };
+        let b = down.to_path().bounding_box();
+        assert!(b.height() > b.width() * 2.0, "turned along a vertical path: {b:?}");
+        assert_eq!(down.layout().bounds(), b, "the glyphs are the text's area");
+
+        let centred = Text { align: TextAlign::Center, ..flat.clone() };
+        let c = centred.to_path().bounding_box();
+        assert!(((c.x0 + c.x1) / 2.0 - 250.0).abs() < 5.0, "centred on the path: {c:?}");
+
+        let short = Text { on_path: Some(line((0.0, 0.0), (20.0, 0.0))), ..text("Hello") };
+        assert!(short.to_path().bounding_box().x1 < 25.0, "glyphs past the end are not drawn");
+        let empty = Text { on_path: Some(line((0.0, 0.0), (20.0, 0.0))), ..text("") };
+        assert_eq!(empty.layout().bounds(), Rect::new(0.0, 0.0, 20.0, 0.0));
+        assert_eq!(point_along(&line((0.0, 0.0), (10.0, 0.0)), 4.0), Some(Point::new(4.0, 0.0)));
+        assert_eq!(point_along(&line((0.0, 0.0), (10.0, 0.0)), 11.0), None);
     }
 
     #[test]

@@ -315,16 +315,80 @@ impl Document {
         }
     }
 
-    /// Whether Convert to Artistic/Paragraph Text applies: some unlocked text is among `ids`.
+    /// Whether Convert to Artistic/Paragraph Text applies: some unlocked text, not on a
+    /// path, is among `ids`.
     pub fn can_convert_text(&self, ids: &[ObjectId]) -> bool {
-        self.active_page().objects.iter().any(|o| ids.contains(&o.id) && !o.locked && matches!(o.shape, Shape::Text(_)))
+        self.active_page().objects.iter().any(|o| ids.contains(&o.id) && !o.locked && matches!(&o.shape, Shape::Text(t) if t.on_path.is_none()))
+    }
+
+    /// The artistic text and the shape to fit it to, when `ids` are exactly those two,
+    /// both unlocked.
+    fn text_and_path(&self, ids: &[ObjectId]) -> Option<(ObjectId, ObjectId)> {
+        let page = self.active_page();
+        let picked: Vec<&Object> = page.objects.iter().filter(|o| ids.contains(&o.id) && !o.locked).collect();
+        let [a, b] = picked.as_slice() else { return None };
+        let artistic = |o: &Object| matches!(&o.shape, Shape::Text(t) if !t.is_paragraph());
+        let guide = |o: &Object| !matches!(o.shape, Shape::Text(_) | Shape::Group { .. } | Shape::Image(_));
+        if artistic(a) && guide(b) {
+            Some((a.id, b.id))
+        } else if artistic(b) && guide(a) {
+            Some((b.id, a.id))
+        } else {
+            None
+        }
+    }
+
+    pub fn can_fit_text_to_path(&self, ids: &[ObjectId]) -> bool {
+        self.text_and_path(ids).is_some()
+    }
+
+    /// Fit Text to Path: the artistic text among `ids` runs along the other object's
+    /// outline (a copy of it, so later edits to that object do not move the text).
+    /// Returns the text's id.
+    pub fn fit_text_to_path(&mut self, ids: &[ObjectId]) -> Option<ObjectId> {
+        let (text_id, path_id) = self.text_and_path(ids)?;
+        let page = self.active_page_mut();
+        let source = page.object(path_id)?;
+        let (guide, transform) = (source.shape.to_path(), source.transform);
+        let obj = page.object_mut(text_id)?;
+        if let Shape::Text(text) = &mut obj.shape {
+            text.on_path = Some(guide);
+            obj.transform = transform;
+        }
+        Some(text_id)
+    }
+
+    pub fn can_straighten_text(&self, ids: &[ObjectId]) -> bool {
+        self.active_page().objects.iter().any(|o| ids.contains(&o.id) && !o.locked && matches!(&o.shape, Shape::Text(t) if t.on_path.is_some()))
+    }
+
+    /// Straighten Text: the unlocked texts on a path among `ids` become plain artistic
+    /// text, starting where they started on the path.
+    pub fn straighten_text(&mut self, ids: &[ObjectId]) {
+        for obj in self.active_page_mut().objects.iter_mut().filter(|o| ids.contains(&o.id) && !o.locked) {
+            let Shape::Text(text) = &mut obj.shape else { continue };
+            let Some(guide) = text.on_path.take() else { continue };
+            let carets = text.layout().lines[0].carets.clone();
+            text.on_path = Some(guide.clone());
+            let (first, last) = (carets[0], *carets.last().expect("a caret"));
+            let anchor = match text.align {
+                crate::TextAlign::Left => first,
+                crate::TextAlign::Center => (first + last) / 2.0,
+                crate::TextAlign::Right => last,
+            };
+            let start = crate::text::point_along(&guide, anchor.max(0.0)).unwrap_or_default();
+            text.on_path = None;
+            obj.transform = Affine::translate((obj.transform * start).to_vec2()) * obj.transform.with_translation(Vec2::ZERO);
+        }
     }
 
     /// Turn the unlocked artistic texts among `ids` into paragraph text and paragraph
     /// texts into artistic text, keeping each in place.
     pub fn convert_text(&mut self, ids: &[ObjectId]) {
         for obj in self.active_page_mut().objects.iter_mut().filter(|o| ids.contains(&o.id) && !o.locked) {
-            if let Shape::Text(text) = &obj.shape {
+            if let Shape::Text(text) = &obj.shape
+                && text.on_path.is_none()
+            {
                 let (text, shift) = if text.is_paragraph() { text.to_artistic() } else { text.to_paragraph() };
                 obj.shape = Shape::Text(text);
                 obj.transform *= shift;
@@ -341,6 +405,28 @@ impl Document {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn fit_text_to_path_and_straighten_it() {
+        let mut doc = Document::default();
+        let text = doc.add_object(Shape::Text(crate::Text::new("Hi")), Style::new_text());
+        let circle = doc.add_object(Shape::Ellipse { rect: Rect::new(100.0, 100.0, 300.0, 300.0), arc: None }, Style::new_object());
+        assert!(!doc.can_fit_text_to_path(&[text]), "needs the text and a path");
+        assert!(doc.can_fit_text_to_path(&[circle, text]));
+        assert_eq!(doc.fit_text_to_path(&[circle, text]), Some(text));
+        let page = doc.active_page();
+        assert_eq!(page.objects.len(), 2, "the path stays");
+        let b = page.object(text).unwrap().world_bounds();
+        assert!(b.x1 > 290.0 && b.x0 > 250.0, "starts at the circle's right edge: {b:?}");
+        assert!(!doc.can_convert_text(&[text]), "text on a path is not converted to paragraph text");
+        assert!(doc.can_straighten_text(&[text]));
+        doc.straighten_text(&[text]);
+        let obj = doc.active_page().object(text).unwrap();
+        let Shape::Text(t) = &obj.shape else { panic!() };
+        assert!(t.on_path.is_none());
+        let start = obj.transform * kurbo::Point::ORIGIN;
+        assert!((start.x - 300.0).abs() < 1.0 && (start.y - 200.0).abs() < 1.0, "starts where it started on the path: {start:?}");
+    }
+
     #[test]
     fn step_and_repeat_makes_evenly_spaced_copies() {
         let mut doc = Document::default();

@@ -2,6 +2,7 @@
 //! ordinary object (undo, Convert to Curves, save and open).
 
 use egui::{Key, Modifiers};
+use egui_kittest::kittest::Queryable;
 use vector_studio::toolbox::Tool;
 use vs_core::kurbo::Shape as _;
 use vs_core::{Shape, Text, TextAlign};
@@ -202,4 +203,41 @@ fn paragraph_text_wraps_in_a_dragged_frame_converts_and_overflows() {
     app.key(Key::Escape);
     assert_eq!(app.objects().len(), 2);
     assert!(text(&app, 1).content.is_empty() && text(&app, 1).frame.is_some());
+}
+
+#[test]
+fn fit_text_to_path_runs_it_along_a_curve_and_straighten_undoes_it() {
+    let mut app = E2e::new();
+    app.key(Key::F7);
+    app.drag_doc((100.0, 100.0), (300.0, 300.0));
+    app.key(Key::F8);
+    app.click_doc(100.0, 450.0);
+    app.type_text("Round");
+    app.key(Key::Escape);
+    app.pick_tool();
+    app.shortcut(Modifiers::COMMAND, Key::A);
+    assert_eq!(app.selection().len(), 2);
+    app.menu(&["Text", "Fit Text to Path"]);
+    assert_eq!(app.objects().len(), 2, "the ellipse stays");
+    let t = text(&app, 1);
+    assert!(t.on_path.is_some());
+    assert_eq!(app.selection(), vec![app.ids()[1]]);
+    let b = app.objects()[1].world_bounds();
+    assert!(b.x1 > 290.0 && b.y0 > 180.0 && b.y1 < 300.0, "runs from the ellipse's right edge: {b:?}");
+    assert!(any_dark(&mut app, b.x0, b.y0, b.x1, b.y1), "drawn on the curve");
+    assert!(!any_dark(&mut app, 100.0, 420.0, 200.0, 460.0), "no longer where it was typed");
+
+    // The text stays editable in the Properties docker.
+    app.docker("Properties");
+    app.click("Text (properties)");
+    app.h.get_by_label("Text (properties)").type_text("!");
+    app.run();
+    assert_eq!(text(&app, 1).content.chars().count(), 6);
+    assert!(text(&app, 1).on_path.is_some());
+
+    app.menu(&["Text", "Straighten Text"]);
+    let t = text(&app, 1);
+    assert!(t.on_path.is_none());
+    let start = app.objects()[1].transform * vs_core::kurbo::Point::ORIGIN;
+    assert!(close(start.x, 300.0) && (start.y - 200.0).abs() < 1.0, "starts where it started on the curve: {start:?}");
 }

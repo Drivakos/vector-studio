@@ -334,7 +334,7 @@ fn press_pick(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers
             }
         }
         // Double-clicking text types into it with the Text tool.
-        Some(hit) if double && page.object(hit).is_some_and(|o| !o.locked && matches!(o.shape, Shape::Text(_))) => {
+        Some(hit) if double && page.object(hit).is_some_and(|o| !o.locked && matches!(&o.shape, Shape::Text(t) if t.on_path.is_none())) => {
             state.tool = Tool::Text;
             state.toolbox.remember(Tool::Text);
             crate::text_tool::press(state, p, view.doc_len(HIT));

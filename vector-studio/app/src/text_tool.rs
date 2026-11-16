@@ -42,7 +42,7 @@ pub fn text_at(state: &AppState, p: Point, tolerance: f64) -> Option<(ObjectId, 
     page.objects
         .iter()
         .rev()
-        .find(|o| !o.locked && page.is_selectable(o) && matches!(o.shape, Shape::Text(_)) && o.hit(p, tolerance))
+        .find(|o| !o.locked && page.is_selectable(o) && matches!(&o.shape, Shape::Text(t) if t.on_path.is_none()) && o.hit(p, tolerance))
         .map(|o| (o.id, o.transform))
 }
 

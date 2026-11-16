@@ -69,6 +69,7 @@ Names must be unique on screen, or a test cannot tell widgets apart.
 | Shaping (Weld, Trim, Intersect, Simplify, Front/Back Minus, Boundary: property bar and Object > Shaping), the target rule (marquee vs Shift-click), Combine (Cmd+L) with even-odd holes, Break Apart (Cmd+K) | `shaping.rs` |
 | Text tool: typing, lines, caret keys, plain keys not running shortcuts, Esc, one undo step, empty text removed, clicking and Pick double-click to edit, font size and alignment for new and selected text, move, save/open, Convert to Curves | `text.rs` |
 | Paragraph text: drag a frame, wrap, convert to artistic and back in place, frame height and overflow, empty frames stay | `text.rs` |
+| Fit Text to Path: along an ellipse, pixels on the curve, edit in Properties, Straighten Text | `text.rs` |
 | Grid (toolbar, menu, drawn on the canvas, spacing in the docker), guidelines (dragged from both rulers, drawn, moved with Pick, removed on the ruler, undo, hidden), snapping to grid, guidelines, objects and page, Snap To on/off | `snapping.rs` |
 | Fountain fill from the docker (linear, elliptical, rendered colours), uniform / no fill, transparency (docker and Transparency tool, rendered), Interactive Fill drag and end handles, property bar fill type, fill moving with the object, Color Eyedropper pick/apply to fill and outline, Attributes Eyedropper | `fills.rs` |
 | The 13 units in the property bar and the Properties docker | `units.rs` |

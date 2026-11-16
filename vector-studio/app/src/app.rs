@@ -330,6 +330,8 @@ impl VectorStudioApp {
             Command::JoinCurves => (doc.can_join_curves(&state.selection, vs_core::curves::JOIN_TOLERANCE), None),
             Command::ConvertOutline => (doc.can_convert_outline(&state.selection), None),
             Command::ConvertText => (doc.can_convert_text(&state.selection), None),
+            Command::FitTextToPath => (doc.can_fit_text_to_path(&state.selection), None),
+            Command::StraightenText => (doc.can_straighten_text(&state.selection), None),
             Command::ClipPlaceInside => (doc.can_place_inside(&state.selection), None),
             Command::ClipExtract => (doc.can_extract_contents(&state.selection), None),
             Command::ClipEdit => (crate::edit_tools::can_edit_contents(state), None),
@@ -489,6 +491,18 @@ impl VectorStudioApp {
                     s.selection = vec![id];
                     s.tools.nodes.clear();
                 }
+                Ok(())
+            }
+            Command::FitTextToPath => {
+                crate::text_tool::finish(s);
+                if let Some(text) = s.doc.fit_text_to_path(&s.selection) {
+                    s.selection = vec![text];
+                    s.marquee_selection = None;
+                }
+                Ok(())
+            }
+            Command::StraightenText => {
+                s.doc.straighten_text(&s.selection);
                 Ok(())
             }
             Command::ClipPlaceInside => {
