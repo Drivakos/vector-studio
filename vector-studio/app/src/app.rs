@@ -624,12 +624,17 @@ impl VectorStudioApp {
             }
             if i.consume_key(Modifiers::NONE, Key::Enter) {
                 tools::finish_pen(s);
+                if s.tool == Tool::Crop {
+                    tools::apply_crop(s);
+                }
             }
         });
 
         if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
             if s.copy_properties.picking {
                 s.copy_properties.picking = false;
+            } else if s.tool == Tool::Crop && s.tools.crop.is_some() {
+                s.tools.crop = None;
             } else if s.tools.has_open_path() {
                 tools::finish_pen(s);
             } else if s.tools.is_dragging() {
@@ -696,6 +701,7 @@ impl VectorStudioApp {
                 crate::text_tool::finish(s);
             }
             s.tools.eyedropper.applying = false;
+            s.tools.crop = None;
             tools::cancel(s);
             s.last_tool = s.tool;
         }

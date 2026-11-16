@@ -3,6 +3,7 @@
 pub mod bitmap;
 pub mod controls;
 pub mod curves;
+pub mod cutting;
 pub mod document;
 pub mod fill;
 pub mod geometry;

@@ -22,6 +22,8 @@ const SNAP: f64 = 6.0;
 /// Handles sit this far outside the selection bounds, in screen points.
 const HANDLE_GAP: f64 = 5.0;
 const ACCENT: Color32 = Color32::from_rgb(0x1E, 0x6F, 0xD9);
+/// 5 mm, in points.
+pub const DEFAULT_ERASER_SIZE: f64 = 72.0 / 25.4 * 5.0;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PickMode {
@@ -39,11 +41,13 @@ pub struct ToolSettings {
     pub star_inner_ratio: f64,
     /// Font, size and alignment for new text (its content is unused).
     pub text: vs_core::Text,
+    /// Eraser tip diameter, in points.
+    pub eraser_size: f64,
 }
 
 impl Default for ToolSettings {
     fn default() -> Self {
-        Self { polygon_sides: 5, star_points: 5, star_inner_ratio: 0.5, text: vs_core::Text::new("") }
+        Self { polygon_sides: 5, star_points: 5, star_inner_ratio: 0.5, text: vs_core::Text::new(""), eraser_size: DEFAULT_ERASER_SIZE }
     }
 }
 
@@ -70,6 +74,12 @@ enum Drag {
     FillVector { object: ObjectId, start: Point },
     /// Interactive Fill: a fountain fill's start or end handle.
     FillHandle { object: ObjectId, end: bool },
+    /// Crop tool: dragging out the area to keep.
+    Crop { start: Point },
+    /// Knife tool: dragging the cutting line.
+    Knife { start: Point },
+    /// Eraser tool: the path of the eraser so far.
+    Erase { points: Vec<Point> },
 }
 
 /// A Bézier or Pen path being drawn, in document space.
@@ -88,6 +98,8 @@ pub struct ToolState {
     pub settings: ToolSettings,
     /// Text being typed into with the Text tool.
     pub text: Option<crate::text_tool::TextEdit>,
+    /// Crop tool: the area waiting to be cropped to (Enter or double-click applies it).
+    pub crop: Option<kurbo::Rect>,
     pub eyedropper: crate::paint_tools::Eyedropper,
     drag: Option<Drag>,
     pen: Option<PenPath>,
@@ -143,6 +155,7 @@ pub fn is_implemented(tool: Tool) -> bool {
     is_shape_tool(tool)
         || matches!(tool, Tool::Pick | Tool::Shape | Tool::Zoom | Tool::Pan | Tool::Freehand | Tool::Bezier | Tool::Pen | Tool::Text)
         || matches!(tool, Tool::InteractiveFill | Tool::Transparency | Tool::ColorEyedropper | Tool::AttributesEyedropper)
+        || matches!(tool, Tool::Crop | Tool::Knife | Tool::Eraser)
 }
 
 pub fn cursor(tool: Tool) -> egui::CursorIcon {
@@ -230,6 +243,13 @@ fn press(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers, dou
             crate::paint_tools::select_at(state, p, view.doc_len(HIT));
         }
         Tool::ColorEyedropper | Tool::AttributesEyedropper => crate::paint_tools::press_eyedropper(state, p, view.doc_len(HIT)),
+        // A drag marks a new area; a click keeps the one there is.
+        Tool::Crop => match state.tools.crop {
+            Some(area) if double && area.contains(p) => apply_crop(state),
+            _ => state.tools.drag = Some(Drag::Crop { start: p }),
+        },
+        Tool::Knife => state.tools.drag = Some(Drag::Knife { start: p }),
+        Tool::Eraser => state.tools.drag = Some(Drag::Erase { points: vec![p] }),
         t if is_shape_tool(t) => state.tools.drag = Some(Drag::Create { start: p }),
         _ => {}
     }
@@ -544,6 +564,12 @@ fn drag_to(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers) {
             }
             Drag::Freehand { points }
         }
+        Drag::Erase { mut points } => {
+            if points.last().is_none_or(|l| view.screen_dist(*l, p) > 1.5) {
+                points.push(p);
+            }
+            Drag::Erase { points }
+        }
         Drag::PenHandle { node } => {
             if view.screen_dist(node, p) > DRAG_START
                 && let Some(pen) = state.tools.pen.as_mut()
@@ -784,6 +810,26 @@ fn release(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers) {
                 }
             }
         }
+        Drag::Crop { start } => {
+            let area = kurbo::Rect::from_points(start, p);
+            if area.width() * view.zoom >= 2.0 && area.height() * view.zoom >= 2.0 {
+                state.tools.crop = Some(area);
+            }
+        }
+        Drag::Knife { start } => {
+            if view.screen_dist(start, p) > DRAG_START {
+                let pieces = state.doc.knife(start, p);
+                if !pieces.is_empty() {
+                    state.selection = pieces;
+                    state.marquee_selection = None;
+                }
+            }
+        }
+        Drag::Erase { mut points } => {
+            points.push(p);
+            let ids: Vec<ObjectId> = state.selection.clone();
+            state.doc.erase(&ids, &points, state.tools.settings.eraser_size);
+        }
         Drag::PenHandle { .. } => {}
         Drag::Guide { index } => {
             // Dropped back on a ruler or outside the drawing window: the guideline goes.
@@ -842,6 +888,33 @@ pub fn delete_selected_nodes(state: &mut AppState) -> bool {
     set_curve(state, id, path);
     state.tools.nodes.clear();
     true
+}
+
+/// Crop to the pending crop area: the selected objects, or everything on the page.
+pub fn apply_crop(state: &mut AppState) {
+    let Some(area) = state.tools.crop.take() else { return };
+    let ids = state.selection.clone();
+    let kept = state.doc.crop(&ids, area);
+    state.selection = if ids.is_empty() { Vec::new() } else { kept };
+    state.marquee_selection = None;
+}
+
+/// The crop area: dimmed outside, a frame around it.
+fn crop_frame(painter: &egui::Painter, view: &View, area: kurbo::Rect) {
+    let r = Rect::from_two_pos(view.screen(Point::new(area.x0, area.y0)), view.screen(Point::new(area.x1, area.y1)));
+    let shade = Color32::from_black_alpha(0x50);
+    let c = view.canvas;
+    for band in [
+        Rect::from_min_max(c.min, egui::pos2(c.max.x, r.min.y)),
+        Rect::from_min_max(egui::pos2(c.min.x, r.max.y), c.max),
+        Rect::from_min_max(egui::pos2(c.min.x, r.min.y), egui::pos2(r.min.x, r.max.y)),
+        Rect::from_min_max(egui::pos2(r.max.x, r.min.y), egui::pos2(c.max.x, r.max.y)),
+    ] {
+        if band.is_positive() {
+            painter.rect_filled(band, 0.0, shade);
+        }
+    }
+    painter.rect_stroke(r, 0.0, Stroke::new(1.0, ACCENT), egui::StrokeKind::Inside);
 }
 
 pub fn cancel(state: &mut AppState) {
@@ -991,7 +1064,32 @@ pub fn draw_overlay(painter: &egui::Painter, state: &AppState, canvas: Rect) {
             let pts: Vec<Pos2> = points.iter().map(|p| view.screen(*p)).collect();
             painter.add(egui::Shape::line(pts, Stroke::new(1.0, Color32::BLACK)));
         }
+        Some(Drag::Crop { start }) => {
+            if let Some(p) = state.tools.pointer {
+                crop_frame(painter, &view, kurbo::Rect::from_points(*start, p));
+            }
+        }
+        Some(Drag::Knife { start }) => {
+            if let Some(p) = state.tools.pointer {
+                painter.line_segment([view.screen(*start), view.screen(p)], Stroke::new(1.5, Color32::from_rgb(0xD0, 0x20, 0x20)));
+            }
+        }
+        Some(Drag::Erase { points }) => {
+            let width = (state.tools.settings.eraser_size * view.zoom) as f32;
+            let pts: Vec<Pos2> = points.iter().map(|p| view.screen(*p)).collect();
+            let wash = Color32::from_rgba_unmultiplied(0x1E, 0x6F, 0xD9, 0x50);
+            if let [only] = pts.as_slice() {
+                painter.circle_filled(*only, width / 2.0, wash);
+            } else {
+                painter.add(egui::Shape::line(pts, Stroke::new(width, wash)));
+            }
+        }
         _ => {}
+    }
+    if state.tool == Tool::Crop
+        && let Some(area) = state.tools.crop
+    {
+        crop_frame(painter, &view, area);
     }
 
     if let Some(pen) = &state.tools.pen {
@@ -1081,6 +1179,12 @@ pub fn hint(state: &AppState) -> String {
         Tool::ColorEyedropper => "Click a color on the page to pick it".into(),
         Tool::AttributesEyedropper if state.tools.eyedropper.applying => "Click an object to give it the picked fill, outline and transparency".into(),
         Tool::AttributesEyedropper => "Click an object to pick its fill, outline and transparency".into(),
+        Tool::Crop if state.tools.crop.is_some() => "Enter or double-click inside to crop · Esc clears the area · drag again to redraw it".into(),
+        Tool::Crop if state.has_selection() => "Drag the area to keep; the selected objects are cropped".into(),
+        Tool::Crop => "Drag the area to keep; everything on the page is cropped".into(),
+        Tool::Knife => "Drag a line across objects to cut them in two".into(),
+        Tool::Eraser if state.has_selection() => "Drag over the selected objects to erase · size in the property bar".into(),
+        Tool::Eraser => "Drag over objects to erase · size in the property bar".into(),
         Tool::Zoom => "Click to zoom in; Shift-click to zoom out".into(),
         Tool::Pan => "Drag to move the view".into(),
         _ => "This tool is not available yet".into(),

@@ -126,6 +126,29 @@ pub fn property_bar_ui(ui: &mut egui::Ui, state: &mut AppState, out: &mut Vec<Co
                 }
             }
             Tool::Text => crate::text_tool::controls(ui, state),
+            Tool::Crop => {
+                let pending = state.tools.crop.is_some();
+                if icon_button(ui, ICON_CROP, "Crop", pending).clicked() {
+                    crate::tools::apply_crop(state);
+                }
+                if icon_button(ui, ICON_CLOSE, "Clear crop area", pending).clicked() {
+                    state.tools.crop = None;
+                }
+                theme::vsep(ui);
+                ui.label(egui::RichText::new(crate::tools::hint(state)).color(theme::TEXT_DIM));
+            }
+            Tool::Eraser => {
+                let unit = state.doc.display_unit;
+                let mut size = unit.from_points(state.tools.settings.eraser_size);
+                if number_row(ui, Some(ICON_INK_ERASER), "Eraser size", &mut size, unit.suffix(), 0.01..=unit.from_points(500.0), unit.step(), unit.decimals()) {
+                    state.tools.settings.eraser_size = unit.to_points(size).max(0.01);
+                }
+                theme::vsep(ui);
+                ui.label(egui::RichText::new(crate::tools::hint(state)).color(theme::TEXT_DIM));
+            }
+            Tool::Knife => {
+                ui.label(egui::RichText::new(crate::tools::hint(state)).color(theme::TEXT_DIM));
+            }
             Tool::InteractiveFill | Tool::Transparency | Tool::ColorEyedropper | Tool::AttributesEyedropper => {
                 crate::paint_tools::property_bar(ui, state);
             }

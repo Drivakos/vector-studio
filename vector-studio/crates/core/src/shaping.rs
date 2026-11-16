@@ -248,7 +248,7 @@ fn region(obj: &Object) -> Option<BezPath> {
 }
 
 /// `a op b` with the even-odd rule the renderer fills with.
-fn boolean(a: &BezPath, b: &BezPath, op: BinaryOp) -> Option<BezPath> {
+pub(crate) fn boolean(a: &BezPath, b: &BezPath, op: BinaryOp) -> Option<BezPath> {
     let mut out = BezPath::new();
     for contour in binary_op(a, b, FillRule::EvenOdd, op).ok()?.contours() {
         // Shapes that touch at a point leave slivers with no area.
@@ -299,7 +299,7 @@ pub(crate) fn tidy(path: &BezPath) -> BezPath {
 }
 
 /// `path` with every subpath closed (a fill closes them anyway).
-fn closed(path: &BezPath) -> BezPath {
+pub(crate) fn closed(path: &BezPath) -> BezPath {
     let mut out = BezPath::new();
     for sub in subpaths(path) {
         out.extend(sub.iter());
