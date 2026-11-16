@@ -140,6 +140,7 @@ pub struct AppState {
     /// The case chosen in the open Change Case window.
     pub change_case: Option<vs_core::text_tools::Case>,
     pub show_text_statistics: bool,
+    pub columns: Option<crate::text_menu::ColumnsDialog>,
     pub save_template: Option<crate::templates::SaveTemplateDialog>,
     pub new_from_template: Option<crate::templates::NewFromTemplateDialog>,
     pub show_document_properties: bool,
@@ -270,6 +271,7 @@ impl AppState {
             document_options: None,
             change_case: None,
             show_text_statistics: false,
+            columns: None,
             save_template: None,
             new_from_template: None,
             show_document_properties: false,
@@ -491,6 +493,7 @@ impl VectorStudioApp {
             Command::FitTextToPath => (doc.can_fit_text_to_path(&state.selection), None),
             Command::EditText => (crate::text_tool::can_edit_text(state), None),
             Command::ChangeCase => (!crate::text_menu::case_targets(state).is_empty(), None),
+            Command::Columns => (!crate::text_menu::column_targets(state).is_empty(), None),
             Command::StraightenText => (doc.can_straighten_text(&state.selection), None),
             Command::ClipPlaceInside => (doc.can_place_inside(&state.selection), None),
             Command::ClipExtract => (doc.can_extract_contents(&state.selection), None),
@@ -553,6 +556,11 @@ impl VectorStudioApp {
             }
             Command::ChangeCase => {
                 crate::text_menu::open_change_case(s);
+                Ok(())
+            }
+            Command::Columns => {
+                crate::text_tool::finish(s);
+                crate::text_menu::open_columns(s);
                 Ok(())
             }
             Command::TextProperties => {
@@ -1281,6 +1289,7 @@ impl eframe::App for VectorStudioApp {
         crate::page_dialogs::document_options_window(&ctx, &mut self.state);
         crate::text_menu::change_case_window(&ctx, &mut self.state);
         crate::text_menu::statistics_window(&ctx, &mut self.state);
+        crate::text_menu::columns_window(&ctx, &mut self.state);
         crate::templates::new_window(&ctx, &mut self.state);
         crate::edit_tools::copy_properties_window(&ctx, &mut self.state);
         self.settle(&ctx);

@@ -1,4 +1,4 @@
-//! Text menu windows: Change Case and Text Statistics.
+//! Text menu windows: Change Case, Text Statistics and Columns.
 
 use vs_core::text_tools::{Case, TextStats, change_case};
 use vs_core::{ObjectId, Shape};
@@ -104,5 +104,82 @@ pub fn statistics_window(ctx: &egui::Context, state: &mut AppState) {
         });
     if !open || close {
         state.show_text_statistics = false;
+    }
+}
+
+/// Paragraph text Columns works on: the selected unlocked paragraph text.
+pub fn column_targets(state: &AppState) -> Vec<ObjectId> {
+    state
+        .selected_objects()
+        .filter(|o| !o.locked && matches!(&o.shape, Shape::Text(t) if t.is_paragraph()))
+        .map(|o| o.id)
+        .collect()
+}
+
+/// The open Columns window: number of columns and gutter, the gutter in display units.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ColumnsDialog {
+    columns: u32,
+    gutter: f64,
+}
+
+pub fn open_columns(state: &mut AppState) {
+    let unit = state.doc.display_unit;
+    let first = state.selected_objects().find_map(|o| match &o.shape {
+        Shape::Text(t) if t.is_paragraph() => Some((t.columns, t.gutter)),
+        _ => None,
+    });
+    let (columns, gutter) = first.unwrap_or((1, 0.0));
+    // A new split starts with a 5 mm gutter.
+    let gutter = if columns > 1 { gutter } else { vs_core::Unit::Millimeters.to_points(5.0) };
+    state.columns = Some(ColumnsDialog { columns: columns.max(1), gutter: unit.from_points(gutter) });
+}
+
+/// The Columns window: how many columns the selected paragraph text has, and the space
+/// between them. OK applies.
+pub fn columns_window(ctx: &egui::Context, state: &mut AppState) {
+    let Some(mut d) = state.columns.take() else { return };
+    let unit = state.doc.display_unit;
+    let mut open = true;
+    let (mut ok, mut cancel) = (false, false);
+    egui::Window::new("Columns")
+        .collapsible(false)
+        .resizable(false)
+        .open(&mut open)
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .show(ctx, |ui| {
+            egui::Grid::new("columns_grid").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
+                ui.label("Number of columns:");
+                crate::a11y::add(ui, egui::DragValue::new(&mut d.columns).range(1..=12).speed(0.1), "Number of columns");
+                ui.end_row();
+                ui.label("Gutter:");
+                let gutter = egui::DragValue::new(&mut d.gutter)
+                    .range(0.0..=f64::MAX)
+                    .speed(unit.step() / 2.0)
+                    .max_decimals(unit.decimals())
+                    .suffix(format!(" {}", unit.suffix()));
+                ui.add_enabled_ui(d.columns > 1, |ui| crate::a11y::add(ui, gutter, "Gutter"));
+                ui.end_row();
+            });
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                ok = crate::a11y::window_button(ui, true, "OK", "Columns").clicked();
+                cancel = crate::a11y::window_button(ui, true, "Cancel", "Columns").clicked();
+            });
+        });
+    if ok {
+        let ids = column_targets(state);
+        let gutter = unit.to_points(d.gutter);
+        let page = state.doc.active_page_mut();
+        for id in ids {
+            if let Some(obj) = page.object_mut(id)
+                && let Shape::Text(t) = &mut obj.shape
+            {
+                t.columns = d.columns;
+                t.gutter = if d.columns > 1 { gutter } else { 0.0 };
+            }
+        }
+    } else if open && !cancel {
+        state.columns = Some(d);
     }
 }

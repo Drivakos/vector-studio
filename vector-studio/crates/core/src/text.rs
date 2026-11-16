@@ -75,6 +75,25 @@ pub struct Text {
     /// [`crate::Document::sync_page_numbers`]). Typing into it makes it plain text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub field: Option<TextField>,
+    /// Paragraph text: the frame is split into this many columns side by side, and the
+    /// words flow down one column and on into the next.
+    #[serde(default = "one", skip_serializing_if = "is_one")]
+    pub columns: u32,
+    /// Paragraph text: space between columns, in points.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub gutter: f64,
+}
+
+fn one() -> u32 {
+    1
+}
+
+fn is_one(n: &u32) -> bool {
+    *n == 1
+}
+
+fn is_zero(v: &f64) -> bool {
+    *v == 0.0
 }
 
 impl Text {
@@ -92,7 +111,18 @@ impl Text {
             frame: None,
             on_path: None,
             field: None,
+            columns: 1,
+            gutter: 0.0,
         }
+    }
+
+    /// Paragraph text: the left edge and width of each column in the frame.
+    pub fn column_spans(&self) -> Vec<(f64, f64)> {
+        let Some(frame) = self.frame else { return vec![(0.0, 0.0)] };
+        let n = self.columns.max(1);
+        let gutter = self.gutter.max(0.0);
+        let width = ((frame.width - gutter * f64::from(n - 1)) / f64::from(n)).max(1.0);
+        (0..n).map(|i| (f64::from(i) * (width + gutter), width)).collect()
     }
 
     pub fn is_paragraph(&self) -> bool {
@@ -147,7 +177,8 @@ impl Text {
     pub fn to_path(&self) -> BezPath {
         let frame = self.frame.map(|f| (f.width.to_bits(), f.height.to_bits()));
         let guide = self.on_path.as_ref().map(BezPath::to_svg);
-        let key = (self.content.clone(), self.family.clone(), self.style.clone(), self.size.to_bits(), self.align, frame, guide);
+        let columns = (self.columns, self.gutter.to_bits());
+        let key = (self.content.clone(), self.family.clone(), self.style.clone(), self.size.to_bits(), self.align, frame, guide, columns);
         let cache = PATHS.get_or_init(Mutex::default);
         if let Some(path) = cache.lock().expect("text cache").get(&key) {
             return path.clone();
@@ -162,7 +193,7 @@ impl Text {
     }
 }
 
-type PathKey = (String, String, String, u64, TextAlign, Option<(u64, u64)>, Option<String>);
+type PathKey = (String, String, String, u64, TextAlign, Option<(u64, u64)>, Option<String>, (u32, u64));
 static PATHS: OnceLock<Mutex<HashMap<PathKey, BezPath>>> = OnceLock::new();
 
 /// One laid-out line.
@@ -219,10 +250,17 @@ impl TextLayout {
     /// The caret index (counting `\n`) closest to `p`, local space.
     pub fn index_at(&self, p: Point) -> usize {
         let line_height = self.ascent + self.descent;
-        let row = self
-            .lines
-            .iter()
-            .position(|l| p.y < l.baseline + self.descent && p.y >= l.baseline - self.ascent.max(line_height))
+        // Lines at the height of `p`; side by side in columns, the one nearest across.
+        let across = |l: &Line| {
+            let (a, b) = (l.carets[0], *l.carets.last().expect("a line has a caret"));
+            if p.x < a.min(b) { a.min(b) - p.x } else { (p.x - a.max(b)).max(0.0) }
+        };
+        let row = (0..self.lines.len())
+            .filter(|i| {
+                let l = &self.lines[*i];
+                p.y < l.baseline + self.descent && p.y >= l.baseline - self.ascent.max(line_height)
+            })
+            .min_by(|a, b| across(&self.lines[*a]).total_cmp(&across(&self.lines[*b])))
             .unwrap_or(if p.y < 0.0 { 0 } else { self.lines.len() - 1 });
         let before = self.lines[row].start;
         let carets = &self.lines[row].carets;
@@ -253,6 +291,8 @@ fn layout(text: &Text) -> TextLayout {
     // Paragraph text starts with the first line's ascent inside the top of the frame.
     let first_baseline = if frame.is_some() { ascent } else { 0.0 };
 
+    let columns = text.column_spans();
+    let (mut column, mut row) = (0, 0);
     let mut path = BezPath::new();
     let mut lines = Vec::new();
     let mut overflow = false;
@@ -267,11 +307,23 @@ fn layout(text: &Text) -> TextLayout {
             .collect();
         let advance: Vec<f64> = glyphs.iter().map(|g| g.2).collect();
         let ranges = match frame {
-            Some(f) => wrap(&glyphs.iter().map(|g| g.0).collect::<Vec<_>>(), &advance, f.width()),
+            Some(_) => wrap(&glyphs.iter().map(|g| g.0).collect::<Vec<_>>(), &advance, columns[0].1),
             None => std::iter::once(0..glyphs.len()).collect(),
         };
         for range in ranges {
-            let baseline = first_baseline + lines.len() as f64 * line_height;
+            let mut baseline = first_baseline + row as f64 * line_height;
+            // Past the bottom of a column: on to the top of the next one, if there is one.
+            if let Some(f) = frame
+                && baseline + descent > f.height() + 1e-9
+                && row > 0
+                && column + 1 < columns.len()
+            {
+                column += 1;
+                row = 0;
+                baseline = first_baseline;
+            }
+            row += 1;
+            let (left, col_width) = columns[column];
             let chars = &glyphs[range.clone()];
             // Trailing spaces hang past the edge, so they do not count for alignment.
             let shown = chars.len() - chars.iter().rev().take_while(|g| g.0 == ' ').count();
@@ -280,9 +332,9 @@ fn layout(text: &Text) -> TextLayout {
                 (None, TextAlign::Left) => 0.0,
                 (None, TextAlign::Center) => -width / 2.0,
                 (None, TextAlign::Right) => -width,
-                (Some(_), TextAlign::Left) => 0.0,
-                (Some(f), TextAlign::Center) => (f.width() - width) / 2.0,
-                (Some(f), TextAlign::Right) => f.width() - width,
+                (Some(_), TextAlign::Left) => left,
+                (Some(_), TextAlign::Center) => left + (col_width - width) / 2.0,
+                (Some(_), TextAlign::Right) => left + col_width - width,
             };
             let hidden = frame.is_some_and(|f| baseline + descent > f.height() + 1e-9);
             overflow |= hidden;
@@ -766,6 +818,43 @@ mod tests {
         assert_eq!(l.lines.len(), 3, "hidden lines still have carets");
         let b = short.to_path().bounding_box();
         assert!(b.y1 <= 30.5, "only the first line is drawn: {b:?}");
+    }
+
+    #[test]
+    fn columns_flow_down_one_and_on_into_the_next() {
+        // Three lines of 24 pt text need about 84 pt; two columns of a 60 pt high frame.
+        let mut t = paragraph("one\ntwo\nthree\nfour", 210.0, 60.0);
+        t.columns = 2;
+        t.gutter = 10.0;
+        assert_eq!(t.column_spans(), vec![(0.0, 100.0), (110.0, 100.0)]);
+        let l = t.layout();
+        let first_col: Vec<_> = l.lines.iter().filter(|x| x.carets[0] < 100.0).collect();
+        let second_col: Vec<_> = l.lines.iter().filter(|x| x.carets[0] >= 110.0).collect();
+        assert!(!first_col.is_empty() && !second_col.is_empty(), "{:?}", l.lines);
+        assert_eq!(first_col.len() + second_col.len(), 4);
+        assert!((second_col[0].baseline - l.ascent).abs() < 1e-9, "the next column starts at the top");
+        // Clicking in the second column finds its line, not the one beside it.
+        let target = second_col[0];
+        let p = Point::new(target.carets[1] + 0.1, target.baseline - 2.0);
+        assert_eq!(l.index_at(p), target.start + 1);
+        assert!(!l.overflow);
+        let b = t.to_path().bounding_box();
+        assert!(b.x0 >= 109.0 || b.x1 > 110.0, "glyphs in the second column: {b:?}");
+        // One column (the default) is what it always was.
+        t.columns = 1;
+        assert!(t.layout().overflow, "four lines do not fit one 60 pt column");
+    }
+
+    #[test]
+    fn old_paragraph_text_without_columns_reads_as_one_column() {
+        let mut t = paragraph("x", 50.0, 50.0);
+        let json = serde_json::to_string(&t).unwrap();
+        assert!(!json.contains("columns") && !json.contains("gutter"), "{json}");
+        t.columns = 3;
+        let back: Text = serde_json::from_str(&serde_json::to_string(&t).unwrap()).unwrap();
+        assert_eq!(back.columns, 3);
+        let one: Text = serde_json::from_str(&json).unwrap();
+        assert_eq!(one.columns, 1);
     }
 
     fn line(a: (f64, f64), b: (f64, f64)) -> BezPath {

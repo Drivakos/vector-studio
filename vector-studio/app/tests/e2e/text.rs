@@ -427,3 +427,27 @@ fn show_nonprinting_characters_marks_spaces_and_paragraph_ends() {
     });
     assert!(near_end, "¶ after the last letter");
 }
+
+#[test]
+fn columns_split_paragraph_text_and_the_words_flow_on() {
+    let mut app = E2e::new();
+    app.key(Key::F8);
+    app.drag_doc((100.0, 100.0), (400.0, 160.0));
+    app.type_text("one\ntwo\nthree\nfour");
+    app.key(Key::Escape);
+    assert!(text(&app, 0).layout().overflow, "four lines overflow one 60 pt column");
+    assert!(!any_dark(&mut app, 260.0, 105.0, 400.0, 160.0), "nothing on the right half yet");
+
+    app.menu(&["Text", "Columns…"]);
+    app.fill("Number of columns", "2");
+    app.fill("Gutter", "10");
+    app.click("OK (Columns)");
+    let t = text(&app, 0);
+    assert_eq!(t.columns, 2);
+    assert!(close(t.gutter, vs_core::Unit::Millimeters.to_points(10.0)), "{}", t.gutter);
+    assert!(!t.layout().overflow, "the words flow on into the second column");
+    assert!(any_dark(&mut app, 260.0, 105.0, 400.0, 160.0), "the second column is drawn");
+
+    app.shortcut(Modifiers::COMMAND, Key::Z);
+    assert_eq!(text(&app, 0).columns, 1, "undo");
+}
