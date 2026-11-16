@@ -551,6 +551,10 @@ impl VectorStudioApp {
                 crate::text_menu::open_change_case(s);
                 Ok(())
             }
+            Command::TextProperties => {
+                s.dockers.show(DockerKind::Properties);
+                Ok(())
+            }
             Command::TextStatistics => {
                 let _: () = s.show_text_statistics = true;
                 Ok(())

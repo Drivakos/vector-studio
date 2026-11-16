@@ -387,3 +387,17 @@ fn text_statistics_count_the_selected_text_or_the_whole_drawing() {
     assert!(app.exists("Selected text"));
     assert!(app.exists("Words: 1"));
 }
+
+#[test]
+fn text_properties_opens_the_properties_docker_on_the_selected_text() {
+    let mut app = E2e::new();
+    app.key(Key::F8);
+    app.click_doc(100.0, 200.0);
+    app.type_text("Hi");
+    app.key(Key::Escape);
+    app.docker("Objects");
+    assert!(!app.exists("Text (properties)"));
+    app.menu(&["Text", "Text Properties…"]);
+    assert!(app.is_selected("Properties docker"));
+    assert_eq!(app.value("Text (properties)"), "Hi");
+}
