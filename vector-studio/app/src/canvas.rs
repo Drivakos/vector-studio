@@ -91,11 +91,26 @@ impl GpuCanvas {
         id
     }
 
-    /// Render the active page at `size` physical pixels. Returns the egui texture to show.
-    fn render(&mut self, state: &AppState, size: [u32; 2], pixels_per_point: f64) -> Option<egui::TextureId> {
+    /// Render the active page for a canvas of `size` physical pixels. Returns the egui
+    /// texture to show and where it goes, in logical points from the canvas corner.
+    fn render(&mut self, state: &AppState, size: [u32; 2], pixels_per_point: f64) -> Option<(egui::TextureId, Rect)> {
         if size[0] == 0 || size[1] == 0 {
             return None;
         }
+        // Pixels view: draw the export-resolution bitmap's pixels, shown magnified.
+        let grid = (state.view_mode == vs_render::ViewMode::Pixels)
+            .then(|| vs_render::pixel_grid(&state.viewport, size, pixels_per_point, state.export.dpi))
+            .flatten();
+        let (viewport, ppp, size, place) = match grid {
+            Some(g) => {
+                let shown = vec2(g.size[0] as f32, g.size[1] as f32) * g.scale as f32;
+                (g.viewport, 1.0, g.size, Rect::from_min_size(pos2(g.origin.x as f32, g.origin.y as f32), shown))
+            }
+            None => {
+                let shown = vec2(size[0] as f32, size[1] as f32) / pixels_per_point as f32;
+                (state.viewport, pixels_per_point, size, Rect::from_min_size(Pos2::ZERO, shown))
+            }
+        };
         let id = self.ensure_target(size);
         self.scene.reset();
         // A page background shows on screen whether or not it prints and exports.
@@ -103,7 +118,7 @@ impl GpuCanvas {
             page: state.doc.background.map_or(self.colors.page, |b| vs_render::to_color(b.color)),
             ..self.colors
         };
-        build_page_scene(&mut self.scene, state.doc.active_page(), &state.viewport, pixels_per_point, &colors, state.view_mode);
+        build_page_scene(&mut self.scene, state.doc.active_page(), &viewport, ppp, &colors, state.view_mode);
         let target = self.target.as_ref()?;
         let params = RenderParams {
             base_color: self.colors.pasteboard,
@@ -121,7 +136,7 @@ impl GpuCanvas {
             log::error!("canvas render failed: {err}");
             return None;
         }
-        Some(id)
+        Some((id, place))
     }
 }
 
@@ -167,8 +182,9 @@ pub fn canvas_pane_ui(
     ];
     let painter = ui.painter_at(canvas_rect);
     match gpu.render(state, size_px, ppp as f64) {
-        Some(tex) => {
-            painter.image(tex, canvas_rect, Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0)), Color32::WHITE);
+        Some((tex, place)) => {
+            let place = place.translate(canvas_rect.min.to_vec2());
+            painter.image(tex, place, Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0)), Color32::WHITE);
         }
         None => {
             painter.rect_filled(canvas_rect, 0.0, ui.visuals().extreme_bg_color);

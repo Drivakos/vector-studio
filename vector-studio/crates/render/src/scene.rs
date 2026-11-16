@@ -37,6 +37,9 @@ pub enum ViewMode {
     /// Every outline as a one-pixel line: no fills, bitmaps as frames, PowerClip
     /// contents not clipped.
     Wireframe,
+    /// As Enhanced, but as the bitmap the page would export to: drawn at the export
+    /// resolution and magnified without smoothing (see [`pixel_grid`]).
+    Pixels,
 }
 
 impl ViewMode {
@@ -44,8 +47,46 @@ impl ViewMode {
         match self {
             ViewMode::Enhanced => "Enhanced",
             ViewMode::Wireframe => "Wireframe",
+            ViewMode::Pixels => "Pixels",
         }
     }
+}
+
+/// How Pixels view draws the page: into a texture whose pixels are the pixels of the
+/// page exported at `dpi`, which the canvas then shows magnified.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PixelGrid {
+    /// Document → texture pixels (with a pixels-per-point of 1). The page's top-left
+    /// corner falls exactly on a texture pixel corner.
+    pub viewport: Viewport,
+    /// Texture size, enough to cover the canvas.
+    pub size: [u32; 2],
+    /// Where texture pixel (0, 0) goes on the canvas, in logical points from its corner.
+    pub origin: kurbo::Vec2,
+    /// Logical canvas points per texture pixel.
+    pub scale: f64,
+}
+
+/// The Pixels view grid for a canvas of `canvas_px` physical pixels showing `viewport`.
+/// `None` while a bitmap pixel would be no bigger than a screen pixel: then the page
+/// looks the same as in Enhanced view.
+pub fn pixel_grid(viewport: &Viewport, canvas_px: [u32; 2], pixels_per_point: f64, dpi: f64) -> Option<PixelGrid> {
+    let per_point = dpi / 72.0;
+    // Physical screen pixels per bitmap pixel.
+    let k = viewport.zoom() * pixels_per_point / per_point;
+    if k <= 1.0 || !k.is_finite() {
+        return None;
+    }
+    let offset = viewport.offset() * pixels_per_point / k;
+    let whole = kurbo::Vec2::new(offset.x.floor(), offset.y.floor());
+    let frac = offset - whole;
+    let size = canvas_px.map(|n| (f64::from(n) / k).ceil() as u32 + 2);
+    Some(PixelGrid {
+        viewport: Viewport::new(per_point, whole),
+        size,
+        origin: frac * k / pixels_per_point,
+        scale: k / pixels_per_point,
+    })
 }
 
 /// Colour of wireframe lines.
@@ -161,4 +202,27 @@ fn transform_rect(viewport: &Viewport, r: Rect) -> Rect {
     let p1 = viewport.doc_to_screen(kurbo::Point::new(r.x1, r.y1));
     // Snap to the pixel grid so the page edge is sharp.
     Rect::new(p0.x.round(), p0.y.round(), p1.x.round(), p1.y.round())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kurbo::{Point, Vec2};
+
+    #[test]
+    fn pixel_grid_lines_bitmap_pixels_up_with_the_page_and_the_screen() {
+        let mut view = Viewport::new(8.0, Vec2::new(37.3, -12.6));
+        let grid = pixel_grid(&view, [1000, 600], 2.0, 72.0).expect("8 pt per bitmap pixel on screen");
+        assert_eq!(grid.scale, 8.0, "one 72 dpi pixel per document point, 8 screen points wide");
+        let origin = grid.viewport.doc_to_screen(Point::ZERO);
+        assert_eq!((origin.x.fract(), origin.y.fract()), (0.0, 0.0), "the page corner is a pixel corner");
+        for p in [Point::ZERO, Point::new(10.0, 3.0), Point::new(-2.5, 40.25)] {
+            let shown = grid.origin + grid.viewport.doc_to_screen(p).to_vec2() * grid.scale;
+            assert!((shown - view.doc_to_screen(p).to_vec2()).hypot() < 1e-9, "{p:?} lands where Enhanced draws it");
+        }
+        assert!(grid.size[0] as f64 * grid.scale * 2.0 >= 1000.0 && grid.size[1] as f64 * grid.scale * 2.0 >= 600.0, "covers the canvas");
+
+        view = Viewport::new(1.0, Vec2::ZERO);
+        assert_eq!(pixel_grid(&view, [1000, 600], 2.0, 300.0), None, "pixels smaller than the screen's");
+    }
 }

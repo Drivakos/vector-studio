@@ -101,3 +101,63 @@ fn wireframe_draws_outlines_only_and_enhanced_brings_fills_back() {
     let back = app.pixel(150.0, 150.0);
     assert!(back[0] > 200 && back[1] < 60, "{back:?}");
 }
+
+/// Screen pixels along document row `y` from `x0` to `x1`, grouped by the bitmap pixel
+/// (at `dpi`) each falls in. Pixels on a group's edge are left out.
+fn by_bitmap_pixel(app: &mut E2e, y: f64, x0: f64, x1: f64, dpi: f64) -> Vec<Vec<[u8; 4]>> {
+    let ppp = app.h.ctx.pixels_per_point();
+    let img = app.h.render().expect("render");
+    let (a, b) = (app.at(x0, y), app.at(x1, y));
+    let row = (a.y * ppp) as u32;
+    let mut groups: Vec<(i64, Vec<[u8; 4]>)> = Vec::new();
+    for px in (a.x * ppp) as u32..(b.x * ppp) as u32 {
+        let centre = egui::pos2((px as f32 + 0.5) / ppp, a.y);
+        let doc_x = app.state().viewport.screen_to_doc(vs_core::kurbo::Point::new((centre.x - app.state().canvas_rect.min.x) as f64, 0.0)).x;
+        let cell = (doc_x * dpi / 72.0).floor() as i64;
+        let inside = ((doc_x * dpi / 72.0).fract() - 0.5).abs() < 0.35;
+        match groups.last_mut() {
+            Some((c, colours)) if *c == cell => {
+                if inside {
+                    colours.push(img.get_pixel(px, row).0);
+                }
+            }
+            _ => groups.push((cell, if inside { vec![img.get_pixel(px, row).0] } else { Vec::new() })),
+        }
+    }
+    groups.into_iter().map(|(_, c)| c).collect()
+}
+
+#[test]
+fn pixels_view_shows_the_page_as_export_resolution_pixels() {
+    let mut app = E2e::new();
+    app.key(Key::F7);
+    app.drag_doc((100.0, 100.0), (300.0, 250.0));
+    app.click("Swatch Red");
+    app.pick_tool();
+    app.key(Key::Escape); // no selection frame drawn over the edge
+    // A low export resolution makes the pixels several screen pixels wide.
+    app.shortcut(Modifiers::COMMAND, Key::E);
+    app.click("Export format");
+    app.click("PNG - Portable Network Graphics");
+    app.fill("Resolution", "18");
+    app.click("Cancel");
+    let uniform = |groups: &[Vec<[u8; 4]>]| groups.iter().all(|g| g.windows(2).all(|w| w[0] == w[1]));
+    // Rows across the ellipse's left edge, which crosses each at a different place.
+    let rows = |app: &mut E2e| (0..12).map(|i| by_bitmap_pixel(app, 130.0 + i as f64 * 8.0, 85.0, 140.0, 18.0)).collect::<Vec<_>>();
+
+    assert!(!rows(&mut app).iter().all(|r| uniform(r)), "Enhanced draws a smooth edge inside a bitmap pixel");
+
+    app.menu(&["View", "Pixels"]);
+    assert_eq!(app.state().view_mode, vs_render::ViewMode::Pixels);
+    let pixels = rows(&mut app);
+    assert!(pixels[0].iter().filter(|g| g.len() >= 2).count() >= 5, "several screen pixels wide: {:?}", pixels[0]);
+    for row in &pixels {
+        assert!(uniform(row), "one colour per bitmap pixel: {row:?}");
+    }
+    let px = app.pixel(200.0, 175.0);
+    assert!(px[0] > 200 && px[1] < 60, "still filled: {px:?}");
+
+    app.click("View modes");
+    app.click("Enhanced (view modes)");
+    assert!(!rows(&mut app).iter().all(|r| uniform(r)));
+}

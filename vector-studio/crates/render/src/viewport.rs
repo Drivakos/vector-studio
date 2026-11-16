@@ -26,6 +26,11 @@ impl Default for Viewport {
 }
 
 impl Viewport {
+    /// A viewport with this zoom (screen points per document point) and offset.
+    pub fn new(zoom: f64, offset: Vec2) -> Self {
+        Self { zoom: clamp_zoom(zoom), offset }
+    }
+
     pub fn zoom(&self) -> f64 {
         self.zoom
     }

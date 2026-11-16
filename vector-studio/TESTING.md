@@ -85,6 +85,7 @@ Names must be unique on screen, or a test cannot tell widgets apart.
 | Fountain fill from the docker (linear, elliptical, rendered colours), uniform / no fill, transparency (docker and Transparency tool, rendered), Interactive Fill drag and end handles, property bar fill type, fill moving with the object, Color Eyedropper pick/apply to fill and outline, Attributes Eyedropper | `fills.rs` |
 | The 13 units in the property bar and the Properties docker | `units.rs` |
 | Zoom (keys, toolbar, Zoom tool), Pan tool, rulers, dockers, palette, status bar | `view.rs` |
+| Pixels view mode: one colour per export-resolution pixel on screen, back to Enhanced | `view.rs` |
 | View modes: Wireframe from the View menu (pixels: no fill, grey outline), Enhanced from the View Modes dropdown | `view.rs` |
 
 Not covered end to end:

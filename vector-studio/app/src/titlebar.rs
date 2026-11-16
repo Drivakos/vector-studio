@@ -341,7 +341,7 @@ fn act(state: &mut AppState, action: Action, resp: &egui::Response, out: &mut Ve
                 pick(ui, ViewMode::Wireframe);
                 ui.add_enabled(false, egui::Button::new("Normal"));
                 pick(ui, ViewMode::Enhanced);
-                ui.add_enabled(false, egui::Button::new("Pixels"));
+                pick(ui, ViewMode::Pixels);
             });
         }
         Action::Alignment => {
