@@ -57,6 +57,8 @@ type Originals = Vec<(ObjectId, Affine)>;
 
 enum Drag {
     Marquee { start: Point, add: bool },
+    /// Freehand Pick: the loop drawn so far.
+    Lasso { points: Vec<Point>, add: bool },
     NodeMarquee { start: Point, add: bool },
     Move { press: Point, start: Point, originals: Originals, moved: bool, was_selected: bool },
     /// `grab` is where the pointer took the handle, relative to the bounds point it controls.
@@ -173,7 +175,7 @@ fn is_shape_tool(tool: Tool) -> bool {
 
 pub fn is_implemented(tool: Tool) -> bool {
     is_shape_tool(tool)
-        || matches!(tool, Tool::Pick | Tool::Shape | Tool::Zoom | Tool::Pan | Tool::Freehand | Tool::Bezier | Tool::Pen | Tool::Text)
+        || matches!(tool, Tool::Pick | Tool::FreehandPick | Tool::Shape | Tool::Zoom | Tool::Pan | Tool::Freehand | Tool::Bezier | Tool::Pen | Tool::Text)
         || matches!(tool, Tool::InteractiveFill | Tool::Transparency | Tool::ColorEyedropper | Tool::AttributesEyedropper)
         || matches!(tool, Tool::Crop | Tool::Knife | Tool::Eraser)
         || matches!(tool, Tool::TwoPointLine | Tool::Polyline | Tool::BSpline | Tool::Spiral)
@@ -186,7 +188,7 @@ fn is_three_point(tool: Tool) -> bool {
 
 pub fn cursor(tool: Tool) -> egui::CursorIcon {
     match tool {
-        Tool::Pick => egui::CursorIcon::Default,
+        Tool::Pick | Tool::FreehandPick => egui::CursorIcon::Default,
         Tool::Shape => egui::CursorIcon::PointingHand,
         Tool::Text => egui::CursorIcon::Text,
         Tool::ColorEyedropper | Tool::AttributesEyedropper | Tool::Transparency => egui::CursorIcon::PointingHand,
@@ -262,6 +264,13 @@ fn apply(state: &mut AppState, originals: &Originals, t: Affine) {
 fn press(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers, double: bool) {
     match state.tool {
         Tool::Pick => press_pick(state, view, p, mods, double),
+        // Like Pick on objects and handles; on empty space a drag draws a loop.
+        Tool::FreehandPick => {
+            press_pick(state, view, p, mods, double);
+            if let Some(Drag::Marquee { add, .. }) = state.tools.drag {
+                state.tools.drag = Some(Drag::Lasso { points: vec![p], add });
+            }
+        }
         Tool::Shape => press_shape(state, view, p, mods, double),
         Tool::Freehand => state.tools.drag = Some(Drag::Freehand { points: vec![p] }),
         Tool::Bezier | Tool::Pen => press_pen(state, view, p),
@@ -654,6 +663,12 @@ fn drag_to(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers) {
             }
             Drag::Erase { points }
         }
+        Drag::Lasso { mut points, add } => {
+            if points.last().is_none_or(|l| view.screen_dist(*l, p) > 1.5) {
+                points.push(p);
+            }
+            Drag::Lasso { points, add }
+        }
         Drag::PenHandle { node } => {
             if view.screen_dist(node, p) > DRAG_START
                 && let Some(pen) = state.tools.pen.as_mut()
@@ -850,6 +865,22 @@ fn release(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers) {
                     state.selection.clear();
                 }
                 for id in inside {
+                    if !state.selection.contains(&id) {
+                        state.selection.push(id);
+                    }
+                }
+                state.marquee_selection = Some(state.selection.clone());
+            }
+            state.tools.pick_mode = PickMode::Scale;
+        }
+        Drag::Lasso { mut points, add } => {
+            points.push(p);
+            if !add {
+                state.selection.clear();
+            }
+            let travelled = points.iter().any(|q| view.screen_dist(points[0], *q) > DRAG_START);
+            if travelled {
+                for id in state.doc.active_page().objects_in_lasso(&points) {
                     if !state.selection.contains(&id) {
                         state.selection.push(id);
                     }
@@ -1157,7 +1188,7 @@ pub fn draw_overlay(painter: &egui::Painter, state: &AppState, canvas: Rect) {
             }
         }
         let handles = handle_points(bounds, &view);
-        let rotate = state.tool == Tool::Pick && state.tools.pick_mode == PickMode::Rotate;
+        let rotate = matches!(state.tool, Tool::Pick | Tool::FreehandPick) && state.tools.pick_mode == PickMode::Rotate;
         let all_locked = state.selection.iter().all(|id| page.object(*id).is_some_and(|o| o.locked));
         for (i, h) in handles.iter().enumerate() {
             let at = view.screen(*h);
@@ -1204,6 +1235,10 @@ pub fn draw_overlay(painter: &egui::Painter, state: &AppState, canvas: Rect) {
         Some(Drag::Freehand { points }) => {
             let pts: Vec<Pos2> = points.iter().map(|p| view.screen(*p)).collect();
             painter.add(egui::Shape::line(pts, Stroke::new(1.0, Color32::BLACK)));
+        }
+        Some(Drag::Lasso { points, .. }) => {
+            let pts: Vec<Pos2> = points.iter().map(|p| view.screen(*p)).collect();
+            painter.add(egui::Shape::closed_line(pts, thin));
         }
         Some(Drag::Crop { start }) => {
             if let Some(p) = state.tools.pointer {
@@ -1331,6 +1366,8 @@ pub fn hint(state: &AppState) -> String {
             format!("{selected} · click again to rotate · double-click to edit nodes · Shift-click to add or remove")
         }
         Tool::Pick => "Click an object to select it, or drag a box around objects".into(),
+        Tool::FreehandPick if n > 0 => format!("{selected} · drag a loop around objects to select them · Shift adds"),
+        Tool::FreehandPick => "Drag a loop around objects to select them, or click an object".into(),
         Tool::Shape => match shape_target(state).and_then(|id| state.doc.active_page().object(id)) {
             Some(o) if matches!(o.shape, Shape::Curve { .. }) => {
                 "Drag nodes or handles · double-click a line to add a node, a node to delete it".into()

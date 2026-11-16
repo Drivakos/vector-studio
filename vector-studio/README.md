@@ -48,6 +48,7 @@ Phase 1 drawing:
 | Area | What you can do |
 |---|---|
 | Pick | Click, Shift-click, marquee select. Drag to move (Cmd = one axis). Handles scale (corners keep proportions; Cmd frees them; Shift scales from the centre). Click a selected object again for rotate handles (Cmd = 15° steps). Double-click an object to edit its nodes with the Shape tool |
+| Freehand Pick | Pick tool flyout. Drag a loop of any shape: it selects the objects that lie wholly inside it (Shift adds to the selection; a loop around nothing clears it). Clicking, moving, the handles and the property bar work as with the Pick tool |
 | Shape | Drag nodes and Bézier handles, marquee nodes, double-click a segment to add a node or a node to delete it, Delete removes nodes. Drag a rectangle corner to round it. Ellipse: drag its node inside for a pie, outside for an arc (Cmd = 15° steps). Polygon and star: drag an outer node to resize and turn every side (Cmd keeps the angle); a star's inner node sets its sharpness |
 | Rectangle, Ellipse, Polygon, Star | Drag to draw; Cmd = equal sides, Shift = from the centre. Polygon sides and star points/sharpness in the property bar. A selected ellipse gets Whole ellipse / Pie / Arc and Change direction |
 | Freehand | Drag; the stroke is fitted to Béziers; ending on the start closes it |

@@ -196,3 +196,27 @@ fn bezier_handles_can_be_dragged_with_the_shape_tool() {
     let (_, moved) = vs_core::nodes::nodes(path)[1].handle_in.unwrap();
     assert!(close(moved.y, handle.y - 60.0), "{handle:?} → {moved:?}");
 }
+
+#[test]
+fn freehand_pick_selects_what_the_loop_encloses_and_shift_adds() {
+    let mut app = E2e::new();
+    let a = app.draw_rect(100.0, 100.0, 150.0, 150.0);
+    let b = app.draw_rect(300.0, 300.0, 350.0, 350.0);
+    app.flyout_tool("Pick", "Freehand Pick");
+    assert_eq!(app.state().tool, Tool::FreehandPick);
+
+    // A triangle whose bounding box holds both rectangles, but only `a` lies inside it.
+    app.stroke_doc(&[(60.0, 60.0), (230.0, 60.0), (400.0, 60.0), (230.0, 230.0), (60.0, 400.0), (60.0, 230.0), (60.0, 61.0)]);
+    assert_eq!(app.selection(), vec![a], "only what lies wholly inside the loop");
+
+    app.hold(Modifiers::SHIFT);
+    app.stroke_doc(&[(280.0, 280.0), (370.0, 280.0), (370.0, 370.0), (280.0, 370.0), (280.0, 281.0)]);
+    app.release_mods();
+    assert_eq!(app.selection(), vec![a, b], "Shift adds to the selection");
+
+    app.stroke_doc(&[(500.0, 500.0), (600.0, 500.0), (600.0, 600.0), (500.0, 501.0)]);
+    assert!(app.selection().is_empty(), "a loop around nothing clears the selection");
+
+    app.click_doc(100.0, 125.0);
+    assert_eq!(app.selection(), vec![a], "clicking an object still selects it");
+}

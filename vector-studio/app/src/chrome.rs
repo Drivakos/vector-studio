@@ -100,7 +100,7 @@ pub fn property_bar_ui(ui: &mut egui::Ui, state: &mut AppState, out: &mut Vec<Co
             theme::vsep(ui);
         }
         match state.tool {
-            Tool::Pick if state.has_selection() => selection_bar(ui, state, out),
+            Tool::Pick | Tool::FreehandPick if state.has_selection() => selection_bar(ui, state, out),
             Tool::Pick | Tool::FreehandPick | Tool::FreeTransform => page_bar(ui, state),
             Tool::Zoom | Tool::Pan => {
                 zoom_field(ui, state);

@@ -299,6 +299,40 @@ impl Page {
             .collect()
     }
 
+    /// Selectable objects drawn wholly inside the closed loop through `lasso` (page
+    /// space), bottom first: every point of their outlines is inside it.
+    pub fn objects_in_lasso(&self, lasso: &[Point]) -> Vec<ObjectId> {
+        if lasso.len() < 3 {
+            return Vec::new();
+        }
+        let mut loop_path = BezPath::new();
+        loop_path.move_to(lasso[0]);
+        lasso[1..].iter().for_each(|p| loop_path.line_to(*p));
+        loop_path.close_path();
+        let inside = |p: Point| kurbo::Shape::winding(&loop_path, p) != 0;
+        self.objects
+            .iter()
+            .filter(|o| self.is_selectable(o))
+            .filter(|o| {
+                let mut points = Vec::new();
+                for leaf in o.leaves() {
+                    kurbo::flatten(&leaf.path, 0.25, |el| {
+                        if let Some(p) = el.end_point() {
+                            points.push(p);
+                        }
+                    });
+                }
+                if points.is_empty() {
+                    // Nothing drawn (empty text): its box must be inside.
+                    let b = o.world_bounds();
+                    points = vec![b.origin(), Point::new(b.x1, b.y0), Point::new(b.x1, b.y1), Point::new(b.x0, b.y1)];
+                }
+                points.into_iter().all(inside)
+            })
+            .map(|o| o.id)
+            .collect()
+    }
+
     /// Union of the bounds of `ids`, if any of them exist.
     pub fn bounds_of(&self, ids: &[ObjectId]) -> Option<Rect> {
         ids.iter()
@@ -415,5 +449,20 @@ mod tests {
         let rect = Rect::new(0.0, 0.0, 10.0, 40.0);
         let b = Shape::Rectangle { rect, corner_radius: 100.0 }.to_path().bounding_box();
         assert!((b.width() - 10.0).abs() < 1e-6 && (b.height() - 40.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_lasso_takes_only_what_lies_wholly_inside() {
+        let mut doc = crate::document::Document::default();
+        let circle = doc.add_object(Shape::Ellipse { rect: Rect::new(10.0, 10.0, 50.0, 50.0), arc: None }, Style::new_object());
+        let wide = doc.add_object(Shape::Rectangle { rect: Rect::new(60.0, 10.0, 200.0, 50.0), corner_radius: 0.0 }, Style::new_object());
+        // A diamond around the circle: it holds the circle but not the circle's bounding box.
+        let diamond = [Point::new(30.0, -2.0), Point::new(62.0, 30.0), Point::new(30.0, 62.0), Point::new(-2.0, 30.0)];
+        let page = doc.active_page();
+        assert_eq!(page.objects_in_lasso(&diamond), vec![circle]);
+        assert!(page.objects_inside(Rect::new(-2.0, -2.0, 62.0, 62.0)).contains(&circle));
+        let around_both = [Point::new(0.0, 0.0), Point::new(210.0, 0.0), Point::new(210.0, 60.0), Point::new(0.0, 60.0)];
+        assert_eq!(page.objects_in_lasso(&around_both), vec![circle, wide]);
+        assert!(page.objects_in_lasso(&around_both[..2]).is_empty(), "not a loop");
     }
 }
