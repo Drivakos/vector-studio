@@ -186,3 +186,26 @@ fn select_all_nodes_from_the_menu_and_cmd_a_with_the_shape_tool() {
     assert_eq!(app.state().tools.nodes.len(), 4);
     assert_eq!(app.objects().len(), 1);
 }
+
+#[test]
+fn repeat_does_the_last_move_rotation_or_command_again() {
+    let mut app = E2e::new();
+    app.draw_rect(100.0, 100.0, 150.0, 120.0);
+    app.drag_doc((100.0, 110.0), (150.0, 110.0));
+    let b = app.bounds(0);
+    assert!(close(b.x0, 150.0), "{b:?}");
+    app.shortcut(egui::Modifiers::COMMAND, egui::Key::R);
+    let b = app.bounds(0);
+    assert!(close(b.x0, 200.0) && close(b.y0, 100.0), "moved the same distance again: {b:?}");
+
+    app.click("Rotate 90° left (property bar)");
+    let once = app.bounds(0);
+    assert!(close(once.width(), 20.0), "{once:?}");
+    app.shortcut(egui::Modifiers::COMMAND, egui::Key::R);
+    let twice = app.bounds(0);
+    assert!(close(twice.width(), 50.0) && close(twice.center().x, once.center().x), "turned again about its centre: {twice:?}");
+
+    app.shortcut(egui::Modifiers::COMMAND, egui::Key::D);
+    app.shortcut(egui::Modifiers::COMMAND, egui::Key::R);
+    assert_eq!(app.objects().len(), 3, "Duplicate ran again");
+}

@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
-use vs_core::kurbo::{Point, Vec2};
+use vs_core::kurbo::{Affine, Point, Vec2};
 use vs_core::{Align, Document, History, Object, ObjectId, Shape, Unit};
 use vs_render::Viewport;
 
@@ -118,6 +118,8 @@ pub struct AppState {
     pub powerclip: crate::edit_tools::PowerClipState,
     /// How the canvas draws objects (not saved).
     pub view_mode: vs_render::ViewMode,
+    /// What Edit > Repeat does again.
+    pub last_action: Option<Repeatable>,
     /// Last status message (e.g. "Exported …").
     pub status: Option<String>,
     clipboard: Vec<Object>,
@@ -129,6 +131,62 @@ pub struct AppState {
     nodes_owner: Option<ObjectId>,
     window_title: String,
     close_confirmed: bool,
+}
+
+/// Something Edit > Repeat (Cmd+R) can do again to the current selection.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Repeatable {
+    Command(Command),
+    /// A move, scale, rotation or mirror, relative to the selection's centre.
+    Transform(Affine),
+}
+
+impl Repeatable {
+    /// Commands that act on the selection and make sense to run again.
+    pub fn command(cmd: Command) -> bool {
+        matches!(
+            cmd,
+            Command::Duplicate
+                | Command::Align(_)
+                | Command::CenterToPage
+                | Command::Distribute(_)
+                | Command::Order(_)
+                | Command::ConvertToCurves
+                | Command::ConvertOutline
+                | Command::Shape(_)
+                | Command::Combine
+                | Command::BreakApart
+                | Command::Group
+                | Command::Lock
+                | Command::Unlock
+        )
+    }
+}
+
+impl AppState {
+    /// Transform the selection by `t` (page space) and remember it for Repeat.
+    pub fn transform_selection(&mut self, t: Affine) {
+        let ids = self.selection.clone();
+        if let Some(b) = self.doc.active_page().bounds_of(&ids) {
+            self.remember_transform(t, b.center());
+        }
+        self.doc.transform_objects(&ids, t);
+    }
+
+    /// Remember `t`, done to a selection centred on `center`, for Repeat.
+    pub fn remember_transform(&mut self, t: Affine, center: Point) {
+        let c = center.to_vec2();
+        self.last_action = Some(Repeatable::Transform(Affine::translate(-c) * t * Affine::translate(c)));
+    }
+
+    /// Do a remembered transform again, about the current selection's centre.
+    fn repeat_transform(&mut self, relative: Affine) {
+        let ids = self.selection.clone();
+        if let Some(b) = self.doc.active_page().bounds_of(&ids) {
+            let c = b.center().to_vec2();
+            self.doc.transform_objects(&ids, Affine::translate(c) * relative * Affine::translate(-c));
+        }
+    }
 }
 
 impl AppState {
@@ -159,6 +217,7 @@ impl AppState {
             copy_properties: Default::default(),
             powerclip: Default::default(),
             view_mode: Default::default(),
+            last_action: None,
             status: None,
             clipboard: Vec::new(),
             clipboard_text: String::new(),
@@ -298,6 +357,7 @@ impl VectorStudioApp {
             Command::NextPage => (doc.active_page_index() + 1 < doc.page_count(), None),
             Command::ToggleRulers => (true, Some(state.prefs.show_rulers)),
             Command::ToggleGrid => (true, Some(state.prefs.show_grid)),
+            Command::Repeat => (state.has_selection() && state.last_action.is_some(), None),
             Command::ViewMode(mode) => (true, Some(state.view_mode == mode)),
             Command::ToggleGuidelines => (true, Some(state.prefs.show_guidelines)),
             Command::ToggleSnap(target) => (true, Some(*state.prefs.snap_flag(target))),
@@ -346,6 +406,17 @@ impl VectorStudioApp {
     }
 
     fn run(&mut self, cmd: Command, ctx: &egui::Context) {
+        if cmd == Command::Repeat {
+            match self.state.last_action {
+                Some(Repeatable::Command(again)) => self.run(again, ctx),
+                Some(Repeatable::Transform(t)) => self.state.repeat_transform(t),
+                None => {}
+            }
+            return;
+        }
+        if Repeatable::command(cmd) {
+            self.state.last_action = Some(Repeatable::Command(cmd));
+        }
         let s = &mut self.state;
         let center = Point::new(s.canvas_size.x as f64 / 2.0, s.canvas_size.y as f64 / 2.0);
         let page = s.doc.active_page_index();
@@ -380,6 +451,8 @@ impl VectorStudioApp {
                 let _: () = s.export.open = true;
                 Ok(())
             },
+            // Handled before this match.
+            Command::Repeat => Ok(()),
             Command::Undo | Command::Redo => {
                 tools::finish_pen(s);
                 // Typing so far becomes its own step, so Undo takes back just that.
@@ -726,7 +799,7 @@ impl VectorStudioApp {
                 // Shift first: egui matches a plain key even with Shift held.
                 for (mods, k) in [(Modifiers::SHIFT, 10.0), (Modifiers::NONE, 1.0)] {
                     if ctx.input_mut(|i| i.consume_key(mods, key)) {
-                        s.doc.move_objects(&s.selection, Vec2::new(dx * step * k, dy * step * k));
+                        s.transform_selection(Affine::translate(Vec2::new(dx * step * k, dy * step * k)));
                     }
                 }
             }

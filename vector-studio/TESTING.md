@@ -58,6 +58,7 @@ Names must be unique on screen, or a test cannot tell widgets apart.
 | Align keys and menus, Align docker, Distribute (docker and menu), order keys / toolbar / docker, Reverse Order, Convert to Curves | `arrange.rs` |
 | Cmd+Q Convert to Curves (groups too); Shape tool on ellipses (pie, arc, Change direction), polygons and stars | `nodes.rs` |
 | Undo / redo, copy (SVG on the clipboard), cut, paste, duplicate offset, delete, select all, nudge, Step and Repeat docker (spacing and offset), Copy Properties From (choices, pick, Esc), Select All Nodes (menu and Cmd+A in the Shape tool) | `edit.rs` |
+| Repeat: a drag, a rotate button, Duplicate | `edit.rs` |
 | Objects docker: select, Shift-select, rename, order, delete | `objects.rs` |
 | Layers: add, hide, lock, move objects, rename, delete, undo | `layers.rs` |
 | PowerClip: place inside (Esc cancels), clipped pixels, edit and finish, move with frame, extract | `powerclip.rs` |

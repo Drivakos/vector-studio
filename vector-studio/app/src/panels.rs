@@ -237,7 +237,7 @@ pub fn transform_ui(ui: &mut egui::Ui, state: &mut AppState) {
 pub fn rotate(state: &mut AppState, degrees: f64) {
     let ids = state.selection.clone();
     if let Some(b) = state.doc.active_page().bounds_of(&ids) {
-        state.doc.transform_objects(&ids, Affine::rotate_about(degrees.to_radians(), b.center()));
+        state.transform_selection(Affine::rotate_about(degrees.to_radians(), b.center()));
     }
 }
 
@@ -247,7 +247,7 @@ pub fn mirror(state: &mut AppState, horizontal: bool) {
         let c = b.center().to_vec2();
         let (sx, sy) = if horizontal { (-1.0, 1.0) } else { (1.0, -1.0) };
         let t = Affine::translate(c) * Affine::scale_non_uniform(sx, sy) * Affine::translate(-c);
-        state.doc.transform_objects(&ids, t);
+        state.transform_selection(t);
     }
 }
 

@@ -734,6 +734,22 @@ fn creation_rect(start: Point, p: Point, mods: egui::Modifiers) -> kurbo::Rect {
     }
 }
 
+/// Remember the transform a finished move, scale or rotate drag did, for Repeat.
+fn remember_drag(state: &mut AppState, originals: &Originals) {
+    let page = state.doc.active_page();
+    let Some((t, before)) = originals.first().and_then(|(id, original)| {
+        let now = page.object(*id)?.transform;
+        let before = originals
+            .iter()
+            .filter_map(|(id, o)| page.object(*id).map(|obj| vs_core::Object { transform: *o, ..obj.clone() }.world_bounds()))
+            .reduce(|a, b| a.union(b))?;
+        Some((now * original.inverse(), before))
+    }) else {
+        return;
+    };
+    state.remember_transform(t, before.center());
+}
+
 fn creation_shape(tool: Tool, rect: kurbo::Rect, settings: &ToolSettings) -> Option<Shape> {
     Some(match tool {
         Tool::Rectangle => Shape::Rectangle { rect, corner_radius: 0.0 },
@@ -783,6 +799,7 @@ fn release(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers) {
                 }
             }
         }
+        Drag::Move { moved: true, originals, .. } | Drag::Scale { originals, .. } | Drag::Rotate { originals, .. } => remember_drag(state, &originals),
         Drag::Move { moved: false, was_selected: true, .. } => {
             state.tools.pick_mode = match state.tools.pick_mode {
                 PickMode::Scale => PickMode::Rotate,
