@@ -110,6 +110,7 @@ pub struct AppState {
     /// The system's printers; tests swap in a scripted one.
     pub printing: Box<dyn crate::printing::Printing>,
     pub print: crate::printing::PrintDialog,
+    pub find: crate::find_ui::FindState,
     pub renaming_page: Option<(usize, String)>,
     /// The page number in the open Go to Page window (1-based).
     pub go_to_page: Option<usize>,
@@ -218,6 +219,7 @@ impl AppState {
             dialogs: Box::new(files::NativeDialogs),
             printing: Box::new(crate::printing::SystemPrinting),
             print: Default::default(),
+            find: Default::default(),
             renaming_page: None,
             go_to_page: None,
             page_background: None,
@@ -529,6 +531,10 @@ impl VectorStudioApp {
             }
             Command::CopyProperties => {
                 s.copy_properties.open = true;
+                Ok(())
+            }
+            Command::FindReplace => {
+                s.dockers.show(DockerKind::FindReplace);
                 Ok(())
             }
             Command::StepRepeat => {

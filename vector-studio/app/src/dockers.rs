@@ -17,16 +17,18 @@ pub enum DockerKind {
     Transform,
     AlignDistribute,
     StepRepeat,
+    FindReplace,
 }
 
 impl DockerKind {
-    pub const ALL: [DockerKind; 6] = [
+    pub const ALL: [DockerKind; 7] = [
         DockerKind::Properties,
         DockerKind::Objects,
         DockerKind::Pages,
         DockerKind::Transform,
         DockerKind::AlignDistribute,
         DockerKind::StepRepeat,
+        DockerKind::FindReplace,
     ];
     /// Open in a new workspace.
     pub const DEFAULT_OPEN: [DockerKind; 5] = [
@@ -45,6 +47,7 @@ impl DockerKind {
             DockerKind::Transform => ICON_TRANSFORM,
             DockerKind::AlignDistribute => ICON_ALIGN_HORIZONTAL_LEFT,
             DockerKind::StepRepeat => ICON_LIBRARY_ADD,
+            DockerKind::FindReplace => ICON_FIND_REPLACE,
         }
     }
 
@@ -56,6 +59,7 @@ impl DockerKind {
             DockerKind::Transform => "Transform",
             DockerKind::AlignDistribute => "Align and Distribute",
             DockerKind::StepRepeat => "Step and Repeat",
+            DockerKind::FindReplace => "Find and Replace",
         }
     }
 }
@@ -237,6 +241,7 @@ pub fn docker_ui(ui: &mut egui::Ui, state: &mut AppState, commands: &mut Vec<Com
             DockerKind::AlignDistribute if state.has_selection() => panels::align_ui(ui, state, commands),
             DockerKind::AlignDistribute => needs_selection_ui(ui, "align and order"),
             DockerKind::StepRepeat => crate::edit_tools::step_repeat_ui(ui, state),
+            DockerKind::FindReplace => crate::find_ui::find_replace_ui(ui, state),
         });
     });
 }

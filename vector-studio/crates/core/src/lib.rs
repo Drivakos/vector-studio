@@ -8,6 +8,7 @@ pub mod curves;
 pub mod cutting;
 pub mod document;
 pub mod fill;
+pub mod find;
 pub mod geometry;
 pub mod history;
 pub mod layers;
@@ -25,6 +26,7 @@ pub use document::{
     PAGE_PRESETS, Page, PageId, PagePreset, Rgba, Shape, Style,
 };
 pub use bitmap::{Bitmap, BitmapFormat};
+pub use find::TextMatch;
 pub use fill::{Fill, Gradient, GradientKind, GradientStop};
 pub use history::History;
 pub use layers::{Layer, LayerError, LayerId};

@@ -10,6 +10,7 @@ pub mod dockers;
 pub mod edit_tools;
 pub mod files;
 pub mod fill_ui;
+pub mod find_ui;
 pub mod guides;
 #[cfg(target_os = "macos")]
 pub mod native_menu;

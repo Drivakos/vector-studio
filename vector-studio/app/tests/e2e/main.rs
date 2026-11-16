@@ -23,5 +23,6 @@ mod layers;
 mod powerclip;
 mod lines;
 mod files;
+mod find;
 mod pages;
 mod view;
