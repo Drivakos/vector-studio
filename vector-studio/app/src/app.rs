@@ -40,6 +40,8 @@ pub struct Prefs {
     pub snap_objects: bool,
     pub snap_page: bool,
     pub snap_pixels: bool,
+    pub alignment_guides: bool,
+    pub dynamic_guides: bool,
 }
 
 impl Default for Prefs {
@@ -59,6 +61,8 @@ impl Default for Prefs {
             snap_objects: false,
             snap_page: false,
             snap_pixels: false,
+            alignment_guides: false,
+            dynamic_guides: false,
         }
     }
 }
@@ -422,6 +426,8 @@ impl VectorStudioApp {
             Command::ViewMode(mode) => (true, Some(state.view_mode == mode)),
             Command::PageSorter => (true, Some(state.page_sorter.open)),
             Command::ToggleGuidelines => (true, Some(state.prefs.show_guidelines)),
+            Command::ToggleAlignmentGuides => (true, Some(state.prefs.alignment_guides)),
+            Command::ToggleDynamicGuides => (true, Some(state.prefs.dynamic_guides)),
             Command::ToggleSnap(target) => (true, Some(*state.prefs.snap_flag(target))),
             Command::ToggleStatusBar => (true, Some(state.prefs.show_status_bar)),
             Command::TogglePalette => (true, Some(state.prefs.show_palette)),
@@ -806,6 +812,14 @@ impl VectorStudioApp {
             }
             Command::ToggleGuidelines => {
                 let _: () = s.prefs.show_guidelines ^= true;
+                Ok(())
+            }
+            Command::ToggleAlignmentGuides => {
+                let _: () = s.prefs.alignment_guides ^= true;
+                Ok(())
+            }
+            Command::ToggleDynamicGuides => {
+                let _: () = s.prefs.dynamic_guides ^= true;
                 Ok(())
             }
             Command::ToggleSnap(target) => {

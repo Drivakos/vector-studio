@@ -317,6 +317,13 @@ impl E2e {
         self.h.step();
     }
 
+    /// Move the pointer to document point (`x`, `y`) without pressing.
+    pub fn hover_doc(&mut self, x: f64, y: f64) {
+        let p = self.at(x, y);
+        self.pointer(p);
+        self.h.step();
+    }
+
     pub fn click_doc(&mut self, x: f64, y: f64) {
         let p = self.at(x, y);
         self.pointer(p);

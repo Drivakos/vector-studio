@@ -127,6 +127,8 @@ pub struct ToolState {
     /// 3-point tools: the first edge, waiting for the click that sets the third point.
     first_edge: Option<(Point, Point)>,
     pointer: Option<Point>,
+    /// Alignment and dynamic guides to draw this frame.
+    guide_lines: Vec<vs_core::align_guides::GuideLine>,
     /// Time and place of the last press, to spot double-clicks at press time.
     last_press: Option<(f64, Pos2)>,
 }
@@ -211,6 +213,7 @@ pub fn tool_input(ui: &egui::Ui, state: &mut AppState, response: &egui::Response
     let (pressed, released, pos, mods, time) = ui.input(|i| {
         (i.pointer.primary_pressed(), i.pointer.primary_released(), i.pointer.latest_pos(), i.modifiers, i.time)
     });
+    state.tools.guide_lines.clear();
     let Some(pos) = pos else {
         state.tools.pointer = None;
         return;
@@ -218,6 +221,7 @@ pub fn tool_input(ui: &egui::Ui, state: &mut AppState, response: &egui::Response
     let mut p = view.doc(pos);
     if snaps_pointer(state.tool) {
         p = snapper(state, &view, &[]).point(p);
+        p = guide_point(state, &view, p);
     }
     state.tools.pointer = Some(p);
 
@@ -234,6 +238,50 @@ pub fn tool_input(ui: &egui::Ui, state: &mut AppState, response: &egui::Response
         if released {
             release(state, &view, p, mods);
         }
+    }
+}
+
+/// `p` lined up with other objects by the alignment guides, or else pulled onto a
+/// dynamic guide, when those are on; the guides it follows are drawn this frame.
+fn guide_point(state: &mut AppState, view: &View, p: Point) -> Point {
+    let page = state.doc.active_page();
+    let reach = view.doc_len(SNAP);
+    if state.prefs.alignment_guides {
+        let (shift, lines) = vs_core::align_guides::alignment(page, kurbo::Rect::from_points(p, p), &[], reach);
+        if !lines.is_empty() {
+            state.tools.guide_lines = lines;
+            return p + shift;
+        }
+    }
+    if state.prefs.dynamic_guides
+        && let Some((on, line)) = vs_core::align_guides::dynamic_guide(page, p, &[], reach)
+    {
+        state.tools.guide_lines = vec![line];
+        return on;
+    }
+    p
+}
+
+/// Moved objects lined up with others by the alignment guides, on the axes snapping
+/// left alone (`snapped`) and the move is free to go (`constrained` keeps it to one).
+fn align_moved(state: &mut AppState, view: &View, originals: &Originals, delta: Vec2, snapped: Vec2, constrained: bool) {
+    if !state.prefs.alignment_guides {
+        return;
+    }
+    let ids: Vec<ObjectId> = originals.iter().map(|o| o.0).collect();
+    let Some(bounds) = state.doc.active_page().bounds_of(&ids) else { return };
+    let (mut shift, _) = vs_core::align_guides::alignment(state.doc.active_page(), bounds, &ids, view.doc_len(SNAP));
+    if snapped.x != 0.0 || (constrained && delta.x == 0.0) {
+        shift.x = 0.0;
+    }
+    if snapped.y != 0.0 || (constrained && delta.x != 0.0) {
+        shift.y = 0.0;
+    }
+    if shift != Vec2::ZERO {
+        apply(state, originals, Affine::translate(delta + snapped + shift));
+    }
+    if let Some(bounds) = state.doc.active_page().bounds_of(&ids) {
+        state.tools.guide_lines = vs_core::align_guides::alignment(state.doc.active_page(), bounds, &ids, 0.0).1;
     }
 }
 
@@ -661,8 +709,9 @@ fn drag_to(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers) {
                 }
                 apply(state, &originals, Affine::translate(delta));
                 let ids: Vec<ObjectId> = originals.iter().map(|o| o.0).collect();
+                let mut snap = Vec2::ZERO;
                 if let Some(bounds) = state.doc.active_page().bounds_of(&ids) {
-                    let mut snap = snapper(state, view, &state.selection).delta(bounds);
+                    snap = snapper(state, view, &state.selection).delta(bounds);
                     if constrain(mods) {
                         // Stay on the axis the move is constrained to.
                         snap = if delta.x == 0.0 { Vec2::new(0.0, snap.y) } else { Vec2::new(snap.x, 0.0) };
@@ -671,6 +720,7 @@ fn drag_to(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers) {
                         apply(state, &originals, Affine::translate(delta + snap));
                     }
                 }
+                align_moved(state, view, &originals, delta, snap, constrain(mods));
             }
             Drag::Move { press, start, originals, moved, was_selected }
         }
@@ -1247,12 +1297,19 @@ fn handle_line(painter: &egui::Painter, from: Pos2, to: Pos2) {
     painter.circle(to, 3.5, ACCENT, Stroke::new(1.0, Color32::WHITE));
 }
 
+/// Alignment and dynamic guides while drawing or moving.
+pub const GUIDE_LINE: Color32 = Color32::from_rgb(0x00, 0xA6, 0x51);
+
 pub fn draw_overlay(painter: &egui::Painter, state: &AppState, canvas: Rect) {
     let view = View::new(state, canvas);
     let page = state.doc.active_page();
     let thin = Stroke::new(1.0, ACCENT);
     crate::text_tool::draw_frames(painter, state, |p| view.screen(p));
     crate::text_tool::draw_caret(painter, state, |p| view.screen(p));
+    for line in &state.tools.guide_lines {
+        let points = [view.screen(line.from), view.screen(line.to)];
+        painter.extend(egui::Shape::dashed_line(&points, Stroke::new(1.0, GUIDE_LINE), 4.0, 3.0));
+    }
     // An empty PowerClip frame shows an X across it.
     for obj in page.objects.iter().filter(|o| o.frame && o.contents.is_empty()) {
         let b = obj.world_bounds();

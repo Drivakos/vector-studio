@@ -77,8 +77,8 @@
         { "cmd": "view.rulers", "label": "Rulers", "checkable": true, "shortcut": "CmdOrCtrl+Alt+R" },
         { "cmd": "view.grid", "label": "Grid", "checkable": true },
         { "cmd": "view.guidelines", "label": "Guidelines", "checkable": true },
-        { "cmd": "view.alignment_guides", "label": "Alignment Guides" },
-        { "cmd": "view.dynamic_guides", "label": "Dynamic Guides" },
+        { "cmd": "view.alignment_guides", "label": "Alignment Guides", "checkable": true },
+        { "cmd": "view.dynamic_guides", "label": "Dynamic Guides", "checkable": true },
         { "label": "Snap To", "items": [
           { "cmd": "view.snap_pixels", "label": "Pixels" },
           { "cmd": "view.snap_grid", "label": "Document Grid", "checkable": true },

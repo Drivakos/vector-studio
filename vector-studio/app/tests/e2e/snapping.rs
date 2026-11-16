@@ -173,3 +173,54 @@ fn snap_to_pixels_puts_new_shapes_on_the_export_pixel_grid() {
     assert!([b.x0, b.y0, b.x1, b.y1].into_iter().all(on_pixel), "{b:?}");
     assert!(close(b.x0, 100.08) && close(b.x1, 200.16), "{b:?}");
 }
+
+/// Whether the canvas shows the green of a guide line anywhere from `a` to `b`.
+fn green_between(app: &mut E2e, a: (f64, f64), b: (f64, f64)) -> bool {
+    (0..40).any(|i| {
+        let t = f64::from(i) / 40.0;
+        let px = app.pixel(a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t).map(i32::from);
+        px[1] > px[0] + 60 && px[1] > px[2] + 30
+    })
+}
+
+#[test]
+fn alignment_guides_line_up_moved_and_drawn_shapes_with_others() {
+    let mut app = E2e::new();
+    app.draw_rect(100.0, 100.0, 200.0, 150.0);
+    let b = app.draw_rect(400.0, 300.0, 450.0, 340.0);
+    // Off: a move 3 pt right of the first rectangle's left edge stays there.
+    app.drag_doc((400.0, 320.0), (103.0, 320.0));
+    assert!(close(app.bounds(1).x0, 103.0), "{:?}", app.bounds(1));
+
+    app.menu(&["View", "Alignment Guides"]);
+    assert!(app.state().prefs.alignment_guides);
+    app.drag_doc((103.0, 320.0), (104.0, 380.0));
+    let r = app.bounds(1);
+    assert!(close(r.x0, 100.0) && close(r.y0, 360.0), "lined up with the left edge: {r:?}");
+    assert_eq!(app.selection(), vec![b]);
+
+    // Drawing: the pointer lines up with the first rectangle's centre and a guide shows.
+    app.key(Key::F6);
+    app.hover_doc(400.0, 126.0);
+    assert!(green_between(&mut app, (210.0, 125.0), (390.0, 125.0)), "a guide runs to the centre line");
+    app.drag_doc((400.0, 126.0), (450.0, 180.0));
+    assert!(close(app.bounds(2).y0, 125.0), "{:?}", app.bounds(2));
+}
+
+#[test]
+fn dynamic_guides_pull_drawing_onto_lines_from_corners() {
+    let mut app = E2e::new();
+    app.draw_rect(100.0, 100.0, 200.0, 150.0);
+    app.key(Key::F6);
+    app.hover_doc(251.0, 200.0);
+    assert!(!green_between(&mut app, (205.0, 155.0), (245.0, 195.0)), "off: no guide");
+    app.pick_tool();
+    app.menu(&["View", "Dynamic Guides"]);
+    assert!(app.state().prefs.dynamic_guides);
+    app.key(Key::F6);
+    app.hover_doc(251.0, 200.0);
+    assert!(green_between(&mut app, (205.0, 155.0), (245.0, 195.0)), "the 45° guide from the corner shows");
+    app.drag_doc((251.0, 200.0), (300.0, 330.0));
+    let r = app.bounds(1);
+    assert!(close(r.x0, 250.5) && close(r.y0, 200.5), "{r:?}");
+}
