@@ -41,6 +41,8 @@ pub struct Prefs {
     pub snap_page: bool,
     pub snap_pixels: bool,
     pub alignment_guides: bool,
+    /// Text > Show Nonprinting Characters.
+    pub show_nonprinting: bool,
     pub dynamic_guides: bool,
 }
 
@@ -62,6 +64,7 @@ impl Default for Prefs {
             snap_page: false,
             snap_pixels: false,
             alignment_guides: false,
+            show_nonprinting: false,
             dynamic_guides: false,
         }
     }
@@ -443,6 +446,7 @@ impl VectorStudioApp {
             Command::PageSorter => (true, Some(state.page_sorter.open)),
             Command::ToggleGuidelines => (true, Some(state.prefs.show_guidelines)),
             Command::ToggleAlignmentGuides => (true, Some(state.prefs.alignment_guides)),
+            Command::ToggleNonprinting => (true, Some(state.prefs.show_nonprinting)),
             Command::ToggleDynamicGuides => (true, Some(state.prefs.dynamic_guides)),
             Command::ToggleSnap(target) => (true, Some(*state.prefs.snap_flag(target))),
             Command::ToggleStatusBar => (true, Some(state.prefs.show_status_bar)),
@@ -861,6 +865,10 @@ impl VectorStudioApp {
             }
             Command::ToggleGuidelines => {
                 let _: () = s.prefs.show_guidelines ^= true;
+                Ok(())
+            }
+            Command::ToggleNonprinting => {
+                let _: () = s.prefs.show_nonprinting ^= true;
                 Ok(())
             }
             Command::ToggleAlignmentGuides => {

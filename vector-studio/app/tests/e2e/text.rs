@@ -401,3 +401,29 @@ fn text_properties_opens_the_properties_docker_on_the_selected_text() {
     assert!(app.is_selected("Properties docker"));
     assert_eq!(app.value("Text (properties)"), "Hi");
 }
+
+#[test]
+fn show_nonprinting_characters_marks_spaces_and_paragraph_ends() {
+    let mut app = E2e::new();
+    app.key(Key::F8);
+    app.click_doc(100.0, 200.0);
+    app.type_text("aa  bb");
+    app.key(Key::Escape);
+    app.pick_tool();
+    app.click_doc(500.0, 800.0);
+    let t = text(&app, 0);
+    let line = &t.layout().lines[0];
+    let at = app.objects()[0].transform * vs_core::kurbo::Point::new((line.carets[2] + line.carets[3]) / 2.0, line.baseline - t.size * 0.25);
+    let end = app.objects()[0].transform * vs_core::kurbo::Point::new(line.carets[6] + t.size * 0.3, line.baseline - t.size * 0.3);
+    let blue = |px: [u8; 4]| i32::from(px[2]) > i32::from(px[0]) + 60;
+    assert!(!blue(app.pixel(at.x, at.y)), "off by default");
+
+    app.menu(&["Text", "Show Nonprinting Characters"]);
+    assert!(app.state().prefs.show_nonprinting);
+    assert!(blue(app.pixel(at.x, at.y)), "a dot in the space");
+    let near_end = (0..12).any(|i| {
+        let px = app.pixel(end.x + f64::from(i % 4) * 2.0, end.y + f64::from(i / 4) * 3.0);
+        blue(px)
+    });
+    assert!(near_end, "¶ after the last letter");
+}

@@ -269,7 +269,7 @@
         { "cmd": "text.glyphs", "label": "Glyphs" },
         { "cmd": "text.change_case", "label": "Change Case…" },
         { "cmd": "text.statistics", "label": "Text Statistics" },
-        { "cmd": "text.show_nonprinting", "label": "Show Nonprinting Characters" }
+        { "cmd": "text.show_nonprinting", "label": "Show Nonprinting Characters", "checkable": true }
       ]
     },
     {

@@ -227,6 +227,46 @@ pub fn draw_frames(painter: &egui::Painter, state: &AppState, to_screen: impl Fn
     }
 }
 
+/// Text > Show Nonprinting Characters: a dot in each space and ¶ at the end of each
+/// paragraph of the text on the active page.
+pub fn draw_nonprinting(painter: &egui::Painter, state: &AppState, to_screen: impl Fn(Point) -> Pos2) {
+    if !state.prefs.show_nonprinting {
+        return;
+    }
+    let page = state.doc.active_page();
+    let color = crate::theme::ACCENT;
+    for obj in page.shown_objects() {
+        let Shape::Text(text) = &obj.shape else { continue };
+        if text.on_path.is_some() {
+            continue;
+        }
+        let layout = text.layout();
+        let chars: Vec<char> = text.content.chars().collect();
+        let zoom = state.viewport.zoom() as f32;
+        for line in &layout.lines {
+            if layout.frame.is_some_and(|f| line.baseline + layout.descent > f.height() + 1e-9) {
+                continue;
+            }
+            let n = line.carets.len() - 1;
+            let mid_height = line.baseline - text.size * 0.25;
+            for k in 0..n {
+                if chars.get(line.start + k) == Some(&' ') {
+                    let x = (line.carets[k] + line.carets[k + 1]) / 2.0;
+                    let at = to_screen(obj.transform * Point::new(x, mid_height));
+                    painter.circle_filled(at, (text.size as f32 * zoom * 0.06).clamp(1.0, 4.0), color);
+                }
+            }
+            // The paragraph ends here: a line break follows, or the text does.
+            let end = line.start + n;
+            if matches!(chars.get(end), Some('\n') | None) {
+                let at = to_screen(obj.transform * Point::new(line.carets[n] + text.size * 0.1, line.baseline));
+                let font = egui::FontId::proportional((text.size as f32 * zoom * 0.8).max(6.0));
+                painter.text(at, egui::Align2::LEFT_BOTTOM, "¶", font, color);
+            }
+        }
+    }
+}
+
 /// The texts the font controls change: the one being typed into, else the selected
 /// unlocked texts.
 fn targets(state: &AppState) -> Vec<ObjectId> {

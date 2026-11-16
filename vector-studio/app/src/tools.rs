@@ -1305,6 +1305,7 @@ pub fn draw_overlay(painter: &egui::Painter, state: &AppState, canvas: Rect) {
     let page = state.doc.active_page();
     let thin = Stroke::new(1.0, ACCENT);
     crate::text_tool::draw_frames(painter, state, |p| view.screen(p));
+    crate::text_tool::draw_nonprinting(painter, state, |p| view.screen(p));
     crate::text_tool::draw_caret(painter, state, |p| view.screen(p));
     for line in &state.tools.guide_lines {
         let points = [view.screen(line.from), view.screen(line.to)];
