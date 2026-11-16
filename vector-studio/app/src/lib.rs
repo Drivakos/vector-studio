@@ -24,6 +24,7 @@ pub mod panels;
 pub mod paste_special;
 pub mod printing;
 pub mod templates;
+pub mod text_menu;
 pub mod text_tool;
 pub mod theme;
 pub mod titlebar;

@@ -326,3 +326,33 @@ fn select_all_text_selects_only_the_text_objects() {
     let ids = app.ids();
     assert_eq!(app.selection(), vec![ids[1], ids[2]]);
 }
+
+#[test]
+fn change_case_rewrites_the_selected_text_or_the_text_being_typed() {
+    let mut app = E2e::new();
+    app.key(Key::F8);
+    app.click_doc(100.0, 200.0);
+    app.type_text("the cat. a dog");
+    app.key(Key::Escape);
+    assert_eq!(app.selection(), vec![app.ids()[0]]);
+
+    app.menu(&["Text", "Change Case…"]);
+    app.click("Title Case");
+    app.click("OK (Change Case)");
+    assert_eq!(text(&app, 0).content, "The Cat. A Dog");
+
+    app.menu(&["Text", "Change Case…"]);
+    app.click("UPPERCASE");
+    app.click("Cancel (Change Case)");
+    assert_eq!(text(&app, 0).content, "The Cat. A Dog", "Cancel leaves it");
+
+    // While typing, it changes the text being typed into, and typing goes on at the caret.
+    app.click_doc(100.0, 400.0);
+    app.type_text("ab");
+    app.menu(&["Text", "Change Case…"]);
+    app.click("UPPERCASE");
+    app.click("OK (Change Case)");
+    app.type_text("c");
+    assert_eq!(text(&app, 1).content, "ABc");
+    assert_eq!(text(&app, 0).content, "The Cat. A Dog", "other text is left alone");
+}

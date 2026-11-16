@@ -20,6 +20,7 @@ pub mod shaping;
 pub mod snap;
 pub mod align_guides;
 pub mod text;
+pub mod text_tools;
 pub mod units;
 
 pub use document::{

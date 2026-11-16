@@ -134,6 +134,9 @@ pub struct AppState {
     pub templates_dir: Option<PathBuf>,
     pub export_for: Option<crate::export_for::ExportFor>,
     pub document_options: Option<crate::page_dialogs::DocumentOptionsDialog>,
+    /// The case chosen in the open Change Case window.
+    pub change_case: Option<vs_core::text_tools::Case>,
+    pub show_text_statistics: bool,
     pub save_template: Option<crate::templates::SaveTemplateDialog>,
     pub new_from_template: Option<crate::templates::NewFromTemplateDialog>,
     pub show_document_properties: bool,
@@ -262,6 +265,8 @@ impl AppState {
             templates_dir: crate::templates::default_dir(),
             export_for: None,
             document_options: None,
+            change_case: None,
+            show_text_statistics: false,
             save_template: None,
             new_from_template: None,
             show_document_properties: false,
@@ -481,6 +486,7 @@ impl VectorStudioApp {
             Command::Revert => (files::can_revert(state), None),
             Command::FitTextToPath => (doc.can_fit_text_to_path(&state.selection), None),
             Command::EditText => (crate::text_tool::can_edit_text(state), None),
+            Command::ChangeCase => (!crate::text_menu::case_targets(state).is_empty(), None),
             Command::StraightenText => (doc.can_straighten_text(&state.selection), None),
             Command::ClipPlaceInside => (doc.can_place_inside(&state.selection), None),
             Command::ClipExtract => (doc.can_extract_contents(&state.selection), None),
@@ -539,6 +545,10 @@ impl VectorStudioApp {
             }
             Command::DocumentProperties => {
                 let _: () = s.show_document_properties = true;
+                Ok(())
+            }
+            Command::ChangeCase => {
+                crate::text_menu::open_change_case(s);
                 Ok(())
             }
             Command::DocumentOptions => {
@@ -1253,6 +1263,8 @@ impl eframe::App for VectorStudioApp {
         crate::templates::save_window(&ctx, &mut self.state);
         crate::export_for::export_for_window(&ctx, &mut self.state);
         crate::page_dialogs::document_options_window(&ctx, &mut self.state);
+        crate::text_menu::change_case_window(&ctx, &mut self.state);
+        crate::text_menu::statistics_window(&ctx, &mut self.state);
         crate::templates::new_window(&ctx, &mut self.state);
         crate::edit_tools::copy_properties_window(&ctx, &mut self.state);
         self.settle(&ctx);
