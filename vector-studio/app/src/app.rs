@@ -147,7 +147,7 @@ pub struct AppState {
     pub convert_to_bitmap: Option<crate::bitmap_menu::ConvertDialog>,
     pub resample: Option<crate::bitmap_menu::ResampleDialog>,
     /// The bitmap effect whose settings window is open.
-    pub effect: Option<vs_core::raster::Effect>,
+    pub effect: Option<crate::bitmap_menu::EffectDialog>,
     pub insert_qr: Option<crate::insert_codes::QrDialog>,
     pub insert_barcode: Option<crate::insert_codes::BarcodeDialog>,
     pub save_template: Option<crate::templates::SaveTemplateDialog>,

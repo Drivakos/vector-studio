@@ -1,7 +1,8 @@
 //! Bitmaps > Convert to Bitmap and Resample, and the bitmap effects of the Effects menu
-//! (Adjust, Blur, Distort, Noise and Sharpen).
+//! (Adjust, Blur, Distort, Noise and Sharpen). Effect windows show a preview of the
+//! first selected bitmap with the settings as they stand.
 
-use vs_core::raster::{Effect, EffectKind};
+use vs_core::raster::{Effect, EffectKind, Pixels, TONE_INPUTS, ToneChannel};
 use vs_core::{Object, ObjectId, Rgba, Shape, Style};
 
 use crate::app::AppState;
@@ -195,11 +196,35 @@ pub fn apply_effect(state: &mut AppState, effect: &Effect) {
     }
 }
 
+/// Longest side of an effect window's preview, in pixels.
+const PREVIEW: u32 = 240;
+
+/// The open window of an effect with settings.
+pub struct EffectDialog {
+    effect: Effect,
+    /// The first target bitmap, shrunk for the preview, and the scale it was shrunk by.
+    source: Option<(Pixels, f64)>,
+    /// The settings the preview was made with, and the preview.
+    shown: Option<(Effect, egui::TextureHandle)>,
+}
+
+impl EffectDialog {
+    /// The settings the preview shows, once it has been drawn.
+    pub fn previewed(&self) -> Option<Effect> {
+        self.shown.as_ref().map(|(e, _)| *e)
+    }
+}
+
 /// Run an Effects menu bitmap effect: at once when it has no settings, else open its
 /// window.
 pub fn run_effect(state: &mut AppState, kind: EffectKind) {
     if kind.has_settings() {
-        state.effect = Some(kind.default_effect());
+        let page = state.doc.active_page();
+        let source = bitmap_targets(state).first().and_then(|id| match page.object(*id).map(|o| &o.shape) {
+            Some(Shape::Image(b)) => vs_io::bitmap_pixels(b).ok().map(|p| vs_io::shrink(&p, PREVIEW)),
+            _ => None,
+        });
+        state.effect = Some(EffectDialog { effect: kind.default_effect(), source, shown: None });
     } else {
         apply_effect(state, &kind.default_effect());
     }
@@ -217,7 +242,7 @@ fn field(ui: &mut egui::Ui, value: &mut f64, range: std::ops::RangeInclusive<f64
 fn settings(ui: &mut egui::Ui, effect: &mut Effect, window: &str) {
     let pct = -100.0..=100.0;
     match effect {
-        Effect::AutoAdjust | Effect::Grayscale => {}
+        Effect::AutoAdjust | Effect::Grayscale | Effect::ToneCurve { .. } => {}
         Effect::BrightnessContrast { brightness, contrast, intensity } => {
             field(ui, brightness, pct.clone(), "", "Brightness", window);
             field(ui, contrast, pct.clone(), "", "Contrast", window);
@@ -269,10 +294,78 @@ fn settings(ui: &mut egui::Ui, effect: &mut Effect, window: &str) {
     }
 }
 
-/// The window of an effect with settings: its settings, then OK.
+/// The names of a tone curve's nodes, black to white.
+const TONE_NODES: [&str; 5] = ["Black", "Shadows", "Midtones", "Highlights", "White"];
+
+/// The Tone Curve settings: the channels it changes, the curve (drag a node up or down),
+/// and each node's output level.
+fn tone_curve(ui: &mut egui::Ui, outputs: &mut [f64; 5], channel: &mut ToneChannel, window: &str) {
+    ui.horizontal(|ui| {
+        ui.label("Channel:");
+        for c in ToneChannel::ALL {
+            let resp = ui.selectable_label(*channel == c, c.label());
+            crate::a11y::toggle(&resp, true, *channel == c, &format!("{} ({window})", c.label()));
+            if resp.clicked() {
+                *channel = c;
+            }
+        }
+    });
+    let size = egui::vec2(200.0, 200.0);
+    let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::drag());
+    crate::a11y::name(&resp, &format!("Curve ({window})"));
+    let to_screen = |input: f64, output: f64| egui::pos2(rect.left() + (input / 255.0) as f32 * rect.width(), rect.bottom() - (output / 255.0) as f32 * rect.height());
+    if resp.dragged()
+        && let (Some(origin), Some(pos)) = (ui.input(|i| i.pointer.press_origin()), resp.interact_pointer_pos())
+    {
+        // The node nearest where the drag began follows the pointer up and down.
+        let input = f64::from((origin.x - rect.left()) / rect.width()) * 255.0;
+        let node = (0..5).min_by(|a, b| (TONE_INPUTS[*a] - input).abs().total_cmp(&(TONE_INPUTS[*b] - input).abs())).unwrap_or(0);
+        outputs[node] = (f64::from((rect.bottom() - pos.y) / rect.height()) * 255.0).clamp(0.0, 255.0).round();
+    }
+    let painter = ui.painter_at(rect);
+    let visuals = ui.visuals();
+    painter.rect_filled(rect, 2.0, visuals.extreme_bg_color);
+    let faint = egui::Stroke::new(1.0, visuals.weak_text_color().gamma_multiply(0.4));
+    for i in 1..4 {
+        let t = i as f32 / 4.0;
+        painter.vline(rect.left() + t * rect.width(), rect.y_range(), faint);
+        painter.hline(rect.x_range(), rect.top() + t * rect.height(), faint);
+    }
+    painter.line_segment([rect.left_bottom(), rect.right_top()], faint);
+    let lut = vs_core::raster::tone_lut(*outputs);
+    let points: Vec<egui::Pos2> = lut.iter().enumerate().map(|(i, v)| to_screen(i as f64, f64::from(*v))).collect();
+    painter.add(egui::Shape::line(points, egui::Stroke::new(1.5, visuals.strong_text_color())));
+    for (input, output) in TONE_INPUTS.iter().zip(outputs.iter()) {
+        painter.circle(to_screen(*input, *output), 4.0, visuals.selection.bg_fill, egui::Stroke::new(1.0, visuals.strong_text_color()));
+    }
+    egui::Grid::new("tone_nodes").num_columns(2).spacing([12.0, 4.0]).show(ui, |ui| {
+        for (name, output) in TONE_NODES.iter().zip(outputs.iter_mut()) {
+            ui.label(format!("{name}:"));
+            crate::a11y::add(ui, egui::DragValue::new(output).range(0.0..=255.0).speed(1.0).max_decimals(0), &format!("{name} ({window})"));
+            ui.end_row();
+        }
+    });
+}
+
+/// The preview of `d`'s effect on its source, made again when the settings changed.
+fn preview(ui: &mut egui::Ui, d: &mut EffectDialog, window: &str) {
+    let Some((source, factor)) = &d.source else { return };
+    if d.shown.as_ref().is_none_or(|(e, _)| *e != d.effect) {
+        let out = d.effect.scaled(*factor).apply(source);
+        let image = egui::ColorImage::from_rgba_unmultiplied([out.width as usize, out.height as usize], &out.data);
+        let texture = ui.ctx().load_texture("effect_preview", image, egui::TextureOptions::LINEAR);
+        d.shown = Some((d.effect, texture));
+    }
+    if let Some((_, texture)) = &d.shown {
+        let resp = ui.add(egui::Image::new(texture).fit_to_exact_size(egui::vec2(PREVIEW as f32, PREVIEW as f32)));
+        crate::a11y::name(&resp, &format!("Preview ({window})"));
+    }
+}
+
+/// The window of an effect with settings: its settings and a preview, then OK.
 pub fn effect_window(ctx: &egui::Context, state: &mut AppState) {
-    let Some(mut effect) = state.effect.take() else { return };
-    let title = effect.kind().label();
+    let Some(mut d) = state.effect.take() else { return };
+    let title = d.effect.kind().label();
     let mut open = true;
     let (mut ok, mut cancel) = (false, false);
     egui::Window::new(title)
@@ -281,7 +374,16 @@ pub fn effect_window(ctx: &egui::Context, state: &mut AppState) {
         .open(&mut open)
         .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
         .show(ctx, |ui| {
-            egui::Grid::new("effect_grid").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| settings(ui, &mut effect, title));
+            ui.horizontal_top(|ui| {
+                ui.vertical(|ui| {
+                    if let Effect::ToneCurve { outputs, channel } = &mut d.effect {
+                        tone_curve(ui, outputs, channel, title);
+                    } else {
+                        egui::Grid::new("effect_grid").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| settings(ui, &mut d.effect, title));
+                    }
+                });
+                preview(ui, &mut d, title);
+            });
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 ok = crate::a11y::window_button(ui, true, "OK", title).clicked();
@@ -289,8 +391,8 @@ pub fn effect_window(ctx: &egui::Context, state: &mut AppState) {
             });
         });
     if ok {
-        apply_effect(state, &effect);
+        apply_effect(state, &d.effect);
     } else if open && !cancel {
-        state.effect = Some(effect);
+        state.effect = Some(d);
     }
 }

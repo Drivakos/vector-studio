@@ -37,6 +37,7 @@ impl Pixels {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum EffectKind {
     AutoAdjust,
+    ToneCurve,
     BrightnessContrast,
     ColorBalance,
     HueSaturation,
@@ -56,8 +57,9 @@ pub enum EffectKind {
 }
 
 impl EffectKind {
-    pub const ALL: [EffectKind; 17] = [
+    pub const ALL: [EffectKind; 18] = [
         EffectKind::AutoAdjust,
+        EffectKind::ToneCurve,
         EffectKind::BrightnessContrast,
         EffectKind::ColorBalance,
         EffectKind::HueSaturation,
@@ -80,6 +82,7 @@ impl EffectKind {
     pub fn label(self) -> &'static str {
         match self {
             EffectKind::AutoAdjust => "Auto Adjust",
+            EffectKind::ToneCurve => "Tone Curve",
             EffectKind::BrightnessContrast => "Brightness/Contrast/Intensity",
             EffectKind::ColorBalance => "Color Balance",
             EffectKind::HueSaturation => "Hue/Saturation/Lightness",
@@ -103,6 +106,7 @@ impl EffectKind {
     pub fn default_effect(self) -> Effect {
         match self {
             EffectKind::AutoAdjust => Effect::AutoAdjust,
+            EffectKind::ToneCurve => Effect::ToneCurve { outputs: TONE_INPUTS, channel: ToneChannel::Rgb },
             EffectKind::BrightnessContrast => Effect::BrightnessContrast { brightness: 0.0, contrast: 0.0, intensity: 0.0 },
             EffectKind::ColorBalance => Effect::ColorBalance { cyan_red: 0.0, magenta_green: 0.0, yellow_blue: 0.0 },
             EffectKind::HueSaturation => Effect::HueSaturation { hue: 0.0, saturation: 0.0, lightness: 0.0 },
@@ -128,6 +132,61 @@ impl EffectKind {
     }
 }
 
+/// The colour channels a tone curve changes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ToneChannel {
+    #[default]
+    Rgb,
+    Red,
+    Green,
+    Blue,
+}
+
+impl ToneChannel {
+    pub const ALL: [ToneChannel; 4] = [ToneChannel::Rgb, ToneChannel::Red, ToneChannel::Green, ToneChannel::Blue];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ToneChannel::Rgb => "RGB",
+            ToneChannel::Red => "Red",
+            ToneChannel::Green => "Green",
+            ToneChannel::Blue => "Blue",
+        }
+    }
+}
+
+/// The input levels of a tone curve's nodes, evenly spaced from black to white.
+pub const TONE_INPUTS: [f64; 5] = [0.0, 63.75, 127.5, 191.25, 255.0];
+
+/// The output level for each input level 0 to 255 of the tone curve through the nodes
+/// ([`TONE_INPUTS`], `outputs`): a smooth curve that never overshoots its nodes
+/// (monotone cubic, Fritsch–Carlson).
+pub fn tone_lut(outputs: [f64; 5]) -> [u8; 256] {
+    let (x, y) = (TONE_INPUTS, outputs.map(|v| v.clamp(0.0, 255.0)));
+    let n = x.len();
+    let slopes: Vec<f64> = (0..n - 1).map(|i| (y[i + 1] - y[i]) / (x[i + 1] - x[i])).collect();
+    let mut tangents = vec![0.0; n];
+    tangents[0] = slopes[0];
+    tangents[n - 1] = slopes[n - 2];
+    for i in 1..n - 1 {
+        // Flat at a peak or a dip, so the curve stays between its neighbours.
+        if slopes[i - 1] * slopes[i] > 0.0 {
+            tangents[i] = 2.0 / (1.0 / slopes[i - 1] + 1.0 / slopes[i]);
+        }
+    }
+    let mut lut = [0u8; 256];
+    for (v, out) in lut.iter_mut().enumerate() {
+        let v = v as f64;
+        let i = x.iter().rposition(|xi| *xi <= v).unwrap_or(0).min(n - 2);
+        let h = x[i + 1] - x[i];
+        let t = (v - x[i]) / h;
+        let (t2, t3) = (t * t, t * t * t);
+        let value = (2.0 * t3 - 3.0 * t2 + 1.0) * y[i] + (t3 - 2.0 * t2 + t) * h * tangents[i] + (-2.0 * t3 + 3.0 * t2) * y[i + 1] + (t3 - t2) * h * tangents[i + 1];
+        *out = clamp_u8(value);
+    }
+    lut
+}
+
 /// A bitmap effect and its settings. Percentages run -100 to 100 unless noted; distances
 /// are in pixels and angles in degrees.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -135,6 +194,8 @@ pub enum Effect {
     /// Stretch each channel so its darkest and lightest values (ignoring the extreme
     /// half percent) reach black and white.
     AutoAdjust,
+    /// Map each level through the curve with these outputs at [`TONE_INPUTS`].
+    ToneCurve { outputs: [f64; 5], channel: ToneChannel },
     /// `intensity` brightens or darkens the mid-tones and leaves black and white alone.
     BrightnessContrast { brightness: f64, contrast: f64, intensity: f64 },
     ColorBalance { cyan_red: f64, magenta_green: f64, yellow_blue: f64 },
@@ -172,6 +233,7 @@ impl Effect {
     pub fn kind(&self) -> EffectKind {
         match self {
             Effect::AutoAdjust => EffectKind::AutoAdjust,
+            Effect::ToneCurve { .. } => EffectKind::ToneCurve,
             Effect::BrightnessContrast { .. } => EffectKind::BrightnessContrast,
             Effect::ColorBalance { .. } => EffectKind::ColorBalance,
             Effect::HueSaturation { .. } => EffectKind::HueSaturation,
@@ -191,10 +253,36 @@ impl Effect {
         }
     }
 
+    /// The effect for a copy of the bitmap `factor` times its size: distances in pixels
+    /// scaled to match, so a small preview looks like the result.
+    pub fn scaled(self, factor: f64) -> Effect {
+        let px = |v: u32| (f64::from(v) * factor).round().max(1.0) as u32;
+        match self {
+            Effect::GaussianBlur { radius } => Effect::GaussianBlur { radius: radius * factor },
+            Effect::MotionBlur { distance, angle } => Effect::MotionBlur { distance: distance * factor, angle },
+            Effect::Pixelate { size } => Effect::Pixelate { size: px(size) },
+            Effect::Ripple { amplitude, period } => Effect::Ripple { amplitude: amplitude * factor, period: period * factor },
+            Effect::Wind { strength, angle } => Effect::Wind { strength: strength * factor, angle },
+            Effect::RemoveNoise { radius } => Effect::RemoveNoise { radius: px(radius) },
+            Effect::UnsharpMask { amount, radius, threshold } => Effect::UnsharpMask { amount, radius: radius * factor, threshold },
+            other => other,
+        }
+    }
+
     /// `pixels` with the effect applied, the same size.
     pub fn apply(&self, pixels: &Pixels) -> Pixels {
         match *self {
             Effect::AutoAdjust => auto_adjust(pixels),
+            Effect::ToneCurve { outputs, channel } => {
+                let lut = tone_lut(outputs);
+                let map = |v: f64| f64::from(lut[clamp_u8(v) as usize]);
+                map_rgb(pixels, |[r, g, b]| match channel {
+                    ToneChannel::Rgb => [map(r), map(g), map(b)],
+                    ToneChannel::Red => [map(r), g, b],
+                    ToneChannel::Green => [r, map(g), b],
+                    ToneChannel::Blue => [r, g, map(b)],
+                })
+            }
             Effect::BrightnessContrast { brightness, contrast, intensity } => {
                 let gain = ((100.0 + contrast.clamp(-100.0, 100.0)) / 100.0).powi(2);
                 let gamma = 2f64.powf(-intensity.clamp(-100.0, 100.0) / 100.0);
@@ -743,6 +831,33 @@ mod tests {
         // Differences under the threshold are left alone.
         let out = Effect::UnsharpMask { amount: 200.0, radius: 2.0, threshold: 255.0 }.apply(&soft);
         assert_eq!(out, soft);
+    }
+
+    #[test]
+    fn tone_curve_maps_levels_through_its_nodes() {
+        let straight = tone_lut(TONE_INPUTS);
+        assert!((0..256).all(|v| i32::from(straight[v]) == v as i32), "the starting curve changes nothing");
+        assert_eq!(Effect::ToneCurve { outputs: TONE_INPUTS, channel: ToneChannel::Rgb }.apply(&ramp()), ramp());
+
+        // An S curve: darks darker, lights lighter, smooth and never past black or white.
+        let s_curve = tone_lut([0.0, 40.0, 127.5, 215.0, 255.0]);
+        assert!(s_curve[64] < 64 && s_curve[191] > 191 && s_curve[128] == 128, "{s_curve:?}");
+        assert!(s_curve.windows(2).all(|w| w[0] <= w[1]), "rises all the way");
+        // A dip: flat at the node, so the curve stays between its neighbours.
+        let dip = tone_lut([255.0, 100.0, 0.0, 100.0, 255.0]);
+        assert_eq!(dip[128], 0);
+        assert!(dip[32] >= 100 && dip[96] <= 100, "between its neighbours: {dip:?}");
+
+        let invert = Effect::ToneCurve { outputs: [255.0, 191.25, 127.5, 63.75, 0.0], channel: ToneChannel::Red };
+        let out = invert.apply(&Pixels::filled(1, 1, [0, 10, 200, 255]));
+        assert_eq!(out.pixel(0, 0), [255, 10, 200, 255], "only the red channel");
+    }
+
+    #[test]
+    fn scaled_effects_keep_their_look_at_another_size() {
+        assert_eq!(Effect::GaussianBlur { radius: 8.0 }.scaled(0.25), Effect::GaussianBlur { radius: 2.0 });
+        assert_eq!(Effect::Pixelate { size: 2 }.scaled(0.1), Effect::Pixelate { size: 1 }, "at least a pixel");
+        assert_eq!(Effect::Swirl { angle: 90.0 }.scaled(0.5), Effect::Swirl { angle: 90.0 }, "angles stay");
     }
 
     #[test]

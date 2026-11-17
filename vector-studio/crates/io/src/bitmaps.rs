@@ -53,6 +53,21 @@ pub fn resample(b: &Bitmap, width: u32, height: u32) -> Result<Bitmap, IoError> 
     bitmap_from_pixels(&pixels, b.rect)
 }
 
+/// `pixels` shrunk to fit `longest` pixels on its longer side (as they are when they
+/// already fit), and the scale it was shrunk by.
+pub fn shrink(pixels: &Pixels, longest: u32) -> (Pixels, f64) {
+    let side = pixels.width.max(pixels.height);
+    if side <= longest {
+        return (pixels.clone(), 1.0);
+    }
+    let factor = f64::from(longest) / f64::from(side);
+    let w = ((f64::from(pixels.width) * factor).round() as u32).max(1);
+    let h = ((f64::from(pixels.height) * factor).round() as u32).max(1);
+    let Some(image) = image::RgbaImage::from_raw(pixels.width, pixels.height, pixels.data.clone()) else { return (pixels.clone(), 1.0) };
+    let small = image::imageops::resize(&image, w, h, image::imageops::FilterType::Triangle);
+    (Pixels { width: w, height: h, data: small.into_raw() }, factor)
+}
+
 /// Area of `objects` that drawing them covers: their bounds with room for half the widest
 /// outline.
 pub fn drawn_bounds(objects: &[&Object]) -> Option<Rect> {
@@ -131,6 +146,9 @@ mod tests {
         let grey = apply_effect(&b, &Effect::Grayscale).unwrap();
         assert_eq!(grey.rect, b.rect);
         assert_eq!(bitmap_pixels(&grey).unwrap().pixel(10, 10), [76, 76, 76, 255]);
+        let (preview, factor) = shrink(&bitmap_pixels(&b).unwrap(), 9);
+        assert_eq!((preview.width, preview.height, factor), (9, 9, 0.25));
+        assert_eq!(preview.pixel(4, 4), [255, 0, 0, 255]);
         let small = resample(&b, 12, 12).unwrap();
         assert_eq!((small.width, small.height, small.rect), (12, 12, b.rect));
         assert_eq!(bitmap_pixels(&small).unwrap().pixel(6, 6), [255, 0, 0, 255]);

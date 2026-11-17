@@ -138,3 +138,34 @@ fn resample_changes_the_pixels_not_the_size_on_the_page() {
     app.click("OK (Resample)");
     assert_eq!((bitmap(&app).width, bitmap(&app).height), (20, 5));
 }
+
+#[test]
+fn tone_curve_maps_levels_with_a_preview() {
+    let mut app = red_bitmap();
+    let before = pixels(&app).pixel(36, 36);
+    app.menu(&["Effects", "Adjust", "Tone Curve…"]);
+    assert!(app.exists("Preview (Tone Curve)"));
+    assert_eq!(app.value("Black (Tone Curve)"), "0");
+
+    // Black lifted to 100: every level lifts.
+    app.fill("Black (Tone Curve)", "100");
+    let shown = app.state().effect.as_ref().and_then(|d| d.previewed());
+    assert!(matches!(shown, Some(vs_core::raster::Effect::ToneCurve { outputs, .. }) if outputs[0] == 100.0), "the preview follows: {shown:?}");
+
+    // Only the green channel, and the black node dragged up to about half way.
+    app.click("Green (Tone Curve)");
+    let curve = app.rect_of("Curve (Tone Curve)");
+    app.drag_screen(curve.left_bottom() + egui::vec2(2.0, -2.0), curve.left_center());
+    let black: f64 = app.value("Black (Tone Curve)").parse().unwrap();
+    assert!((black - 128.0).abs() < 3.0, "{black}");
+    app.click("OK (Tone Curve)");
+
+    let after = pixels(&app).pixel(36, 36);
+    assert_eq!((after[0], after[2], after[3]), (before[0], before[2], before[3]), "red and blue stay: {before:?} → {after:?}");
+    let lut = vs_core::raster::tone_lut([black, 63.75, 127.5, 191.25, 255.0]);
+    assert_eq!(after[1], lut[before[1] as usize], "green goes through the curve: {before:?} → {after:?}");
+    assert!(after[1] > before[1] + 50);
+
+    app.shortcut(Modifiers::COMMAND, Key::Z);
+    assert_eq!(pixels(&app).pixel(36, 36), before, "undoable");
+}
