@@ -15,6 +15,7 @@ pub mod fill_ui;
 pub mod free_transform;
 pub mod find_ui;
 pub mod guides;
+pub mod insert_codes;
 #[cfg(target_os = "macos")]
 pub mod native_menu;
 pub mod outline;

@@ -2,6 +2,7 @@
 
 pub mod bitmap;
 pub mod clones;
+pub mod codes;
 pub mod construct;
 pub mod controls;
 pub mod curves;

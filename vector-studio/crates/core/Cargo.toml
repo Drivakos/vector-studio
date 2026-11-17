@@ -12,6 +12,7 @@ epaint_default_fonts = "0.37"
 memmap2 = "0.9"
 base64 = "0.22"
 serde = { workspace = true, features = ["derive"] }
+qrcode = { version = "0.14.1", default-features = false }
 
 [dev-dependencies]
 serde_json = { version = "1.0.154", features = ["float_roundtrip"] }

@@ -148,6 +148,8 @@ pub struct AppState {
     pub resample: Option<crate::bitmap_menu::ResampleDialog>,
     /// The bitmap effect whose settings window is open.
     pub effect: Option<vs_core::raster::Effect>,
+    pub insert_qr: Option<crate::insert_codes::QrDialog>,
+    pub insert_barcode: Option<crate::insert_codes::BarcodeDialog>,
     pub save_template: Option<crate::templates::SaveTemplateDialog>,
     pub new_from_template: Option<crate::templates::NewFromTemplateDialog>,
     pub show_document_properties: bool,
@@ -284,6 +286,8 @@ impl AppState {
             convert_to_bitmap: None,
             resample: None,
             effect: None,
+            insert_qr: None,
+            insert_barcode: None,
             save_template: None,
             new_from_template: None,
             show_document_properties: false,
@@ -596,6 +600,16 @@ impl VectorStudioApp {
             }
             Command::Resample => {
                 crate::bitmap_menu::open_resample(s);
+                Ok(())
+            }
+            Command::InsertQrCode => {
+                crate::text_tool::finish(s);
+                crate::insert_codes::open_qr(s);
+                Ok(())
+            }
+            Command::InsertBarcode => {
+                crate::text_tool::finish(s);
+                crate::insert_codes::open_barcode(s);
                 Ok(())
             }
             Command::BitmapEffect(kind) => {
@@ -1334,6 +1348,8 @@ impl eframe::App for VectorStudioApp {
         crate::bitmap_menu::convert_window(&ctx, &mut self.state);
         crate::bitmap_menu::resample_window(&ctx, &mut self.state);
         crate::bitmap_menu::effect_window(&ctx, &mut self.state);
+        crate::insert_codes::qr_window(&ctx, &mut self.state);
+        crate::insert_codes::barcode_window(&ctx, &mut self.state);
         crate::templates::new_window(&ctx, &mut self.state);
         crate::edit_tools::copy_properties_window(&ctx, &mut self.state);
         self.settle(&ctx);

@@ -115,7 +115,7 @@
       "label": "Object",
       "items": [
         { "label": "Insert", "items": [
-          { "cmd": "object.insert_qr", "label": "QR Code" },
+          { "cmd": "object.insert_qr", "label": "QR Code…" },
           { "cmd": "object.insert_barcode", "label": "Barcode…" }
         ] },
         { "label": "Clip Frame", "items": [

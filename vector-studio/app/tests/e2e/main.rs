@@ -3,6 +3,7 @@
 
 mod support;
 mod bitmaps;
+mod codes;
 
 mod drawing;
 mod editing;
