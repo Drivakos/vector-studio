@@ -514,6 +514,7 @@ impl VectorStudioApp {
             Command::Columns => (!crate::text_menu::column_targets(state).is_empty(), None),
             Command::Bullets => (!crate::text_menu::list_targets(state).is_empty(), None),
             Command::DropCap => (!crate::text_menu::column_targets(state).is_empty(), None),
+            Command::CropBitmap => (!crate::bitmap_menu::bitmap_targets(state).is_empty(), None),
             Command::ConvertToBitmap => (crate::bitmap_menu::can_convert(state), None),
             Command::Resample => (crate::bitmap_menu::resample_target(state).is_some(), None),
             Command::BitmapEffect(_) => (!crate::bitmap_menu::bitmap_targets(state).is_empty(), None),
@@ -602,6 +603,10 @@ impl VectorStudioApp {
             }
             Command::Resample => {
                 crate::bitmap_menu::open_resample(s);
+                Ok(())
+            }
+            Command::CropBitmap => {
+                crate::bitmap_menu::crop_bitmaps(s);
                 Ok(())
             }
             Command::InsertQrCode => {

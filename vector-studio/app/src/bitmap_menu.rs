@@ -1,6 +1,7 @@
-//! Bitmaps > Convert to Bitmap, Resample, Straighten Image and Bitmap Color Mask, and the
-//! bitmap effects of the Effects menu (Adjust, Blur, Distort, Noise and Sharpen). Effect
-//! windows show a preview of the first selected bitmap with the settings as they stand.
+//! Bitmaps > Convert to Bitmap, Straighten Image, Image Adjustment Lab, Remove Background,
+//! Crop Bitmap, Resample and Bitmap Color Mask, and the bitmap effects of the Effects menu
+//! (Adjust, Blur, Distort, Noise and Sharpen). Effect windows show a preview of the first
+//! selected bitmap with the settings as they stand.
 
 use vs_core::raster::{Effect, EffectKind, Pixels, TONE_INPUTS, ToneChannel};
 use vs_core::{Object, ObjectId, Rgba, Shape, Style};
@@ -176,6 +177,28 @@ pub fn resample_window(ctx: &egui::Context, state: &mut AppState) {
     }
 }
 
+/// Crop Bitmap: trim the transparent edges off every selected unlocked bitmap; what is
+/// left stays where it was.
+pub fn crop_bitmaps(state: &mut AppState) {
+    let ids = bitmap_targets(state);
+    let mut failed = None;
+    let page = state.doc.active_page_mut();
+    for id in ids {
+        if let Some(obj) = page.object_mut(id)
+            && let Shape::Image(b) = &obj.shape
+        {
+            match vs_io::trim_transparent(b) {
+                Ok(Some(new)) => obj.shape = Shape::Image(new),
+                Ok(None) => {}
+                Err(e) => failed = Some(e.to_string()),
+            }
+        }
+    }
+    if let Some(e) = failed {
+        state.dialogs.error("Could not crop the bitmap", &e);
+    }
+}
+
 /// Apply `effect` to every selected unlocked bitmap.
 pub fn apply_effect(state: &mut AppState, effect: &Effect) {
     let ids = bitmap_targets(state);
@@ -249,7 +272,17 @@ fn field(ui: &mut egui::Ui, value: &mut f64, range: std::ops::RangeInclusive<f64
 fn settings(ui: &mut egui::Ui, effect: &mut Effect, window: &str) {
     let pct = -100.0..=100.0;
     match effect {
-        Effect::AutoAdjust | Effect::Grayscale | Effect::ToneCurve { .. } | Effect::ColorMask { .. } => {}
+        Effect::AutoAdjust | Effect::Grayscale | Effect::ToneCurve { .. } | Effect::ColorMask { .. } | Effect::RemoveBackground { .. } => {}
+        Effect::AdjustmentLab(a) => {
+            field(ui, &mut a.temperature, pct.clone(), "", "Temperature", window);
+            field(ui, &mut a.tint, pct.clone(), "", "Tint", window);
+            field(ui, &mut a.saturation, pct.clone(), "", "Saturation", window);
+            field(ui, &mut a.brightness, pct.clone(), "", "Brightness", window);
+            field(ui, &mut a.contrast, pct.clone(), "", "Contrast", window);
+            field(ui, &mut a.highlights, pct.clone(), "", "Highlights", window);
+            field(ui, &mut a.shadows, pct.clone(), "", "Shadows", window);
+            field(ui, &mut a.midtones, pct, "", "Midtones", window);
+        }
         Effect::Straighten { angle } => field(ui, angle, -15.0..=15.0, "°", "Angle", window),
         Effect::BrightnessContrast { brightness, contrast, intensity } => {
             field(ui, brightness, pct.clone(), "", "Brightness", window);

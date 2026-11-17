@@ -3,7 +3,7 @@
 mod bitmaps;
 mod import;
 
-pub use bitmaps::{apply_effect, bitmap_from_pixels, bitmap_pixels, drawn_bounds, glyph_image, objects_to_bitmap, resample, shrink};
+pub use bitmaps::{apply_effect, bitmap_from_pixels, bitmap_pixels, drawn_bounds, glyph_image, objects_to_bitmap, resample, shrink, trim_transparent};
 pub use import::{import_bitmap, import_svg};
 
 use std::fmt::Write as _;

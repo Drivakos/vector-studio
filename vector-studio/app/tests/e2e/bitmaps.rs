@@ -4,7 +4,7 @@ use egui::{Key, Modifiers};
 use vs_core::raster::Pixels;
 use vs_core::{Bitmap, Shape};
 
-use crate::support::{E2e, rect_close};
+use crate::support::{E2e, close, rect_close};
 
 /// A red square at (100, 100)–(172, 172), converted to a 72 dpi bitmap (72 × 72 px plus
 /// the half outline on each side), selected.
@@ -215,4 +215,63 @@ fn straighten_image_turns_the_bitmap_within_its_frame() {
     assert!(rect_close(app.bounds(0), place.x0, place.y0, place.x1, place.y1), "and the same place");
     assert_ne!(after, before);
     assert_eq!(after, vs_core::raster::Effect::Straighten { angle: 10.0 }.apply(&before), "turned 10° within its frame");
+}
+
+#[test]
+fn image_adjustment_lab_applies_its_settings_with_a_preview() {
+    let mut app = red_bitmap();
+    let before = pixels(&app);
+    app.menu(&["Bitmaps", "Image Adjustment Lab…"]);
+    for name in ["Temperature", "Tint", "Saturation", "Brightness", "Contrast", "Highlights", "Shadows", "Midtones"] {
+        assert_eq!(app.value(&format!("{name} (Image Adjustment Lab)")), "0", "{name} starts with no change");
+    }
+    assert!(app.exists("Preview (Image Adjustment Lab)"));
+    app.fill("Saturation (Image Adjustment Lab)", "-100");
+    app.fill("Brightness (Image Adjustment Lab)", "20");
+    app.click("OK (Image Adjustment Lab)");
+
+    let lab = vs_core::raster::Adjustments { saturation: -100.0, brightness: 20.0, ..Default::default() };
+    assert_eq!(pixels(&app), vs_core::raster::Effect::AdjustmentLab(lab).apply(&before));
+    let [r, g, b, _] = pixels(&app).pixel(36, 36);
+    assert!(r == g && g == b, "grey: {:?}", [r, g, b]);
+    app.shortcut(Modifiers::COMMAND, Key::Z);
+    assert_eq!(pixels(&app), before, "undoable");
+}
+
+#[test]
+fn remove_background_then_crop_bitmap_keeps_just_the_subject_in_place() {
+    // A red square on a white one, no outlines, as one 72 dpi bitmap: 1 px a point.
+    let mut app = E2e::new();
+    app.draw_rect(100.0, 100.0, 200.0, 200.0);
+    app.click("Swatch White");
+    app.right_click("Swatch No color");
+    app.draw_rect(130.0, 130.0, 170.0, 170.0);
+    app.click("Swatch Red");
+    app.right_click("Swatch No color");
+    app.shortcut(Modifiers::COMMAND, Key::A);
+    app.menu(&["Bitmaps", "Convert to Bitmap…"]);
+    app.fill("Resolution (bitmap)", "72");
+    app.click("OK (Convert to Bitmap)");
+    let (whole, place) = (bitmap(&app).clone(), app.bounds(0));
+    // 1 px a point, rounded out to whole pixels.
+    assert!((100..=101).contains(&whole.width) && (100..=101).contains(&whole.height), "{}×{}", whole.width, whole.height);
+
+    app.menu(&["Bitmaps", "Remove Background"]);
+    let p = pixels(&app);
+    assert_eq!(p.pixel(2, 2)[3], 0, "the white goes");
+    let [r, g, b, a] = p.pixel(50, 50);
+    assert!(r > 200 && g < 40 && b < 40 && a == 255, "the red stays: {:?}", [r, g, b, a]);
+    assert_eq!(app.bounds(0), place, "the same size until cropped");
+
+    app.menu(&["Bitmaps", "Crop Bitmap"]);
+    let cropped = bitmap(&app).clone();
+    assert!((40..=41).contains(&cropped.width) && (40..=41).contains(&cropped.height), "the transparent edges are gone: {}×{}", cropped.width, cropped.height);
+    let r = app.bounds(0);
+    assert!(r.x0 > 129.0 && r.x0 < 130.01 && r.y0 > 129.0 && r.y0 < 130.01 && r.x1 > 169.99 && r.x1 < 171.0, "what is left stays put: {r:?}");
+    assert!(close(r.width() / f64::from(cropped.width), place.width() / f64::from(whole.width)), "at the same resolution");
+    app.menu(&["Bitmaps", "Crop Bitmap"]);
+    assert_eq!(bitmap(&app).width, cropped.width, "nothing more to crop");
+
+    app.shortcut(Modifiers::COMMAND, Key::Z);
+    assert_eq!(bitmap(&app).width, whole.width, "undo");
 }

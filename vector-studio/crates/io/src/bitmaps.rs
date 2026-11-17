@@ -42,6 +42,18 @@ pub fn apply_effect(b: &Bitmap, effect: &Effect) -> Result<Bitmap, IoError> {
     bitmap_from_pixels(&effect.apply(&bitmap_pixels(b)?), b.rect)
 }
 
+/// `b` without its wholly transparent edges, the rest where it was on the page; `None`
+/// when it has none (or nothing else).
+pub fn trim_transparent(b: &Bitmap) -> Result<Option<Bitmap>, IoError> {
+    let pixels = bitmap_pixels(b)?;
+    let Some((x, y, w, h)) = pixels.opaque_area().filter(|a| *a != (0, 0, pixels.width, pixels.height)) else { return Ok(None) };
+    let (sx, sy) = (b.rect.width() / f64::from(pixels.width), b.rect.height() / f64::from(pixels.height));
+    let at = |px: u32, py: u32| (b.rect.x0 + f64::from(px) * sx, b.rect.y0 + f64::from(py) * sy);
+    let (x0, y0) = at(x, y);
+    let (x1, y1) = at(x + w, y + h);
+    bitmap_from_pixels(&pixels.crop(x, y, w, h), Rect::new(x0, y0, x1, y1)).map(Some)
+}
+
 /// `b` resampled to `width` × `height` pixels, in the same place: the same size on the
 /// page at a new resolution.
 pub fn resample(b: &Bitmap, width: u32, height: u32) -> Result<Bitmap, IoError> {
@@ -196,6 +208,14 @@ mod tests {
         let (preview, factor) = shrink(&bitmap_pixels(&b).unwrap(), 9);
         assert_eq!((preview.width, preview.height, factor), (9, 9, 0.25));
         assert_eq!(preview.pixel(4, 4), [255, 0, 0, 255]);
+        assert!(trim_transparent(&b).unwrap().is_none(), "no transparent edges");
+        let mut ringed = Pixels::filled(10, 8, [0; 4]);
+        ringed.set_pixel(2, 3, [1, 2, 3, 255]);
+        ringed.set_pixel(5, 4, [1, 2, 3, 255]);
+        let placed = bitmap_from_pixels(&ringed, Rect::new(100.0, 50.0, 120.0, 66.0)).unwrap();
+        let trimmed = trim_transparent(&placed).unwrap().unwrap();
+        assert_eq!((trimmed.width, trimmed.height), (4, 2));
+        assert_eq!(trimmed.rect, Rect::new(104.0, 56.0, 112.0, 60.0), "2 points a pixel, the rest stays put");
         let small = resample(&b, 12, 12).unwrap();
         assert_eq!((small.width, small.height, small.rect), (12, 12, b.rect));
         assert_eq!(bitmap_pixels(&small).unwrap().pixel(6, 6), [255, 0, 0, 255]);

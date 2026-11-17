@@ -31,6 +31,29 @@ impl Pixels {
         let i = (y as usize * self.width as usize + x as usize) * 4;
         self.data[i..i + 4].copy_from_slice(&rgba);
     }
+
+    /// The smallest area holding every pixel that is not wholly transparent, as
+    /// (x, y, width, height); `None` when every pixel is.
+    pub fn opaque_area(&self) -> Option<(u32, u32, u32, u32)> {
+        let (mut x0, mut y0, mut x1, mut y1) = (u32::MAX, u32::MAX, 0, 0);
+        for y in 0..self.height {
+            for x in 0..self.width {
+                if self.pixel(x, y)[3] > 0 {
+                    (x0, y0, x1, y1) = (x0.min(x), y0.min(y), x1.max(x), y1.max(y));
+                }
+            }
+        }
+        (x0 <= x1).then(|| (x0, y0, x1 - x0 + 1, y1 - y0 + 1))
+    }
+
+    /// The `width` × `height` pixels from (x, y); the area must lie inside the image.
+    pub fn crop(&self, x: u32, y: u32, width: u32, height: u32) -> Pixels {
+        let row = |r: u32| {
+            let i = ((y + r) as usize * self.width as usize + x as usize) * 4;
+            &self.data[i..i + width as usize * 4]
+        };
+        Pixels { width, height, data: (0..height).flat_map(|r| row(r).iter().copied()).collect() }
+    }
 }
 
 /// The effects of the Effects menu that work on bitmaps, without their settings.
@@ -58,10 +81,14 @@ pub enum EffectKind {
     ColorMask,
     /// Bitmaps > Straighten Image.
     Straighten,
+    /// Bitmaps > Image Adjustment Lab.
+    AdjustmentLab,
+    /// Bitmaps > Remove Background.
+    RemoveBackground,
 }
 
 impl EffectKind {
-    pub const ALL: [EffectKind; 20] = [
+    pub const ALL: [EffectKind; 22] = [
         EffectKind::AutoAdjust,
         EffectKind::ToneCurve,
         EffectKind::BrightnessContrast,
@@ -82,6 +109,8 @@ impl EffectKind {
         EffectKind::UnsharpMask,
         EffectKind::ColorMask,
         EffectKind::Straighten,
+        EffectKind::AdjustmentLab,
+        EffectKind::RemoveBackground,
     ];
 
     /// The effect's name, as its window title.
@@ -107,6 +136,8 @@ impl EffectKind {
             EffectKind::UnsharpMask => "Unsharp Mask",
             EffectKind::ColorMask => "Bitmap Color Mask",
             EffectKind::Straighten => "Straighten Image",
+            EffectKind::AdjustmentLab => "Image Adjustment Lab",
+            EffectKind::RemoveBackground => "Remove Background",
         }
     }
 
@@ -133,12 +164,14 @@ impl EffectKind {
             EffectKind::UnsharpMask => Effect::UnsharpMask { amount: 100.0, radius: 2.0, threshold: 0.0 },
             EffectKind::ColorMask => Effect::ColorMask { color: [255, 255, 255], tolerance: 10.0, hide: true },
             EffectKind::Straighten => Effect::Straighten { angle: 0.0 },
+            EffectKind::AdjustmentLab => Effect::AdjustmentLab(Adjustments::default()),
+            EffectKind::RemoveBackground => Effect::RemoveBackground { tolerance: 12.0 },
         }
     }
 
     /// Whether the effect has settings, so it opens a window first.
     pub fn has_settings(self) -> bool {
-        !matches!(self, EffectKind::AutoAdjust | EffectKind::Grayscale)
+        !matches!(self, EffectKind::AutoAdjust | EffectKind::Grayscale | EffectKind::RemoveBackground)
     }
 }
 
@@ -243,6 +276,28 @@ pub enum Effect {
     /// Turn the image `angle` degrees clockwise about its centre, magnified just enough
     /// that it still fills its frame, so its size stays and no corner is empty.
     Straighten { angle: f64 },
+    /// Image Adjustment Lab: several colour and tone adjustments at once.
+    AdjustmentLab(Adjustments),
+    /// Make the background transparent: the colour most common around the edge, and
+    /// every pixel within `tolerance` (percent) of it that the edge reaches through such
+    /// pixels.
+    RemoveBackground { tolerance: f64 },
+}
+
+/// The Image Adjustment Lab's settings, each -100 to 100 and 0 for no change.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Adjustments {
+    /// Warmer (towards red and yellow) or cooler (towards blue).
+    pub temperature: f64,
+    /// Towards magenta, or towards green.
+    pub tint: f64,
+    pub saturation: f64,
+    pub brightness: f64,
+    pub contrast: f64,
+    /// Lighten or darken only the light, dark or middle tones.
+    pub highlights: f64,
+    pub shadows: f64,
+    pub midtones: f64,
 }
 
 impl Effect {
@@ -268,6 +323,8 @@ impl Effect {
             Effect::UnsharpMask { .. } => EffectKind::UnsharpMask,
             Effect::ColorMask { .. } => EffectKind::ColorMask,
             Effect::Straighten { .. } => EffectKind::Straighten,
+            Effect::AdjustmentLab(_) => EffectKind::AdjustmentLab,
+            Effect::RemoveBackground { .. } => EffectKind::RemoveBackground,
         }
     }
 
@@ -336,6 +393,8 @@ impl Effect {
             Effect::UnsharpMask { amount, radius, threshold } => unsharp(pixels, amount.clamp(0.0, 500.0), radius, threshold),
             Effect::ColorMask { color, tolerance, hide } => color_mask(pixels, color, tolerance, hide),
             Effect::Straighten { angle } => straighten(pixels, angle),
+            Effect::AdjustmentLab(a) => adjust(pixels, a),
+            Effect::RemoveBackground { tolerance } => remove_background(pixels, tolerance),
         }
     }
 }
@@ -390,6 +449,27 @@ fn from_hsl(h: f64, s: f64, l: f64) -> [f64; 3] {
         _ => (c, 0.0, x),
     };
     [r + m, g + m, b + m]
+}
+
+/// The Image Adjustment Lab: white balance, then brightness and contrast, then the tone
+/// ranges, then saturation.
+fn adjust(pixels: &Pixels, a: Adjustments) -> Pixels {
+    let pct = |v: f64| v.clamp(-100.0, 100.0) / 100.0;
+    let (temperature, tint) = (pct(a.temperature) * 40.0, pct(a.tint) * 40.0);
+    let (brightness, gain) = (pct(a.brightness) * 128.0, 1.0 + pct(a.contrast));
+    let (highlights, shadows, midtones) = (pct(a.highlights) * 64.0, pct(a.shadows) * 64.0, pct(a.midtones) * 64.0);
+    let saturation = 1.0 + pct(a.saturation);
+    map_rgb(pixels, |[r, g, b]| {
+        let (r, g, b) = (r + temperature + tint / 2.0, g - tint, b - temperature + tint / 2.0);
+        let [r, g, b] = [r, g, b].map(|v| (v - 127.5) * gain + 127.5 + brightness);
+        // Each tone range weighs in by how light the pixel is: shadows at black,
+        // highlights at white, midtones in between.
+        let l = ((0.299 * r + 0.587 * g + 0.114 * b) / 255.0).clamp(0.0, 1.0);
+        let shift = shadows * (1.0 - l).powi(2) + highlights * l * l + midtones * 4.0 * l * (1.0 - l);
+        let [r, g, b] = [r, g, b].map(|v| v + shift);
+        let grey = 0.299 * r + 0.587 * g + 0.114 * b;
+        [r, g, b].map(|v| grey + (v - grey) * saturation)
+    })
 }
 
 fn auto_adjust(pixels: &Pixels) -> Pixels {
@@ -614,6 +694,57 @@ fn color_mask(pixels: &Pixels, color: [u8; 3], tolerance: f64, hide: bool) -> Pi
         if near == hide {
             px[3] = 0;
         }
+    }
+    out
+}
+
+fn remove_background(pixels: &Pixels, tolerance: f64) -> Pixels {
+    let (w, h) = (pixels.width as usize, pixels.height as usize);
+    let mut edge: Vec<usize> = (0..w).flat_map(|x| [x, (h - 1) * w + x]).collect();
+    edge.extend((0..h).flat_map(|y| [y * w, y * w + w - 1]));
+    edge.sort_unstable();
+    edge.dedup();
+    let px = |i: usize| -> [u8; 4] { pixels.data[i * 4..i * 4 + 4].try_into().expect("four channels") };
+    // The background: the most common colour around the edge, near colours counted
+    // together, averaged.
+    let bucket = |c: [u8; 4]| (c[0] >> 4, c[1] >> 4, c[2] >> 4);
+    let mut counts = std::collections::HashMap::new();
+    for i in edge.iter().copied().filter(|i| px(*i)[3] > 0) {
+        *counts.entry(bucket(px(i))).or_insert(0usize) += 1;
+    }
+    let Some((top, _)) = counts.into_iter().max_by_key(|(k, n)| (*n, *k)) else { return pixels.clone() };
+    let members: Vec<[u8; 4]> = edge.iter().map(|i| px(*i)).filter(|c| c[3] > 0 && bucket(*c) == top).collect();
+    let background: [f64; 3] = std::array::from_fn(|ch| members.iter().map(|c| f64::from(c[ch])).sum::<f64>() / members.len() as f64);
+    let reach = (tolerance.clamp(0.0, 100.0) / 100.0 * 255.0).max(1.0);
+    let distance = |c: [u8; 4]| (0..3).map(|ch| (f64::from(c[ch]) - background[ch]).abs()).fold(0.0, f64::max);
+    let passable = |c: [u8; 4]| c[3] == 0 || distance(c) <= reach;
+
+    let mut out = pixels.clone();
+    let mut gone = vec![false; w * h];
+    let mut queue: std::collections::VecDeque<usize> = edge.into_iter().filter(|i| passable(px(*i))).collect();
+    for i in &queue {
+        gone[*i] = true;
+    }
+    while let Some(i) = queue.pop_front() {
+        out.data[i * 4 + 3] = 0;
+        let (x, y) = (i % w, i / w);
+        let next = [(x > 0).then(|| i - 1), (x + 1 < w).then(|| i + 1), (y > 0).then(|| i - w), (y + 1 < h).then(|| i + w)];
+        for j in next.into_iter().flatten() {
+            if !gone[j] && passable(px(j)) {
+                gone[j] = true;
+                queue.push_back(j);
+            }
+        }
+    }
+    // A soft edge: pixels next to the removed area fade by how near the background they are.
+    for i in 0..w * h {
+        let (x, y) = (i % w, i / w);
+        let beside = [(x > 0).then(|| i - 1), (x + 1 < w).then(|| i + 1), (y > 0).then(|| i - w), (y + 1 < h).then(|| i + w)];
+        if gone[i] || !beside.into_iter().flatten().any(|j| gone[j]) {
+            continue;
+        }
+        let k = ((distance(px(i)) - reach) / reach).clamp(0.0, 1.0);
+        out.data[i * 4 + 3] = clamp_u8(f64::from(px(i)[3]) * k);
     }
     out
 }
@@ -922,6 +1053,57 @@ mod tests {
         let wide = Effect::Straighten { angle: 10.0 }.apply(&Pixels::filled(40, 20, [9, 9, 9, 255]));
         assert_eq!((wide.width, wide.height), (40, 20));
         assert!([(0, 0), (39, 0), (0, 19), (39, 19)].iter().all(|(x, y)| wide.pixel(*x, *y)[3] == 255));
+    }
+
+    #[test]
+    fn adjustment_lab_changes_colour_and_tones() {
+        let mid = Pixels::filled(1, 1, [128, 128, 128, 200]);
+        let lab = |a: Adjustments| Effect::AdjustmentLab(a).apply(&mid).pixel(0, 0);
+        assert_eq!(lab(Adjustments::default()), [128, 128, 128, 200], "no change by default");
+        let warm = lab(Adjustments { temperature: 50.0, ..Default::default() });
+        assert!(warm[0] > 128 && warm[2] < 128 && warm[3] == 200, "{warm:?}");
+        let magenta = lab(Adjustments { tint: 50.0, ..Default::default() });
+        assert!(magenta[1] < 128 && magenta[0] > 128 && magenta[2] > 128, "{magenta:?}");
+        assert!(lab(Adjustments { brightness: 50.0, ..Default::default() })[0] > 180);
+        // Midtones move the middle grey most; shadows and highlights barely touch it.
+        let midtones = lab(Adjustments { midtones: 50.0, ..Default::default() })[0];
+        let shadows = lab(Adjustments { shadows: 50.0, ..Default::default() })[0];
+        assert!(midtones > shadows && shadows > 128, "{midtones} {shadows}");
+        let black = Effect::AdjustmentLab(Adjustments { shadows: 50.0, highlights: -50.0, ..Default::default() }).apply(&ramp());
+        assert!(grey(&black, 0, 0) > 20 && grey(&black, 3, 0) < 235, "shadows lift black, highlights pull white down");
+        let pale = Effect::AdjustmentLab(Adjustments { saturation: -100.0, ..Default::default() }).apply(&Pixels::filled(1, 1, [200, 40, 40, 255]));
+        let [r, g, b, _] = pale.pixel(0, 0);
+        assert!(r == g && g == b, "no saturation is grey: {r} {g} {b}");
+    }
+
+    #[test]
+    fn remove_background_clears_what_the_edge_reaches() {
+        // White around a black ring, with white inside the ring too.
+        let mut p = Pixels::filled(9, 9, [250, 250, 250, 255]);
+        for i in 2..7 {
+            for (x, y) in [(i, 2), (i, 6), (2, i), (6, i)] {
+                p.set_pixel(x, y, [0, 0, 0, 255]);
+            }
+        }
+        let out = Effect::RemoveBackground { tolerance: 12.0 }.apply(&p);
+        assert_eq!(out.pixel(0, 0)[3], 0, "the background goes");
+        assert_eq!(out.pixel(4, 0)[3], 0);
+        assert_eq!(out.pixel(2, 2), [0, 0, 0, 255], "the ring stays");
+        assert_eq!(out.pixel(4, 4), [250, 250, 250, 255], "the edge does not reach inside the ring");
+        let blank = Pixels::filled(3, 3, [0; 4]);
+        assert_eq!(Effect::RemoveBackground { tolerance: 12.0 }.apply(&blank), blank, "nothing to go by");
+    }
+
+    #[test]
+    fn opaque_area_and_crop() {
+        let mut p = Pixels::filled(6, 5, [0; 4]);
+        p.set_pixel(1, 2, [9, 9, 9, 255]);
+        p.set_pixel(3, 3, [7, 7, 7, 1]);
+        assert_eq!(p.opaque_area(), Some((1, 2, 3, 2)));
+        let c = p.crop(1, 2, 3, 2);
+        assert_eq!((c.width, c.height), (3, 2));
+        assert_eq!((c.pixel(0, 0), c.pixel(2, 1)), ([9, 9, 9, 255], [7, 7, 7, 1]));
+        assert_eq!(Pixels::filled(2, 2, [0; 4]).opaque_area(), None);
     }
 
     #[test]
