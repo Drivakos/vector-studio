@@ -3,6 +3,7 @@
 
 mod support;
 mod bitmaps;
+mod brushes;
 mod codes;
 mod dimensions;
 

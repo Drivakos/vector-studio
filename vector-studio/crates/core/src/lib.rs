@@ -1,6 +1,7 @@
 //! Document model for Vector Studio. No UI or GPU dependencies.
 
 pub mod bitmap;
+pub mod brush;
 pub mod clones;
 pub mod codes;
 pub mod construct;

@@ -200,6 +200,24 @@ pub fn property_bar_ui(ui: &mut egui::Ui, state: &mut AppState, out: &mut Vec<Co
                 theme::vsep(ui);
                 ui.label(egui::RichText::new(crate::tools::hint(state)).color(theme::TEXT_DIM));
             }
+            Tool::Smooth | Tool::RoughenBrush => {
+                let unit = state.doc.display_unit;
+                let settings = &mut state.tools.settings;
+                let mut size = unit.from_points(settings.brush_size);
+                if number_row(ui, Some(ICON_BRUSH), "Brush size", &mut size, unit.suffix(), unit.from_points(1.0)..=unit.from_points(500.0), unit.step(), unit.decimals()) {
+                    settings.brush_size = unit.to_points(size).max(1.0);
+                }
+                if state.tool == Tool::Smooth {
+                    number_row(ui, Some(ICON_BLUR_ON), "Smoothness", &mut state.tools.settings.smoothness, "%", 1.0..=100.0, 1.0, 0);
+                } else {
+                    let mut spike = unit.from_points(state.tools.settings.spike_size);
+                    if number_row(ui, Some(ICON_GRAIN), "Spike size", &mut spike, unit.suffix(), unit.from_points(0.25)..=unit.from_points(100.0), unit.step(), unit.decimals()) {
+                        state.tools.settings.spike_size = unit.to_points(spike).max(0.25);
+                    }
+                }
+                theme::vsep(ui);
+                ui.label(egui::RichText::new(crate::tools::hint(state)).color(theme::TEXT_DIM));
+            }
             Tool::Knife => {
                 ui.label(egui::RichText::new(crate::tools::hint(state)).color(theme::TEXT_DIM));
             }

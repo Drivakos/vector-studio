@@ -54,11 +54,17 @@ pub struct ToolSettings {
     /// Smart Fill: the fill colour of new areas, and whether they get the default outline.
     pub smart_fill: vs_core::Rgba,
     pub smart_fill_outline: bool,
+    /// Smooth and Roughen: brush diameter in points.
+    pub brush_size: f64,
+    /// Smooth: how far each dab eases the curve, 0 to 100.
+    pub smoothness: f64,
+    /// Roughen: spike height in points.
+    pub spike_size: f64,
 }
 
 impl Default for ToolSettings {
     fn default() -> Self {
-        Self { polygon_sides: 5, star_points: 5, star_inner_ratio: 0.5, text: vs_core::Text::new(""), eraser_size: DEFAULT_ERASER_SIZE, spiral_turns: 4, graph_columns: 4, graph_rows: 3, common_shape: Default::default(), smart_fill: vs_core::Rgba::rgb(0xC0, 0xC0, 0xC0), smart_fill_outline: false }
+        Self { polygon_sides: 5, star_points: 5, star_inner_ratio: 0.5, text: vs_core::Text::new(""), eraser_size: DEFAULT_ERASER_SIZE, spiral_turns: 4, graph_columns: 4, graph_rows: 3, common_shape: Default::default(), smart_fill: vs_core::Rgba::rgb(0xC0, 0xC0, 0xC0), smart_fill_outline: false, brush_size: 20.0, smoothness: 50.0, spike_size: 3.0 }
     }
 }
 
@@ -97,6 +103,11 @@ enum Drag {
     Knife { start: Point },
     /// Eraser tool: the path of the eraser so far.
     Erase { points: Vec<Point> },
+    /// Smooth: where the last dab was.
+    Brush { last: Point },
+    /// Roughen: the objects as they were at the press, and the stroke so far. Each move
+    /// roughens the originals along the whole stroke again, so spikes alternate evenly.
+    Roughen { originals: Vec<vs_core::Object>, stroke: Vec<Point> },
     /// Text tool: dragging out a paragraph text frame (a click makes artistic text).
     TextFrame { start: Point },
     /// 2-Point Line tool: dragging the line.
@@ -196,6 +207,7 @@ pub fn is_implemented(tool: Tool) -> bool {
         || matches!(tool, Tool::Pick | Tool::FreehandPick | Tool::FreeTransform | Tool::Shape | Tool::Zoom | Tool::Pan | Tool::Freehand | Tool::Bezier | Tool::Pen | Tool::Text)
         || matches!(tool, Tool::InteractiveFill | Tool::SmartFill | Tool::Transparency | Tool::ColorEyedropper | Tool::AttributesEyedropper)
         || matches!(tool, Tool::Crop | Tool::Knife | Tool::VirtualSegmentDelete | Tool::Eraser)
+        || is_brush(tool)
         || matches!(tool, Tool::TwoPointLine | Tool::Polyline | Tool::BSpline | Tool::Spiral | Tool::GraphPaper)
         || is_three_point(tool)
 }
@@ -381,6 +393,7 @@ fn press(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers, dou
             }
         }
         Tool::Eraser => state.tools.drag = Some(Drag::Erase { points: vec![p] }),
+        Tool::Smooth | Tool::RoughenBrush => press_brush(state, view, p),
         Tool::SmartFill => {
             let s = &state.tools.settings;
             let mut style = vs_core::Style::filled(s.smart_fill);
@@ -693,6 +706,52 @@ pub fn finish_pen(state: &mut AppState) {
     }
 }
 
+fn is_brush(tool: Tool) -> bool {
+    matches!(tool, Tool::Smooth | Tool::RoughenBrush)
+}
+
+/// Smooth and Roughen work on the selection; with nothing they can reshape selected, a
+/// press selects the object under the pointer first.
+fn press_brush(state: &mut AppState, view: &View, p: Point) {
+    let page = state.doc.active_page();
+    if !state.selected_objects().any(vs_core::Object::can_brush) {
+        let hit = page.hit_test(p, view.doc_len(HIT)).filter(|id| page.object(*id).is_some_and(vs_core::Object::can_brush));
+        state.selection = hit.into_iter().collect();
+        state.marquee_selection = None;
+    }
+    if !state.selected_objects().any(vs_core::Object::can_brush) {
+        return;
+    }
+    if state.tool == Tool::RoughenBrush {
+        let originals: Vec<vs_core::Object> = state.selected_objects().filter(|o| o.can_brush()).cloned().collect();
+        let stroke = vec![p];
+        roughen(state, &originals, &stroke);
+        state.tools.drag = Some(Drag::Roughen { originals, stroke });
+    } else {
+        smooth_at(state, p);
+        state.tools.drag = Some(Drag::Brush { last: p });
+    }
+}
+
+fn smooth_at(state: &mut AppState, p: Point) {
+    let ids = state.selection.clone();
+    let s = &state.tools.settings;
+    state.doc.smooth_at(&ids, p, s.brush_size / 2.0, s.smoothness / 100.0);
+}
+
+/// Put `originals` back, then roughen them along `stroke`.
+fn roughen(state: &mut AppState, originals: &[vs_core::Object], stroke: &[Point]) {
+    let page = state.doc.active_page_mut();
+    for original in originals {
+        if let Some(obj) = page.object_mut(original.id) {
+            *obj = original.clone();
+        }
+    }
+    let ids: Vec<ObjectId> = originals.iter().map(|o| o.id).collect();
+    let s = &state.tools.settings;
+    state.doc.roughen_along(&ids, stroke, s.brush_size / 2.0, s.spike_size);
+}
+
 /// A 3-point tool's third click: make the curve, rectangle or ellipse on edge `a` → `b`.
 fn finish_three_point(state: &mut AppState, a: Point, b: Point, c: Point) {
     if let Some(kind) = crate::dimensions::kind(state.tool) {
@@ -799,6 +858,27 @@ fn drag_to(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers) {
                 points.push(p);
             }
             Drag::Erase { points }
+        }
+        Drag::Brush { last } => {
+            // A dab every eighth of the brush, so a quick stroke still covers its path.
+            let step = state.tools.settings.brush_size / 8.0;
+            let distance = (p - last).hypot();
+            if distance < step {
+                Drag::Brush { last }
+            } else {
+                let n = (distance / step).floor() as usize;
+                for i in 1..=n {
+                    smooth_at(state, last.lerp(p, i as f64 / n as f64));
+                }
+                Drag::Brush { last: p }
+            }
+        }
+        Drag::Roughen { originals, mut stroke } => {
+            if stroke.last().is_none_or(|l| view.screen_dist(*l, p) > 1.5) {
+                stroke.push(p);
+                roughen(state, &originals, &stroke);
+            }
+            Drag::Roughen { originals, stroke }
         }
         Drag::Lasso { mut points, add } => {
             if points.last().is_none_or(|l| view.screen_dist(*l, p) > 1.5) {
@@ -1184,6 +1264,11 @@ fn release(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers) {
                 }
             }
         }
+        Drag::Brush { .. } => {
+            let ids = state.selection.clone();
+            state.doc.refit_brushed(&ids, state.tools.settings.brush_size / 2.0);
+        }
+        Drag::Roughen { .. } => {}
         Drag::Erase { mut points } => {
             points.push(p);
             let ids: Vec<ObjectId> = state.selection.clone();
@@ -1511,6 +1596,12 @@ pub fn draw_overlay(painter: &egui::Painter, state: &AppState, canvas: Rect) {
                 painter.line_segment([view.screen(*start), view.screen(p)], Stroke::new(1.5, Color32::from_rgb(0xD0, 0x20, 0x20)));
             }
         }
+        _ if is_brush(state.tool) => {
+            if let Some(p) = state.tools.pointer {
+                let r = (state.tools.settings.brush_size / 2.0 * view.zoom) as f32;
+                painter.circle_stroke(view.screen(p), r, thin);
+            }
+        }
         Some(Drag::Erase { points }) => {
             let width = (state.tools.settings.eraser_size * view.zoom) as f32;
             let pts: Vec<Pos2> = points.iter().map(|p| view.screen(*p)).collect();
@@ -1660,6 +1751,8 @@ pub fn hint(state: &AppState) -> String {
         Tool::ThreePointCurve => "Drag from start to end, then click to set the curve".into(),
         Tool::ThreePointRectangle => "Drag one side, then click to set the height".into(),
         Tool::ThreePointEllipse => "Drag one axis, then click to set the other".into(),
+        Tool::Smooth => "Select a curve or shape, then drag along its outline to smooth it · brush size and smoothness are on the property bar".into(),
+        Tool::RoughenBrush => "Select a curve or shape, then drag along its outline to add spikes · brush and spike size are on the property bar".into(),
         Tool::ParallelDimension => "Drag between the two points to measure, then click where the dimension line goes".into(),
         Tool::HorizontalVerticalDimension => "Drag between the two points, then click above or below for the horizontal distance, beside for the vertical".into(),
         Tool::Text if state.tools.text.is_some() => "Type the text · Enter starts a new line · Esc or another tool finishes".into(),
