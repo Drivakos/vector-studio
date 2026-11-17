@@ -1,8 +1,8 @@
-//! Parallel and Horizontal or Vertical Dimension tools.
+//! Dimension tools and the 3-Point Callout tool.
 
 use egui::{Key, Modifiers};
 use vs_core::kurbo::Point;
-use vs_core::{Object, Shape};
+use vs_core::{Object, Shape, TextAlign};
 
 use crate::support::E2e;
 
@@ -69,4 +69,96 @@ fn horizontal_or_vertical_dimension_follows_the_pull() {
     app.key(Key::Escape);
     app.click_doc(420.0, 520.0);
     assert_eq!(app.objects().len(), 2);
+}
+
+#[test]
+fn angular_dimension_measures_the_angle_on_the_side_of_the_arc() {
+    let mut app = E2e::new();
+    app.flyout_tool("Parallel Dimension", "Angular Dimension");
+    // Vertex (200, 200), one arm to the right, the other straight up.
+    app.drag_doc((200.0, 200.0), (300.0, 200.0));
+    app.click_doc(200.0, 100.0);
+    assert!(app.objects().is_empty(), "waits for the click that places the arc");
+    app.click_doc(240.0, 160.0);
+
+    assert_eq!(app.objects().len(), 1);
+    let (lines, _, words) = parts(&app.objects()[0]);
+    assert_eq!(words, "90.0°");
+    // The arc passes through the click, 40√2 from the vertex.
+    let b = lines.world_bounds();
+    let r = 3200f64.sqrt();
+    assert!((b.x1 - (200.0 + r + 2.0)).abs() < 0.01 && (b.y0 - (200.0 - r - 2.0)).abs() < 0.01, "{b:?}");
+
+    // The same arms with the arc pulled round the other side: the outside angle.
+    app.drag_doc((500.0, 200.0), (600.0, 200.0));
+    app.click_doc(500.0, 100.0);
+    app.click_doc(450.0, 250.0);
+    let (_, _, words) = parts(&app.objects()[1]);
+    assert_eq!(words, "270.0°");
+
+    app.shortcut(Modifiers::COMMAND, Key::Z);
+    assert_eq!(app.objects().len(), 1, "one undo step");
+}
+
+#[test]
+fn segment_dimension_measures_the_clicked_segment() {
+    let mut app = E2e::new();
+    app.draw_rect(100.0, 100.0, 300.0, 200.0);
+    app.flyout_tool("Parallel Dimension", "Segment Dimension");
+    app.click_doc(400.0, 400.0);
+    app.click_doc(400.0, 450.0);
+    assert_eq!(app.objects().len(), 1, "a click off every segment does nothing");
+
+    // The bottom side, then a dimension line 20 pt under it.
+    app.click_doc(160.0, 200.0);
+    app.click_doc(160.0, 220.0);
+    assert_eq!(app.objects().len(), 2);
+    let (lines, _, words) = parts(&app.objects()[1]);
+    assert_eq!(words, label(&app, 200.0));
+    let b = lines.world_bounds();
+    assert!((b.x0 - 100.0).abs() < 1e-3 && (b.x1 - 300.0).abs() < 1e-3 && (b.y1 - 222.0).abs() < 1e-3, "{b:?}");
+
+    // The right side.
+    app.click_doc(300.0, 150.0);
+    app.click_doc(330.0, 150.0);
+    let (_, _, words) = parts(&app.objects()[2]);
+    assert_eq!(words, label(&app, 100.0));
+}
+
+#[test]
+fn callout_draws_a_leader_and_takes_typing() {
+    let mut app = E2e::new();
+    app.flyout_tool("Parallel Dimension", "3-Point Callout");
+    app.drag_doc((100.0, 200.0), (150.0, 150.0));
+    assert!(app.objects().is_empty(), "waits for the click that ends the leader");
+    app.click_doc(220.0, 150.0);
+    app.type_text("Note");
+    app.key(Key::Escape);
+
+    let [leader, text] = app.objects() else { panic!("a leader and text: {:?}", app.objects()) };
+    assert_eq!(leader.name.as_deref(), Some("Callout"));
+    let ends: Vec<Point> = leader.world_path().elements().iter().filter_map(|e| e.end_point()).collect();
+    let want = [Point::new(100.0, 200.0), Point::new(150.0, 150.0), Point::new(220.0, 150.0)];
+    assert!(ends.len() == 3 && ends.iter().zip(want).all(|(p, q)| (*p - q).hypot() < 1e-3), "{ends:?}");
+    let Shape::Text(t) = &text.shape else { panic!("{:?}", text.shape) };
+    assert_eq!(t.content, "Note");
+    let b = text.world_bounds();
+    assert!(b.x0 > 220.0 && b.x0 < 226.0 && b.y0 < 150.0 && b.y1 > 150.0, "just after the leader, level with it: {b:?}");
+
+    // Bent back to the left, the text ends at the leader instead.
+    app.drag_doc((400.0, 300.0), (350.0, 250.0));
+    app.click_doc(280.0, 250.0);
+    app.type_text("Left");
+    app.key(Key::Escape);
+    let text = &app.objects()[3];
+    let Shape::Text(t) = &text.shape else { panic!("{:?}", text.shape) };
+    assert_eq!(t.align, TextAlign::Right);
+    assert!(text.world_bounds().x1 < 280.0 && text.world_bounds().x1 > 274.0, "{:?}", text.world_bounds());
+
+    // A callout left without text keeps its leader.
+    app.drag_doc((100.0, 500.0), (150.0, 450.0));
+    app.click_doc(220.0, 450.0);
+    app.key(Key::Escape);
+    assert_eq!(app.objects().len(), 5);
+    assert_eq!(app.objects()[4].name.as_deref(), Some("Callout"));
 }

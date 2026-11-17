@@ -147,6 +147,8 @@ pub struct ToolState {
     pen: Option<PenPath>,
     /// 3-point tools: the first edge, waiting for the click that sets the third point.
     first_edge: Option<(Point, Point)>,
+    /// Angular Dimension: the second arm's point, waiting for the click that places the arc.
+    arm: Option<Point>,
     pointer: Option<Point>,
     /// Alignment and dynamic guides to draw this frame.
     guide_lines: Vec<vs_core::align_guides::GuideLine>,
@@ -215,7 +217,8 @@ pub fn is_implemented(tool: Tool) -> bool {
 /// Tools that take a drag for one edge, then a click for the third point (dimensions
 /// included: the click places the dimension line).
 fn is_three_point(tool: Tool) -> bool {
-    matches!(tool, Tool::ThreePointCurve | Tool::ThreePointRectangle | Tool::ThreePointEllipse) || crate::dimensions::kind(tool).is_some()
+    matches!(tool, Tool::ThreePointCurve | Tool::ThreePointRectangle | Tool::ThreePointEllipse | Tool::AngularDimension | Tool::Callout)
+        || crate::dimensions::kind(tool).is_some()
 }
 
 pub fn cursor(tool: Tool) -> egui::CursorIcon {
@@ -363,6 +366,17 @@ fn press(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers, dou
         Tool::TwoPointLine => state.tools.drag = Some(Drag::Line { start: p }),
         Tool::Spiral => state.tools.drag = Some(Drag::Spiral { start: p }),
         Tool::GraphPaper => state.tools.drag = Some(Drag::GraphPaper { start: p }),
+        // A click on a segment measures it; the next click places the dimension line.
+        Tool::SegmentDimension if state.tools.first_edge.is_none() => {
+            state.tools.first_edge = vs_core::dimension::segment_at(state.doc.active_page(), p, view.doc_len(HIT));
+        }
+        Tool::AngularDimension if state.tools.first_edge.is_some() => match (state.tools.first_edge, state.tools.arm.take()) {
+            (Some((vertex, a)), Some(b)) => {
+                state.tools.first_edge = None;
+                crate::dimensions::finish_angular(state, vertex, a, b, p);
+            }
+            _ => state.tools.arm = Some(p),
+        },
         t if is_three_point(t) => match state.tools.first_edge.take() {
             Some((a, b)) => finish_three_point(state, a, b, p),
             None => state.tools.drag = Some(Drag::FirstEdge { start: p }),
@@ -756,6 +770,10 @@ fn roughen(state: &mut AppState, originals: &[vs_core::Object], stroke: &[Point]
 fn finish_three_point(state: &mut AppState, a: Point, b: Point, c: Point) {
     if let Some(kind) = crate::dimensions::kind(state.tool) {
         crate::dimensions::finish(state, kind, a, b, c);
+        return;
+    }
+    if state.tool == Tool::Callout {
+        crate::dimensions::finish_callout(state, a, b, c);
         return;
     }
     let Some((shape, transform)) = three_point_shape(state.tool, a, b, c) else { return };
@@ -1380,6 +1398,7 @@ fn crop_frame(painter: &egui::Painter, view: &View, area: kurbo::Rect) {
 pub fn cancel(state: &mut AppState) {
     state.tools.drag = None;
     state.tools.first_edge = None;
+    state.tools.arm = None;
 }
 
 /// `d` turned to the nearest multiple of 15°, same length.
@@ -1620,9 +1639,32 @@ pub fn draw_overlay(painter: &egui::Painter, state: &AppState, canvas: Rect) {
         crop_frame(painter, &view, area);
     }
 
+    if state.tool == Tool::SegmentDimension
+        && state.tools.first_edge.is_none()
+        && let Some(p) = state.tools.pointer
+        && let Some((a, b)) = vs_core::dimension::segment_at(state.doc.active_page(), p, view.doc_len(HIT))
+    {
+        painter.line_segment([view.screen(a), view.screen(b)], Stroke::new(2.0, ACCENT));
+    }
     if let (Some((a, b)), Some(c)) = (state.tools.first_edge, state.tools.pointer) {
         painter.line_segment([view.screen(a), view.screen(b)], thin);
-        if let Some((shape, t)) = three_point_shape(state.tool, a, b, c) {
+        if state.tool == Tool::AngularDimension {
+            match state.tools.arm {
+                Some(arm) => {
+                    if let Some(d) = vs_core::dimension::angular_dimension(a, b, arm, c) {
+                        path_to_screen(painter, &d.lines, &view, thin);
+                        path_to_screen(painter, &d.arrows, &view, thin);
+                        let label = crate::dimensions::degrees(d.angle);
+                        painter.text(view.screen(d.label_at), egui::Align2::CENTER_BOTTOM, label, egui::FontId::proportional(12.0), Color32::BLACK);
+                    }
+                }
+                None => {
+                    painter.line_segment([view.screen(a), view.screen(c)], thin);
+                }
+            }
+        } else if state.tool == Tool::Callout {
+            painter.line_segment([view.screen(b), view.screen(c)], thin);
+        } else if let Some((shape, t)) = three_point_shape(state.tool, a, b, c) {
             let mut path = shape.to_path();
             path.apply_affine(t);
             path_to_screen(painter, &path, &view, thin);
@@ -1747,6 +1789,10 @@ pub fn hint(state: &AppState) -> String {
         Tool::BSpline => "Click to place control points · double-click or Enter finishes; clicking the first point closes it".into(),
         Tool::Spiral => "Drag to draw a spiral · turns are on the property bar".into(),
         Tool::GraphPaper => "Drag to draw a grid of rectangles · columns and rows are on the property bar · Ctrl/Cmd keeps the grid square".into(),
+        Tool::AngularDimension if state.tools.arm.is_some() => "Click where the arc goes; past the arms measures the angle outside them · Esc cancels".into(),
+        Tool::AngularDimension if state.tools.first_edge.is_some() => "Click a point on the second arm · Esc cancels".into(),
+        Tool::SegmentDimension if state.tools.first_edge.is_some() => "Click where the dimension line goes · Esc cancels".into(),
+        Tool::Callout if state.tools.first_edge.is_some() => "Click where the text goes · Esc cancels".into(),
         t if is_three_point(t) && state.tools.first_edge.is_some() => "Click to set the third point · Esc cancels".into(),
         Tool::ThreePointCurve => "Drag from start to end, then click to set the curve".into(),
         Tool::ThreePointRectangle => "Drag one side, then click to set the height".into(),
@@ -1755,6 +1801,9 @@ pub fn hint(state: &AppState) -> String {
         Tool::RoughenBrush => "Select a curve or shape, then drag along its outline to add spikes · brush and spike size are on the property bar".into(),
         Tool::ParallelDimension => "Drag between the two points to measure, then click where the dimension line goes".into(),
         Tool::HorizontalVerticalDimension => "Drag between the two points, then click above or below for the horizontal distance, beside for the vertical".into(),
+        Tool::AngularDimension => "Drag from the vertex along the first arm, click the second arm, then click where the arc goes".into(),
+        Tool::SegmentDimension => "Click a segment of an object to measure it, then click where the dimension line goes".into(),
+        Tool::Callout => "Drag from the point to the bend of the leader, click where the text goes, then type".into(),
         Tool::Text if state.tools.text.is_some() => "Type the text · Enter starts a new line · Esc or another tool finishes".into(),
         Tool::Text => "Click to add artistic text, drag a frame for paragraph text, or click text to edit it".into(),
         Tool::InteractiveFill => "Click an object, then drag across it for a fountain fill · drag the ends to move it".into(),
