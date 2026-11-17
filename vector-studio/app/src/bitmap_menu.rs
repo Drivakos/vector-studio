@@ -1,6 +1,6 @@
-//! Bitmaps > Convert to Bitmap and Resample, and the bitmap effects of the Effects menu
-//! (Adjust, Blur, Distort, Noise and Sharpen). Effect windows show a preview of the
-//! first selected bitmap with the settings as they stand.
+//! Bitmaps > Convert to Bitmap, Resample, Straighten Image and Bitmap Color Mask, and the
+//! bitmap effects of the Effects menu (Adjust, Blur, Distort, Noise and Sharpen). Effect
+//! windows show a preview of the first selected bitmap with the settings as they stand.
 
 use vs_core::raster::{Effect, EffectKind, Pixels, TONE_INPUTS, ToneChannel};
 use vs_core::{Object, ObjectId, Rgba, Shape, Style};
@@ -206,6 +206,8 @@ pub struct EffectDialog {
     source: Option<(Pixels, f64)>,
     /// The settings the preview was made with, and the preview.
     shown: Option<(Effect, egui::TextureHandle)>,
+    /// Bitmap Color Mask: the colour as typed, kept while it is not a whole colour yet.
+    hex: String,
 }
 
 impl EffectDialog {
@@ -224,7 +226,12 @@ pub fn run_effect(state: &mut AppState, kind: EffectKind) {
             Some(Shape::Image(b)) => vs_io::bitmap_pixels(b).ok().map(|p| vs_io::shrink(&p, PREVIEW)),
             _ => None,
         });
-        state.effect = Some(EffectDialog { effect: kind.default_effect(), source, shown: None });
+        let effect = kind.default_effect();
+        let hex = match effect {
+            Effect::ColorMask { color, .. } => hex(color),
+            _ => String::new(),
+        };
+        state.effect = Some(EffectDialog { effect, source, shown: None, hex });
     } else {
         apply_effect(state, &kind.default_effect());
     }
@@ -242,7 +249,8 @@ fn field(ui: &mut egui::Ui, value: &mut f64, range: std::ops::RangeInclusive<f64
 fn settings(ui: &mut egui::Ui, effect: &mut Effect, window: &str) {
     let pct = -100.0..=100.0;
     match effect {
-        Effect::AutoAdjust | Effect::Grayscale | Effect::ToneCurve { .. } => {}
+        Effect::AutoAdjust | Effect::Grayscale | Effect::ToneCurve { .. } | Effect::ColorMask { .. } => {}
+        Effect::Straighten { angle } => field(ui, angle, -15.0..=15.0, "°", "Angle", window),
         Effect::BrightnessContrast { brightness, contrast, intensity } => {
             field(ui, brightness, pct.clone(), "", "Brightness", window);
             field(ui, contrast, pct.clone(), "", "Contrast", window);
@@ -347,7 +355,59 @@ fn tone_curve(ui: &mut egui::Ui, outputs: &mut [f64; 5], channel: &mut ToneChann
     });
 }
 
+/// `color` as "#RRGGBB".
+fn hex(color: [u8; 3]) -> String {
+    format!("#{:02X}{:02X}{:02X}", color[0], color[1], color[2])
+}
+
+/// "#RRGGBB" or "RRGGBB" as a colour.
+fn parse_hex(text: &str) -> Option<[u8; 3]> {
+    let digits = text.trim().trim_start_matches('#');
+    if digits.len() != 6 {
+        return None;
+    }
+    let channel = |i: usize| u8::from_str_radix(digits.get(i..i + 2)?, 16).ok();
+    Some([channel(0)?, channel(2)?, channel(4)?])
+}
+
+/// The Bitmap Color Mask settings: hide the colour or keep only it, the colour (picked,
+/// typed, or clicked on the preview) and how near a pixel must be to count.
+fn color_mask(ui: &mut egui::Ui, d: &mut EffectDialog, window: &str) {
+    let Effect::ColorMask { color, tolerance, hide } = &mut d.effect else { return };
+    ui.horizontal(|ui| {
+        for (label, value) in [("Hide colors", true), ("Show colors", false)] {
+            let resp = ui.selectable_label(*hide == value, label);
+            crate::a11y::toggle(&resp, true, *hide == value, &format!("{label} ({window})"));
+            if resp.clicked() {
+                *hide = value;
+            }
+        }
+    });
+    egui::Grid::new("color_mask_grid").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
+        ui.label("Color:");
+        ui.horizontal(|ui| {
+            if egui::color_picker::color_edit_button_srgb(ui, color).changed() {
+                d.hex = hex(*color);
+            }
+            let resp = crate::a11y::add(ui, egui::TextEdit::singleline(&mut d.hex).desired_width(80.0), &format!("Color ({window})"));
+            if resp.changed()
+                && let Some(c) = parse_hex(&d.hex)
+            {
+                *color = c;
+            }
+            if resp.lost_focus() {
+                d.hex = hex(*color);
+            }
+        });
+        ui.end_row();
+        field(ui, tolerance, 0.0..=100.0, "%", "Tolerance", window);
+    });
+    ui.label(egui::RichText::new("Click the preview to pick a color").weak());
+}
+
 /// The preview of `d`'s effect on its source, made again when the settings changed.
+/// Clicking it picks the colour under the pointer for Bitmap Color Mask; for Straighten
+/// Image a grid over it helps line things up.
 fn preview(ui: &mut egui::Ui, d: &mut EffectDialog, window: &str) {
     let Some((source, factor)) = &d.source else { return };
     if d.shown.as_ref().is_none_or(|(e, _)| *e != d.effect) {
@@ -356,9 +416,27 @@ fn preview(ui: &mut egui::Ui, d: &mut EffectDialog, window: &str) {
         let texture = ui.ctx().load_texture("effect_preview", image, egui::TextureOptions::LINEAR);
         d.shown = Some((d.effect, texture));
     }
-    if let Some((_, texture)) = &d.shown {
-        let resp = ui.add(egui::Image::new(texture).fit_to_exact_size(egui::vec2(PREVIEW as f32, PREVIEW as f32)));
-        crate::a11y::name(&resp, &format!("Preview ({window})"));
+    let Some((_, texture)) = &d.shown else { return };
+    let resp = ui.add(egui::Image::new(texture).fit_to_exact_size(egui::vec2(PREVIEW as f32, PREVIEW as f32)).sense(egui::Sense::click()));
+    crate::a11y::name(&resp, &format!("Preview ({window})"));
+    let rect = resp.rect;
+    if let Effect::ColorMask { color, .. } = &mut d.effect
+        && let Some(pos) = resp.interact_pointer_pos().filter(|_| resp.clicked())
+    {
+        let at = (pos - rect.min) / rect.size();
+        let x = ((at.x * source.width as f32) as u32).min(source.width - 1);
+        let y = ((at.y * source.height as f32) as u32).min(source.height - 1);
+        let [r, g, b, _] = source.pixel(x, y);
+        *color = [r, g, b];
+        d.hex = hex(*color);
+    }
+    if matches!(d.effect, Effect::Straighten { .. }) {
+        let line = egui::Stroke::new(1.0, egui::Color32::from_white_alpha(140));
+        for i in 1..6 {
+            let t = i as f32 / 6.0;
+            ui.painter().vline(rect.left() + t * rect.width(), rect.y_range(), line);
+            ui.painter().hline(rect.x_range(), rect.top() + t * rect.height(), line);
+        }
     }
 }
 
@@ -378,6 +456,8 @@ pub fn effect_window(ctx: &egui::Context, state: &mut AppState) {
                 ui.vertical(|ui| {
                     if let Effect::ToneCurve { outputs, channel } = &mut d.effect {
                         tone_curve(ui, outputs, channel, title);
+                    } else if matches!(d.effect, Effect::ColorMask { .. }) {
+                        color_mask(ui, &mut d, title);
                     } else {
                         egui::Grid::new("effect_grid").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| settings(ui, &mut d.effect, title));
                     }

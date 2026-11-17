@@ -169,3 +169,50 @@ fn tone_curve_maps_levels_with_a_preview() {
     app.shortcut(Modifiers::COMMAND, Key::Z);
     assert_eq!(pixels(&app).pixel(36, 36), before, "undoable");
 }
+
+#[test]
+fn bitmap_color_mask_hides_a_colour_picked_on_the_preview() {
+    let mut app = red_bitmap();
+    let before = pixels(&app);
+    let red = before.pixel(36, 36);
+    app.menu(&["Bitmaps", "Bitmap Color Mask"]);
+    assert_eq!(app.value("Color (Bitmap Color Mask)"), "#FFFFFF");
+    assert!(app.is_selected("Hide colors (Bitmap Color Mask)"));
+    let preview = app.rect_of("Preview (Bitmap Color Mask)");
+    app.drag_screen(preview.center(), preview.center());
+    assert_eq!(app.value("Color (Bitmap Color Mask)"), format!("#{:02X}{:02X}{:02X}", red[0], red[1], red[2]), "picked from the preview");
+    app.click("OK (Bitmap Color Mask)");
+
+    let after = pixels(&app);
+    assert_eq!(after.pixel(36, 36)[3], 0, "the red is hidden");
+    assert_eq!(after.pixel(0, 36), before.pixel(0, 36), "the outline stays");
+    assert_eq!((after.width, after.height), (before.width, before.height));
+
+    // Show colors: everything but the red goes.
+    app.shortcut(Modifiers::COMMAND, Key::Z);
+    app.menu(&["Bitmaps", "Bitmap Color Mask"]);
+    app.fill("Color (Bitmap Color Mask)", &format!("{:02x}{:02x}{:02x}", red[0], red[1], red[2]));
+    app.click("Show colors (Bitmap Color Mask)");
+    app.click("OK (Bitmap Color Mask)");
+    let shown = pixels(&app);
+    assert_eq!(shown.pixel(36, 36), red);
+    assert_eq!(shown.pixel(0, 36)[3], 0, "the outline is hidden");
+}
+
+#[test]
+fn straighten_image_turns_the_bitmap_within_its_frame() {
+    let mut app = red_bitmap();
+    let before = pixels(&app);
+    let place = app.bounds(0);
+    app.menu(&["Bitmaps", "Straighten Image…"]);
+    assert_eq!(app.value("Angle (Straighten Image)"), "0.0°");
+    assert!(app.exists("Preview (Straighten Image)"));
+    app.fill("Angle (Straighten Image)", "10");
+    app.click("OK (Straighten Image)");
+
+    let after = pixels(&app);
+    assert_eq!((after.width, after.height), (before.width, before.height), "the same pixels across");
+    assert!(rect_close(app.bounds(0), place.x0, place.y0, place.x1, place.y1), "and the same place");
+    assert_ne!(after, before);
+    assert_eq!(after, vs_core::raster::Effect::Straighten { angle: 10.0 }.apply(&before), "turned 10° within its frame");
+}

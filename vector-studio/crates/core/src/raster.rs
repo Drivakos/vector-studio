@@ -54,10 +54,14 @@ pub enum EffectKind {
     RemoveNoise,
     Sharpen,
     UnsharpMask,
+    /// Bitmaps > Bitmap Color Mask.
+    ColorMask,
+    /// Bitmaps > Straighten Image.
+    Straighten,
 }
 
 impl EffectKind {
-    pub const ALL: [EffectKind; 18] = [
+    pub const ALL: [EffectKind; 20] = [
         EffectKind::AutoAdjust,
         EffectKind::ToneCurve,
         EffectKind::BrightnessContrast,
@@ -76,6 +80,8 @@ impl EffectKind {
         EffectKind::RemoveNoise,
         EffectKind::Sharpen,
         EffectKind::UnsharpMask,
+        EffectKind::ColorMask,
+        EffectKind::Straighten,
     ];
 
     /// The effect's name, as its window title.
@@ -99,6 +105,8 @@ impl EffectKind {
             EffectKind::RemoveNoise => "Remove Noise",
             EffectKind::Sharpen => "Sharpen",
             EffectKind::UnsharpMask => "Unsharp Mask",
+            EffectKind::ColorMask => "Bitmap Color Mask",
+            EffectKind::Straighten => "Straighten Image",
         }
     }
 
@@ -123,6 +131,8 @@ impl EffectKind {
             EffectKind::RemoveNoise => Effect::RemoveNoise { radius: 1 },
             EffectKind::Sharpen => Effect::Sharpen { amount: 50.0 },
             EffectKind::UnsharpMask => Effect::UnsharpMask { amount: 100.0, radius: 2.0, threshold: 0.0 },
+            EffectKind::ColorMask => Effect::ColorMask { color: [255, 255, 255], tolerance: 10.0, hide: true },
+            EffectKind::Straighten => Effect::Straighten { angle: 0.0 },
         }
     }
 
@@ -227,6 +237,12 @@ pub enum Effect {
     /// `amount` in percent (0 to 500); `threshold` 0 to 255 leaves differences that small
     /// alone.
     UnsharpMask { amount: f64, radius: f64, threshold: f64 },
+    /// Hide the pixels within `tolerance` (percent, 0 to 100, of each channel's range) of
+    /// `color`, or with `hide` off, every pixel but those.
+    ColorMask { color: [u8; 3], tolerance: f64, hide: bool },
+    /// Turn the image `angle` degrees clockwise about its centre, magnified just enough
+    /// that it still fills its frame, so its size stays and no corner is empty.
+    Straighten { angle: f64 },
 }
 
 impl Effect {
@@ -250,6 +266,8 @@ impl Effect {
             Effect::RemoveNoise { .. } => EffectKind::RemoveNoise,
             Effect::Sharpen { .. } => EffectKind::Sharpen,
             Effect::UnsharpMask { .. } => EffectKind::UnsharpMask,
+            Effect::ColorMask { .. } => EffectKind::ColorMask,
+            Effect::Straighten { .. } => EffectKind::Straighten,
         }
     }
 
@@ -316,6 +334,8 @@ impl Effect {
             Effect::RemoveNoise { radius } => median(pixels, radius),
             Effect::Sharpen { amount } => unsharp(pixels, amount.clamp(0.0, 100.0) * 2.0, 1.5, 0.0),
             Effect::UnsharpMask { amount, radius, threshold } => unsharp(pixels, amount.clamp(0.0, 500.0), radius, threshold),
+            Effect::ColorMask { color, tolerance, hide } => color_mask(pixels, color, tolerance, hide),
+            Effect::Straighten { angle } => straighten(pixels, angle),
         }
     }
 }
@@ -586,6 +606,31 @@ fn distort(pixels: &Pixels, source: impl Fn(f64, f64) -> (f64, f64)) -> Pixels {
     average(pixels, |x, y| vec![source(x, y)])
 }
 
+fn color_mask(pixels: &Pixels, color: [u8; 3], tolerance: f64, hide: bool) -> Pixels {
+    let reach = tolerance.clamp(0.0, 100.0) / 100.0 * 255.0;
+    let mut out = pixels.clone();
+    for px in out.data.as_chunks_mut::<4>().0 {
+        let near = (0..3).all(|i| f64::from(px[i].abs_diff(color[i])) <= reach + 1e-9);
+        if near == hide {
+            px[3] = 0;
+        }
+    }
+    out
+}
+
+fn straighten(pixels: &Pixels, angle: f64) -> Pixels {
+    let (w, h) = (f64::from(pixels.width), f64::from(pixels.height));
+    let (cx, cy) = ((w - 1.0) / 2.0, (h - 1.0) / 2.0);
+    let (sin, cos) = angle.to_radians().sin_cos();
+    // Magnified so the turned image still covers the whole frame.
+    let scale = cos.abs() + sin.abs() * (w / h).max(h / w);
+    distort(pixels, |x, y| {
+        let (vx, vy) = ((x - cx) / scale, (y - cy) / scale);
+        // Each pixel of the result shows the source turned back the other way.
+        (cx + vx * cos + vy * sin, cy - vx * sin + vy * cos)
+    })
+}
+
 fn swirl(pixels: &Pixels, angle: f64) -> Pixels {
     let (cx, cy) = (f64::from(pixels.width - 1) / 2.0, f64::from(pixels.height - 1) / 2.0);
     let reach = cx.min(cy).max(1.0);
@@ -851,6 +896,32 @@ mod tests {
         let invert = Effect::ToneCurve { outputs: [255.0, 191.25, 127.5, 63.75, 0.0], channel: ToneChannel::Red };
         let out = invert.apply(&Pixels::filled(1, 1, [0, 10, 200, 255]));
         assert_eq!(out.pixel(0, 0), [255, 10, 200, 255], "only the red channel");
+    }
+
+    #[test]
+    fn color_mask_hides_or_keeps_the_colour() {
+        let p = Pixels::new(3, 1, vec![250, 250, 250, 255, 200, 200, 200, 255, 0, 0, 255, 255]).unwrap();
+        let hidden = Effect::ColorMask { color: [255, 255, 255], tolerance: 5.0, hide: true }.apply(&p);
+        assert_eq!([hidden.pixel(0, 0)[3], hidden.pixel(1, 0)[3], hidden.pixel(2, 0)[3]], [0, 255, 255], "only the near-white goes");
+        let shown = Effect::ColorMask { color: [255, 255, 255], tolerance: 25.0, hide: false }.apply(&p);
+        assert_eq!([shown.pixel(0, 0)[3], shown.pixel(1, 0)[3], shown.pixel(2, 0)[3]], [255, 255, 0], "all but the near-whites go");
+        assert_eq!(shown.pixel(0, 0), p.pixel(0, 0), "colours stay");
+    }
+
+    #[test]
+    fn straighten_turns_the_image_and_fills_its_frame() {
+        // A vertical white line down the middle of black, turned a quarter turn: horizontal.
+        let mut p = Pixels::filled(21, 21, [0, 0, 0, 255]);
+        for y in 0..21 {
+            p.set_pixel(10, y, [255, 255, 255, 255]);
+        }
+        assert_eq!(Effect::Straighten { angle: 0.0 }.apply(&p), p);
+        let turned = Effect::Straighten { angle: 90.0 }.apply(&p);
+        assert!(grey(&turned, 2, 10) > 200 && grey(&turned, 10, 2) < 50, "{:?} {:?}", turned.pixel(2, 10), turned.pixel(10, 2));
+        // A small turn of a wide image: no empty corners.
+        let wide = Effect::Straighten { angle: 10.0 }.apply(&Pixels::filled(40, 20, [9, 9, 9, 255]));
+        assert_eq!((wide.width, wide.height), (40, 20));
+        assert!([(0, 0), (39, 0), (0, 19), (39, 19)].iter().all(|(x, y)| wide.pixel(*x, *y)[3] == 255));
     }
 
     #[test]
