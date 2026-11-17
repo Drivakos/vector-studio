@@ -1,5 +1,5 @@
-//! Text menu windows: Change Case, Text Statistics, Columns, Bullets and Numbering, and
-//! Drop Cap.
+//! Text menu windows: Change Case, Text Statistics, Columns, Bullets and Numbering, Drop
+//! Cap and Tabs.
 
 use vs_core::text_tools::{Case, TextStats, change_case};
 use vs_core::{ObjectId, Shape};
@@ -185,8 +185,8 @@ pub fn columns_window(ctx: &egui::Context, state: &mut AppState) {
     }
 }
 
-/// Text Bullets and Numbering works on: the text being typed into, else the selected
-/// unlocked text, but not text fitted to a path.
+/// Text Bullets and Numbering and Tabs work on: the text being typed into, else the
+/// selected unlocked text, but not text fitted to a path.
 pub fn list_targets(state: &AppState) -> Vec<ObjectId> {
     let page = state.doc.active_page();
     let ids: Vec<ObjectId> = match &state.tools.text {
@@ -299,5 +299,88 @@ pub fn drop_cap_window(ctx: &egui::Context, state: &mut AppState) {
         }
     } else if open && !cancel {
         state.drop_cap = Some(d);
+    }
+}
+
+/// The open Tabs window: the tab stops in display units, as edited.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TabsDialog {
+    stops: Vec<f64>,
+}
+
+pub fn open_tabs(state: &mut AppState) {
+    let unit = state.doc.display_unit;
+    let page = state.doc.active_page();
+    let first = list_targets(state).into_iter().find_map(|id| match &page.object(id)?.shape {
+        Shape::Text(t) => Some(t.tabs.clone()),
+        _ => None,
+    });
+    let stops = first.unwrap_or_default().into_iter().map(|s| unit.from_points(s)).collect();
+    state.tabs = Some(TabsDialog { stops });
+}
+
+/// The Tabs window: the tab stops of the text, measured from where each line starts.
+/// Add puts a new stop a default step past the last. OK sets them on every target, in
+/// order.
+pub fn tabs_window(ctx: &egui::Context, state: &mut AppState) {
+    let Some(mut d) = state.tabs.take() else { return };
+    let unit = state.doc.display_unit;
+    let step = unit.from_points(vs_core::text::DEFAULT_TAB);
+    let mut open = true;
+    let (mut ok, mut cancel) = (false, false);
+    egui::Window::new("Tabs")
+        .collapsible(false)
+        .resizable(false)
+        .open(&mut open)
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .show(ctx, |ui| {
+            let mut delete = None;
+            egui::Grid::new("tabs_grid").num_columns(3).spacing([12.0, 8.0]).show(ui, |ui| {
+                for (i, stop) in d.stops.iter_mut().enumerate() {
+                    ui.label(format!("Tab {}:", i + 1));
+                    let field = egui::DragValue::new(stop)
+                        .range(0.0..=unit.from_points(5000.0))
+                        .speed(unit.step() / 2.0)
+                        .max_decimals(unit.decimals())
+                        .suffix(format!(" {}", unit.suffix()));
+                    crate::a11y::add(ui, field, &format!("Tab {} (Tabs)", i + 1));
+                    if crate::a11y::add(ui, egui::Button::new("Delete"), &format!("Delete tab {} (Tabs)", i + 1)).clicked() {
+                        delete = Some(i);
+                    }
+                    ui.end_row();
+                }
+            });
+            if let Some(i) = delete {
+                d.stops.remove(i);
+            }
+            let number = format!("{:.*}", unit.decimals(), step);
+            let after = format!("{} {}", number.trim_end_matches('0').trim_end_matches('.'), unit.suffix());
+            let note = if d.stops.is_empty() { format!("Tabs move on every {after}.") } else { format!("Past the last stop, every {after}.") };
+            ui.label(egui::RichText::new(note).weak());
+            if crate::a11y::add(ui, egui::Button::new("Add tab"), "Add tab (Tabs)").clicked() {
+                let last = d.stops.iter().copied().fold(0.0, f64::max);
+                d.stops.push(last + step);
+            }
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                ok = crate::a11y::window_button(ui, true, "OK", "Tabs").clicked();
+                cancel = crate::a11y::window_button(ui, true, "Cancel", "Tabs").clicked();
+            });
+        });
+    if ok {
+        let mut stops: Vec<f64> = d.stops.iter().map(|s| unit.to_points(*s)).filter(|s| *s > 0.0).collect();
+        stops.sort_by(f64::total_cmp);
+        stops.dedup_by(|a, b| (*a - *b).abs() < 1e-6);
+        let ids = list_targets(state);
+        let page = state.doc.active_page_mut();
+        for id in ids {
+            if let Some(obj) = page.object_mut(id)
+                && let Shape::Text(t) = &mut obj.shape
+            {
+                t.tabs = stops.clone();
+            }
+        }
+    } else if open && !cancel {
+        state.tabs = Some(d);
     }
 }

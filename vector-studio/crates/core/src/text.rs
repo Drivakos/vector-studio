@@ -108,6 +108,36 @@ pub struct Text {
     /// more) and the first lines wrap beside it; 0 for none.
     #[serde(default, skip_serializing_if = "is_zero_u32")]
     pub drop_cap: u32,
+    /// Tab stops, in points from where each line starts, left to right. A tab moves on
+    /// to the next one; past the last, to the next [`DEFAULT_TAB`] step.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tabs: Vec<f64>,
+}
+
+/// Space between the tab stops a text has when it sets none of its own, or past its
+/// last: half an inch.
+pub const DEFAULT_TAB: f64 = 36.0;
+
+/// Where a tab at `x` (from the line's start) moves on to: the next of `stops`, else the
+/// next [`DEFAULT_TAB`] step.
+pub fn next_tab_stop(stops: &[f64], x: f64) -> f64 {
+    stops
+        .iter()
+        .copied()
+        .find(|s| *s > x + 1e-9)
+        .unwrap_or_else(|| ((x + 1e-9) / DEFAULT_TAB).floor() * DEFAULT_TAB + DEFAULT_TAB)
+}
+
+/// Give each tab in `glyphs` the advance that takes it from where it falls (counting from
+/// the first glyph) to its stop.
+fn resolve_tabs(glyphs: &mut [(char, GlyphId, f64)], stops: &[f64]) {
+    let mut x = 0.0;
+    for g in glyphs {
+        if g.0 == '\t' {
+            g.2 = next_tab_stop(stops, x) - x;
+        }
+        x += g.2;
+    }
 }
 
 fn is_zero_u32(n: &u32) -> bool {
@@ -145,6 +175,7 @@ impl Text {
             gutter: 0.0,
             list: None,
             drop_cap: 0,
+            tabs: Vec::new(),
         }
     }
 
@@ -209,7 +240,7 @@ impl Text {
     pub fn to_path(&self) -> BezPath {
         let frame = self.frame.map(|f| (f.width.to_bits(), f.height.to_bits()));
         let guide = self.on_path.as_ref().map(BezPath::to_svg);
-        let columns = (self.columns, self.gutter.to_bits(), self.list, self.drop_cap);
+        let columns = (self.columns, self.gutter.to_bits(), self.list, self.drop_cap, self.tabs.iter().map(|t| t.to_bits()).collect());
         let key = (self.content.clone(), self.family.clone(), self.style.clone(), self.size.to_bits(), self.align, frame, guide, columns);
         let cache = PATHS.get_or_init(Mutex::default);
         if let Some(path) = cache.lock().expect("text cache").get(&key) {
@@ -225,7 +256,7 @@ impl Text {
     }
 }
 
-type PathKey = (String, String, String, u64, TextAlign, Option<(u64, u64)>, Option<String>, (u32, u64, Option<ListStyle>, u32));
+type PathKey = (String, String, String, u64, TextAlign, Option<(u64, u64)>, Option<String>, (u32, u64, Option<ListStyle>, u32, Vec<u64>));
 static PATHS: OnceLock<Mutex<HashMap<PathKey, BezPath>>> = OnceLock::new();
 
 /// One laid-out line.
@@ -371,13 +402,15 @@ fn layout(text: &Text) -> TextLayout {
         let drop = drop.as_ref().filter(|_| para == 0);
         // How far line `k` of this paragraph is pushed right by the drop cap.
         let beside = |k: usize| drop.filter(|d| k < d.lines).map_or(0.0, |d| d.indent);
-        let glyphs: Vec<(char, GlyphId, f64)> = paragraph
+        let mut glyphs: Vec<(char, GlyphId, f64)> = paragraph
             .chars()
             .map(|ch| {
                 let gid = charmap.map(ch).unwrap_or(GlyphId::NOTDEF);
                 (ch, gid, f64::from(advances.advance_width(gid).unwrap_or(0.0)))
             })
             .collect();
+        // Wrapping measures tabs from the paragraph's start; each line measures its own.
+        resolve_tabs(&mut glyphs, &text.tabs);
         let advance: Vec<f64> = glyphs.iter().map(|g| g.2).collect();
         let chars: Vec<char> = glyphs.iter().map(|g| g.0).collect();
         let ranges = match frame {
@@ -415,7 +448,8 @@ fn layout(text: &Text) -> TextLayout {
             let line_chars = &glyphs[range.clone()];
             // The dropped letter is drawn on its own; the line's words follow it.
             let cap_here = drop.is_some() && k == 0 && !line_chars.is_empty();
-            let chars = if cap_here { &line_chars[1..] } else { line_chars };
+            let mut chars = if cap_here { &line_chars[1..] } else { line_chars }.to_vec();
+            resolve_tabs(&mut chars, &text.tabs);
             // Trailing spaces hang past the edge, so they do not count for alignment.
             let shown = chars.len() - chars.iter().rev().take_while(|g| g.0 == ' ').count();
             let width: f64 = chars[..shown].iter().map(|g| g.2).sum();
@@ -451,8 +485,8 @@ fn layout(text: &Text) -> TextLayout {
                     let _ = glyph.draw(DrawSettings::unhinted(Size::new(d.size as f32), location), &mut pen);
                 }
             }
-            for (_, gid, advance) in chars {
-                if !hidden && let Some(glyph) = outlines.get(*gid) {
+            for (ch, gid, advance) in &chars {
+                if !hidden && *ch != '\t' && let Some(glyph) = outlines.get(*gid) {
                     let mut pen = Pen { path: &mut path, origin: Point::new(x, baseline) };
                     // A glyph that fails to draw is left blank rather than failing the text.
                     let _ = glyph.draw(DrawSettings::unhinted(size, location), &mut pen);
@@ -500,7 +534,7 @@ fn layout_on_path(text: &Text, guide: &BezPath, font: &FontRef, size: Size, asce
         .content
         .chars()
         .map(|ch| {
-            let gid = charmap.map(if ch == '\n' { ' ' } else { ch }).unwrap_or(GlyphId::NOTDEF);
+            let gid = charmap.map(if ch == '\n' || ch == '\t' { ' ' } else { ch }).unwrap_or(GlyphId::NOTDEF);
             (gid, f64::from(advances.advance_width(gid).unwrap_or(0.0)))
         })
         .collect();
@@ -1089,6 +1123,24 @@ mod tests {
         assert_eq!(empty.layout().bounds(), Rect::new(0.0, 0.0, 20.0, 0.0));
         assert_eq!(point_along(&line((0.0, 0.0), (10.0, 0.0)), 4.0), Some(Point::new(4.0, 0.0)));
         assert_eq!(point_along(&line((0.0, 0.0), (10.0, 0.0)), 11.0), None);
+    }
+
+    #[test]
+    fn tabs_move_on_to_the_next_stop() {
+        let caret_after = |t: &Text, i: usize| t.layout().lines[0].carets[i];
+        let mut t = text("a\tb\tc");
+        assert!((caret_after(&t, 2) - DEFAULT_TAB).abs() < 1e-9, "the default stops");
+        t.tabs = vec![100.0];
+        assert!((caret_after(&t, 2) - 100.0).abs() < 1e-9, "its own stop");
+        let after_b = caret_after(&t, 3);
+        assert!((caret_after(&t, 4) - (after_b / DEFAULT_TAB).ceil() * DEFAULT_TAB).abs() < 1e-9, "past the last, the default steps");
+        assert!(text("\t").to_path().is_empty(), "a tab draws nothing");
+        // Paragraph text measures from the frame's left edge, every line afresh.
+        let mut p = paragraph("x\ty\nz\tw", 300.0, 100.0);
+        p.tabs = vec![60.0];
+        let l = p.layout();
+        assert!((l.lines[0].carets[2] - 60.0).abs() < 1e-9 && (l.lines[1].carets[2] - 60.0).abs() < 1e-9);
+        assert_eq!(next_tab_stop(&[], 36.0), 72.0, "a tab right on a stop goes to the next");
     }
 
     #[test]

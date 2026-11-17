@@ -144,6 +144,7 @@ pub struct AppState {
     /// The list style chosen in the open Bullets and Numbering window.
     pub bullets: Option<Option<vs_core::ListStyle>>,
     pub drop_cap: Option<crate::text_menu::DropCapDialog>,
+    pub tabs: Option<crate::text_menu::TabsDialog>,
     pub convert_to_bitmap: Option<crate::bitmap_menu::ConvertDialog>,
     pub resample: Option<crate::bitmap_menu::ResampleDialog>,
     /// The bitmap effect whose settings window is open.
@@ -284,6 +285,7 @@ impl AppState {
             columns: None,
             bullets: None,
             drop_cap: None,
+            tabs: None,
             convert_to_bitmap: None,
             resample: None,
             effect: None,
@@ -514,6 +516,7 @@ impl VectorStudioApp {
             Command::Columns => (!crate::text_menu::column_targets(state).is_empty(), None),
             Command::Bullets => (!crate::text_menu::list_targets(state).is_empty(), None),
             Command::DropCap => (!crate::text_menu::column_targets(state).is_empty(), None),
+            Command::Tabs => (!crate::text_menu::list_targets(state).is_empty(), None),
             Command::CropBitmap => (!crate::bitmap_menu::bitmap_targets(state).is_empty(), None),
             Command::ConvertToBitmap => (crate::bitmap_menu::can_convert(state), None),
             Command::Resample => (crate::bitmap_menu::resample_target(state).is_some(), None),
@@ -607,6 +610,10 @@ impl VectorStudioApp {
             }
             Command::CropBitmap => {
                 crate::bitmap_menu::crop_bitmaps(s);
+                Ok(())
+            }
+            Command::Tabs => {
+                crate::text_menu::open_tabs(s);
                 Ok(())
             }
             Command::InsertQrCode => {
@@ -1356,6 +1363,7 @@ impl eframe::App for VectorStudioApp {
         crate::text_menu::columns_window(&ctx, &mut self.state);
         crate::text_menu::bullets_window(&ctx, &mut self.state);
         crate::text_menu::drop_cap_window(&ctx, &mut self.state);
+        crate::text_menu::tabs_window(&ctx, &mut self.state);
         crate::bitmap_menu::convert_window(&ctx, &mut self.state);
         crate::bitmap_menu::resample_window(&ctx, &mut self.state);
         crate::bitmap_menu::effect_window(&ctx, &mut self.state);

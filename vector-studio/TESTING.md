@@ -95,6 +95,7 @@ Names must be unique on screen, or a test cannot tell widgets apart.
 | Columns (flow into the next column, gutter, no overflow, undo) | `text.rs` |
 | Bullets and Numbering (bullet drawn, words indented, numbers, none, undo) | `text.rs` |
 | Drop Cap (lines beside it, letter drawn large, off again) | `text.rs` |
+| Tabs (Tab key types a tab, half-inch default stop, Add tab and set its position, glyph drawn past the stop, Delete, undo) | `text.rs` |
 | Glyphs (Insert off until a character is picked, picked cell, new text centred on the page, double-click types at the caret, window stays open) | `text.rs` |
 | Find and Replace: Cmd+F, Enter, Find next across pages and round, Match case, not found, Replace one, Replace all, undo | `find.rs` |
 | Fit Text to Path: along an ellipse, pixels on the curve, edit in Properties, Straighten Text | `text.rs` |

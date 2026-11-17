@@ -123,6 +123,11 @@ pub fn keyboard(state: &mut AppState, ctx: &egui::Context) -> bool {
             Event::Text(s) | Event::Paste(s) => insert(state, &s),
             Event::Key { key, pressed: true, .. } => match key {
                 Key::Enter => insert(state, "\n"),
+                Key::Tab => {
+                    insert(state, "\t");
+                    // The tab goes into the text; no button or field takes the focus.
+                    ctx.memory_mut(|m| m.move_focus(egui::FocusDirection::None));
+                }
                 Key::Backspace => delete(state, true),
                 Key::Delete => delete(state, false),
                 Key::ArrowLeft => move_caret(state, |c, _, _| c.saturating_sub(1)),
@@ -162,7 +167,7 @@ pub fn insert_text(state: &mut AppState, s: &str) {
 
 fn insert(state: &mut AppState, s: &str) {
     let Some(edit) = state.tools.text else { return };
-    let s: String = s.chars().filter(|c| *c == '\n' || !c.is_control()).collect();
+    let s: String = s.chars().filter(|c| matches!(c, '\n' | '\t') || !c.is_control()).collect();
     let Some(text) = text_mut(state, edit.id) else { return };
     let at = byte_at(&text.content, edit.caret);
     text.content.insert_str(at, &s);

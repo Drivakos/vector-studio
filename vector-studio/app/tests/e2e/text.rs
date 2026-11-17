@@ -536,3 +536,36 @@ fn glyphs_window_inserts_characters_as_new_text_or_at_the_caret() {
     assert_eq!(text(&app, 1).content, "xBzy");
     assert!(app.state().glyphs.is_some(), "the window stays open");
 }
+
+#[test]
+fn tab_key_and_tabs_window_set_where_tabs_stop() {
+    let mut app = E2e::new();
+    app.key(Key::F8);
+    app.click_doc(100.0, 200.0);
+    app.type_text("a");
+    app.key(Key::Tab);
+    app.type_text("b");
+    app.key(Key::Escape);
+    let t = text(&app, 0);
+    assert_eq!(t.content, "a\tb");
+    assert!(close(t.layout().lines[0].carets[2], vs_core::text::DEFAULT_TAB), "a half-inch step by default");
+
+    app.menu(&["Text", "Tabs…"]);
+    assert!(!app.exists("Tab 1 (Tabs)"), "no stops of its own yet");
+    app.click("Add tab (Tabs)");
+    app.fill("Tab 1 (Tabs)", "30");
+    app.click("OK (Tabs)");
+    let stop = vs_core::Unit::Millimeters.to_points(30.0);
+    let t = text(&app, 0);
+    assert_eq!(t.tabs.len(), 1);
+    assert!(close(t.tabs[0], stop) && close(t.layout().lines[0].carets[2], stop), "{:?}", t.tabs);
+    let b = app.objects()[0].world_path().bounding_box();
+    assert!(b.x1 > 100.0 + stop, "b is drawn past the stop: {b:?}");
+
+    app.menu(&["Text", "Tabs…"]);
+    app.click("Delete tab 1 (Tabs)");
+    app.click("OK (Tabs)");
+    assert!(text(&app, 0).tabs.is_empty());
+    app.shortcut(Modifiers::COMMAND, Key::Z);
+    assert_eq!(text(&app, 0).tabs.len(), 1, "undo");
+}
