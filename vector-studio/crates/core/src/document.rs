@@ -339,6 +339,10 @@ pub struct Object {
     /// A symmetry group: its members are drawn again, mirrored (see [`crate::symmetry`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub symmetry: Option<crate::symmetry::Symmetry>,
+    /// Drawn through a perspective (see [`crate::perspective`]), in its own space before
+    /// `transform`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub perspective: Option<crate::perspective::Perspective>,
 }
 
 impl Object {
@@ -348,6 +352,8 @@ impl Object {
         if self.locked {
             return;
         }
+        // A perspective becomes part of the curves.
+        self.bake_perspective();
         match &mut self.shape {
             Shape::Curve { .. } | Shape::Image(_) => {}
             Shape::Group { children } => children.iter_mut().for_each(Object::convert_to_curves),
@@ -358,11 +364,12 @@ impl Object {
     /// Whether Convert to Curves would change anything.
     pub fn can_convert_to_curves(&self) -> bool {
         !self.locked
-            && match &self.shape {
-                Shape::Curve { .. } | Shape::Image(_) => false,
-                Shape::Group { children } => children.iter().any(Object::can_convert_to_curves),
-                _ => true,
-            }
+            && (self.perspective.is_some()
+                || match &self.shape {
+                    Shape::Curve { .. } | Shape::Image(_) => false,
+                    Shape::Group { children } => children.iter().any(Object::can_convert_to_curves),
+                    _ => true,
+                })
     }
 
     pub fn label(&self) -> String {
@@ -740,7 +747,7 @@ impl Document {
         let id = ObjectId(self.alloc_id());
         let page = self.active_page_mut();
         let layer = page.active_layer;
-        page.objects.push(Object { id, name: None, shape, style, transform: Affine::IDENTITY, locked: false, layer, contents: Vec::new(), clone_of: None, frame: false, symbol: None, symmetry: None });
+        page.objects.push(Object { id, name: None, shape, style, transform: Affine::IDENTITY, locked: false, layer, contents: Vec::new(), clone_of: None, frame: false, symbol: None, symmetry: None, perspective: None });
         page.settle_layers();
         id
     }

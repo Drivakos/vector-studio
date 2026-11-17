@@ -117,6 +117,11 @@ pub enum Command {
     SymbolManager,
     /// End Edit Symmetry or Edit Symbol (property bar button).
     GroupFinishEdit,
+    AddPerspective,
+    /// Copy Effect > Perspective From: waits for the click on the source.
+    CopyPerspective,
+    /// Clear Effect: removes a perspective.
+    ClearEffect,
     ObjectProperties,
     ConvertToBitmap,
     Resample,
@@ -256,6 +261,9 @@ impl Command {
             "object.symbol_edit" => SymbolEdit,
             "object.symbol_revert" => SymbolRevert,
             "object.symbol_manager" => SymbolManager,
+            "object.add_perspective" => AddPerspective,
+            "object.copy_perspective" => CopyPerspective,
+            "object.clear_effect" => ClearEffect,
             "object.properties" => ObjectProperties,
             "bitmap.convert" => ConvertToBitmap,
             "object.insert_qr" => InsertQrCode,
@@ -427,6 +435,9 @@ impl Command {
         Command::SymbolEdit,
         Command::SymbolRevert,
         Command::SymbolManager,
+        Command::AddPerspective,
+        Command::CopyPerspective,
+        Command::ClearEffect,
         Command::ObjectProperties,
         Command::ConvertToBitmap,
         Command::Resample,

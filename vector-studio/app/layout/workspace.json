@@ -136,6 +136,10 @@
           "-",
           { "cmd": "object.symbol_manager", "label": "Symbol Manager…" }
         ] },
+        { "label": "Copy Effect", "items": [
+          { "cmd": "object.copy_perspective", "label": "Perspective From…" }
+        ] },
+        { "cmd": "object.clear_effect", "label": "Clear Effect" },
         "-",
         { "label": "Align and Distribute", "items": [
           { "cmd": "object.align_left", "label": "Align Left", "shortcut": "L" },

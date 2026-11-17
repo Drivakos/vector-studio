@@ -182,6 +182,12 @@ pub fn export(doc: &Document, path: &Path, options: &ExportOptions) -> Result<Ex
 
 /// One `<path>` per drawable object; groups become `<g>` around their members.
 fn write_svg_object(out: &mut String, obj: &Object, parent: vs_core::kurbo::Affine, depth: usize) {
+    if obj.perspective.is_some() {
+        // SVG has no projective transform: write the projected curves.
+        let mut baked = obj.clone();
+        baked.bake_perspective();
+        return write_svg_object(out, &baked, parent, depth);
+    }
     let indent = "  ".repeat(depth);
     if let Shape::Image(b) = &obj.shape {
         write_svg_image(out, &indent, b, parent * obj.transform, obj.style.opacity());
@@ -910,6 +916,28 @@ mod tests {
         let pixmap = resvg::tiny_skia::Pixmap::decode_png(&png).unwrap();
         assert_eq!(pixmap.pixel(100, 20).unwrap().red(), 255, "the mirrored copy is drawn");
         assert_eq!(pixmap.pixel(60, 20).unwrap().alpha(), 0);
+    }
+
+    #[test]
+    fn perspective_exports_projected_and_survives_save() {
+        use vs_core::kurbo::Point;
+        let mut doc = Document::new("Angle");
+        let id = doc.add_object(Shape::Text(vs_core::Text::new("Hi")), Style::filled(Rgba::rgb(255, 0, 0)));
+        let rect = doc.add_object(Shape::Rectangle { rect: Rect::new(0.0, 100.0, 100.0, 200.0), corner_radius: 0.0 }, Style::filled(Rgba::rgb(255, 0, 0)));
+        doc.add_perspective(&[rect]);
+        // Narrow at the top: 40..60.
+        assert!(doc.set_perspective_corner(rect, 0, Point::new(40.0, 100.0)));
+        assert!(doc.set_perspective_corner(rect, 1, Point::new(60.0, 100.0)));
+        doc.add_perspective(&[id]);
+        assert_eq!(page_to_svg(doc.active_page()).matches("<path ").count(), 2, "text with a perspective is written as curves");
+        let png = page_to_png(doc.active_page(), &ExportOptions { dpi: 72.0, background: None }).unwrap();
+        let pixmap = resvg::tiny_skia::Pixmap::decode_png(&png).unwrap();
+        assert_eq!(pixmap.pixel(50, 102).unwrap().red(), 255, "the narrow top");
+        assert_eq!(pixmap.pixel(10, 102).unwrap().alpha(), 0, "cut away by the perspective");
+        assert_eq!(pixmap.pixel(5, 197).unwrap().red(), 255, "the full-width bottom");
+        assert!(document_to_pdf(&doc).unwrap().starts_with(b"%PDF"));
+        let reopened = document_from_str(&document_to_string(&doc).unwrap()).unwrap();
+        assert_eq!(reopened.active_page().objects, doc.active_page().objects);
     }
 
     #[test]

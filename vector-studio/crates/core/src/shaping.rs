@@ -132,6 +132,7 @@ impl Document {
                     frame: false,
                     symbol: None,
                     symmetry: None,
+                    perspective: None,
                 };
                 // On top of the selection, so the new object shows.
                 self.active_page_mut().objects.insert(picked[last] + 1, obj);
@@ -225,6 +226,7 @@ pub(crate) fn make_curve(obj: &mut Object, path: BezPath) {
     obj.style = page_style(obj);
     obj.shape = Shape::Curve { path };
     obj.transform = Affine::IDENTITY;
+    obj.perspective = None;
 }
 
 /// The object's style (its first member's, for a group) with any outline that scales with

@@ -130,6 +130,9 @@ pub struct Leaf<'a> {
     pub transform: Affine,
     /// PowerClip outlines (page space, even-odd) this leaf is drawn inside, outermost first.
     pub clips: Vec<BezPath>,
+    /// Drawn through a perspective: `path` and `clips` are projected, `transform` only
+    /// places fills and outline widths roughly.
+    pub projected: bool,
 }
 
 impl Leaf<'_> {
@@ -154,8 +157,32 @@ impl Object {
     }
 
     fn collect_leaves<'a>(&'a self, parent: Affine, clips: &[BezPath], out: &mut Vec<Leaf<'a>>) {
-        use std::borrow::Cow;
         let transform = parent * self.transform;
+        let Some(h) = self.perspective else {
+            self.collect_plain(transform, clips, out);
+            return;
+        };
+        // Everything in the object's own space, then through the perspective.
+        let start = out.len();
+        self.collect_plain(Affine::IDENTITY, &[], out);
+        let project = |path: &BezPath| {
+            let mut p = h.map_path(path);
+            p.apply_affine(transform);
+            p
+        };
+        for leaf in &mut out[start..] {
+            leaf.path = project(&leaf.path);
+            let own: Vec<BezPath> = leaf.clips.iter().map(project).collect();
+            leaf.clips = clips.iter().cloned().chain(own).collect();
+            leaf.transform = transform * leaf.transform;
+            leaf.projected = true;
+        }
+    }
+
+    /// [`Self::collect_leaves`] without this object's own perspective; `transform` is
+    /// its local → page transform.
+    fn collect_plain<'a>(&'a self, transform: Affine, clips: &[BezPath], out: &mut Vec<Leaf<'a>>) {
+        use std::borrow::Cow;
         match &self.shape {
             Shape::Group { children } => {
                 for at in self.member_placements(transform) {
@@ -165,7 +192,7 @@ impl Object {
             shape => {
                 let mut path = shape.to_path();
                 path.apply_affine(transform);
-                let leaf = |style: Cow<'a, Style>, path: BezPath| Leaf { path, shape, style, closed: shape.is_closed(), transform, clips: clips.to_vec() };
+                let leaf = |style: Cow<'a, Style>, path: BezPath| Leaf { path, shape, style, closed: shape.is_closed(), transform, clips: clips.to_vec(), projected: false };
                 if self.contents.is_empty() {
                     out.push(leaf(Cow::Borrowed(&self.style), path));
                     return;
@@ -193,6 +220,9 @@ impl Object {
     /// The outline in page space.
     pub fn world_path(&self) -> BezPath {
         let mut path = self.shape.to_path();
+        if let Some(h) = self.perspective {
+            path = h.map_path(&path);
+        }
         path.apply_affine(self.transform);
         path
     }
@@ -205,6 +235,17 @@ impl Object {
 
     fn bounds_in(&self, parent: Affine) -> Rect {
         let transform = parent * self.transform;
+        if self.perspective.is_none() {
+            return self.plain_bounds(transform);
+        }
+        let mut out = Vec::new();
+        self.collect_leaves(parent, &[], &mut out);
+        out.iter().map(|l| l.path.bounding_box()).reduce(|a, b| a.union(b)).unwrap_or_default()
+    }
+
+    /// Bounds without this object's own perspective, `transform` being its local → page
+    /// transform.
+    pub(crate) fn plain_bounds(&self, transform: Affine) -> Rect {
         match &self.shape {
             Shape::Group { children } => self
                 .member_placements(transform)
@@ -230,6 +271,7 @@ impl Object {
             // Text is picked anywhere in its line boxes, not just on the glyphs; bitmaps
             // anywhere on them.
             let solid = match leaf.shape {
+                _ if leaf.projected => None,
                 Shape::Text(text) => Some(text.layout().bounds()),
                 Shape::Image(b) => Some(b.rect),
                 _ => None,

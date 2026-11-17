@@ -242,6 +242,27 @@ pub fn copy_properties(state: &mut AppState, targets: &[ObjectId], source: &vs_c
     }
 }
 
+/// Copy Effect > Perspective From applies: something unlocked is selected.
+pub fn can_copy_perspective(state: &AppState) -> bool {
+    state.selection.iter().any(|id| state.doc.active_page().object(*id).is_some_and(|o| !o.locked))
+}
+
+/// While picking, a click copies the perspective of the object under `p` to the
+/// selection. Returns whether the click was used.
+pub fn press_copy_perspective(state: &mut AppState, p: Point, tolerance: f64) -> bool {
+    if !state.copy_perspective {
+        return false;
+    }
+    state.copy_perspective = false;
+    let page = state.doc.active_page();
+    let source = page.hit_test(p, tolerance).filter(|id| page.object(*id).is_some_and(|o| o.perspective.is_some()));
+    let changed = source.map(|s| state.doc.copy_perspective(&state.selection.clone(), s)).unwrap_or_default();
+    if changed.is_empty() {
+        state.status = Some("Copy Perspective: click an object with a perspective".into());
+    }
+    true
+}
+
 // ---------------------------------------------------------------------------------------
 // PowerClip
 
@@ -310,7 +331,8 @@ pub fn finish_contents(state: &mut AppState) {
 /// The one unlocked curve selected, whose nodes Select All Nodes picks.
 fn node_target(state: &AppState) -> Option<ObjectId> {
     let [id] = state.selection.as_slice() else { return None };
-    state.doc.active_page().object(*id).filter(|o| !o.locked && matches!(o.shape, Shape::Curve { .. })).map(|o| o.id)
+    // A curve with a perspective shows its perspective corners, not its nodes.
+    state.doc.active_page().object(*id).filter(|o| !o.locked && o.perspective.is_none() && matches!(o.shape, Shape::Curve { .. })).map(|o| o.id)
 }
 
 pub fn can_select_all_nodes(state: &AppState) -> bool {

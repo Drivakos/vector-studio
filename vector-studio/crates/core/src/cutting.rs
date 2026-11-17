@@ -140,6 +140,11 @@ fn cut_object(obj: &Object, parent: Affine, region: &Region, keep: Keep) -> Outc
     if obj.locked {
         return Outcome::Unchanged;
     }
+    if obj.perspective.is_some() {
+        let mut baked = obj.clone();
+        baked.bake_perspective();
+        return cut_object(&baked, parent, region, keep);
+    }
     let to_page = parent * obj.transform;
     match &obj.shape {
         Shape::Group { children } => {
@@ -367,7 +372,7 @@ impl Document {
         if path.elements().len() < 2 {
             objects.remove(index);
         } else {
-            objects[index] = Object { shape: Shape::Curve { path }, style: page_style(&obj), transform: Affine::IDENTITY, ..obj };
+            objects[index] = Object { shape: Shape::Curve { path }, style: page_style(&obj), transform: Affine::IDENTITY, perspective: None, ..obj };
         }
         true
     }

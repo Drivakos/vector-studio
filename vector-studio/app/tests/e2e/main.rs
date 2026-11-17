@@ -26,6 +26,7 @@ mod objects;
 mod layers;
 mod powerclip;
 mod symbols;
+mod perspective;
 mod lines;
 mod files;
 mod find;

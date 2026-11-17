@@ -95,6 +95,8 @@ enum Drag {
     Nodes { object: ObjectId, start: Point, original: BezPath },
     Handle { object: ObjectId, handle: HandleRef },
     Corner { object: ObjectId, corner: Point },
+    /// A perspective corner, 0 top-left then clockwise.
+    Perspective { object: ObjectId, corner: usize },
     /// An ellipse, polygon or star node; `shape` and `transform` are as they were on press.
     Control { object: ObjectId, control: Control, shape: Shape, transform: Affine },
     /// A guideline of the active page, by index.
@@ -277,6 +279,7 @@ pub fn tool_input(ui: &egui::Ui, state: &mut AppState, response: &egui::Response
         state.tools.last_press = if double { None } else { Some((time, pos)) };
         if !crate::edit_tools::press_copy_from(state, view.doc(pos), view.doc_len(HIT))
             && !crate::edit_tools::press_place_inside(state, view.doc(pos), view.doc_len(HIT))
+            && !crate::edit_tools::press_copy_perspective(state, view.doc(pos), view.doc_len(HIT))
         {
             press(state, &view, p, mods, double);
         }
@@ -579,6 +582,13 @@ fn press_shape(state: &mut AppState, view: &View, p: Point, mods: egui::Modifier
         && let Some(obj) = state.doc.active_page().object(id)
     {
         let t = obj.transform;
+        if let Some(corners) = obj.perspective_corners() {
+            // With a perspective the Shape tool moves its corners, not the nodes.
+            if let Some(corner) = corners.iter().position(|c| view.screen_dist(*c, p) <= HIT) {
+                state.tools.drag = Some(Drag::Perspective { object: id, corner });
+                return;
+            }
+        } else {
         match &obj.shape {
             Shape::Curve { path } => {
                 let node_list = nodes::nodes(path);
@@ -646,6 +656,7 @@ fn press_shape(state: &mut AppState, view: &View, p: Point, mods: egui::Modifier
                 }
             }
         }
+        }
     }
     match state.doc.active_page().hit_test(p, tol) {
         Some(hit) => {
@@ -655,7 +666,7 @@ fn press_shape(state: &mut AppState, view: &View, p: Point, mods: egui::Modifier
             }
         }
         None if shape_target(state).is_some_and(|id| {
-            matches!(state.doc.active_page().object(id).map(|o| &o.shape), Some(Shape::Curve { .. }))
+            state.doc.active_page().object(id).is_some_and(|o| o.perspective.is_none() && matches!(o.shape, Shape::Curve { .. }))
         }) =>
         {
             state.tools.drag = Some(Drag::NodeMarquee { start: p, add: mods.shift });
@@ -1047,6 +1058,12 @@ fn drag_to(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers) {
                 }
             }
             Drag::Corner { object, corner }
+        }
+        Drag::Perspective { object, corner } => {
+            let p = snapper(state, view, &[object]).point(p);
+            // A corner that would fold the shape stays where it was.
+            state.doc.set_perspective_corner(object, corner, p);
+            Drag::Perspective { object, corner }
         }
         Drag::Control { object, control, shape, transform } => {
             let local = transform.inverse() * snapper(state, view, &[object]).point(p);
@@ -1561,6 +1578,9 @@ pub fn draw_overlay(painter: &egui::Painter, state: &AppState, canvas: Rect) {
         if let Some(obj) = shape_target(state).and_then(|id| page.object(id)) {
             path_to_screen(painter, &obj.world_path(), &view, thin);
             let t = obj.transform;
+            if let Some(corners) = obj.perspective_corners() {
+                perspective_grid(painter, obj, &corners, &view);
+            } else {
             match &obj.shape {
                 Shape::Curve { path } => {
                     for n in nodes::nodes(path) {
@@ -1584,6 +1604,7 @@ pub fn draw_overlay(painter: &egui::Painter, state: &AppState, canvas: Rect) {
                         square(painter, view.screen(t * at), false);
                     }
                 }
+            }
             }
         }
     } else if let Some(bounds) = page.bounds_of(&state.selection) {
@@ -1799,6 +1820,24 @@ pub fn draw_overlay(painter: &egui::Painter, state: &AppState, canvas: Rect) {
     }
 }
 
+/// Perspective grid: the object's bounds cut in four each way, seen through its
+/// perspective, with a handle on each corner.
+fn perspective_grid(painter: &egui::Painter, obj: &vs_core::Object, corners: &[Point; 4], view: &View) {
+    const PERSPECTIVE: Color32 = Color32::from_gray(0x30);
+    let Some(h) = obj.perspective else { return };
+    let f = obj.perspective_frame();
+    let at = |u: f64, v: f64| view.screen(obj.transform * h.apply(Point::new(f.x0 + u * f.width(), f.y0 + v * f.height())));
+    for k in 0..=4 {
+        let s = f64::from(k) / 4.0;
+        for line in [[at(s, 0.0), at(s, 1.0)], [at(0.0, s), at(1.0, s)]] {
+            painter.extend(egui::Shape::dashed_line(&line, Stroke::new(1.0, PERSPECTIVE), 3.0, 3.0));
+        }
+    }
+    for c in corners {
+        square(painter, view.screen(*c), false);
+    }
+}
+
 /// One-line hint for the status bar.
 pub fn hint(state: &AppState) -> String {
     if state.copy_properties.picking {
@@ -1806,6 +1845,9 @@ pub fn hint(state: &AppState) -> String {
     }
     if state.powerclip.picking {
         return "Click the shape to place the selection inside · Esc to cancel".into();
+    }
+    if state.copy_perspective {
+        return "Click the object to copy the perspective from · Esc to cancel".into();
     }
     if state.powerclip.editing.is_some() {
         return "Editing PowerClip contents · Finish editing PowerClip in the property bar puts them back".into();
@@ -1849,6 +1891,7 @@ pub fn hint(state: &AppState) -> String {
         }
         Tool::FreeTransform => "Click an object to transform it, or drag a box around objects".into(),
         Tool::Shape => match shape_target(state).and_then(|id| state.doc.active_page().object(id)) {
+            Some(o) if o.perspective.is_some() => "Drag a corner to change the perspective · Object > Clear Effect removes it".into(),
             Some(o) if matches!(o.shape, Shape::Curve { .. }) => {
                 "Drag nodes or handles · double-click a line to add a node, a node to delete it".into()
             }

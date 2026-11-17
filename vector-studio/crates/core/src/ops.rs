@@ -244,6 +244,7 @@ impl Document {
             frame: false,
             symbol: None,
             symmetry: None,
+            perspective: None,
         };
         objects.insert(top - below_top, group);
         Some(id)
@@ -272,6 +273,10 @@ impl Document {
             let Shape::Group { children } = group.shape else { unreachable!() };
             let n = children.len();
             for (k, mut child) in children.into_iter().enumerate() {
+                // The group's perspective goes on each member, so it looks the same.
+                if let Some(h) = group.perspective {
+                    child.push_perspective(h.seen_from(child.transform));
+                }
                 child.transform = group.transform * child.transform;
                 child.layer = group.layer;
                 out.push(child.id);

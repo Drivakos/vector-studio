@@ -163,6 +163,8 @@ pub struct AppState {
     pub step_repeat: crate::edit_tools::StepRepeat,
     pub copy_properties: crate::edit_tools::CopyProperties,
     pub powerclip: crate::edit_tools::PowerClipState,
+    /// Copy Effect > Perspective From is waiting for the click on the source.
+    pub copy_perspective: bool,
     /// Edit Symmetry or Edit Symbol in progress.
     pub group_edit: Option<crate::symbol_menu::GroupEdit>,
     /// The Symbol Manager window is open.
@@ -308,6 +310,7 @@ impl AppState {
             step_repeat: Default::default(),
             copy_properties: Default::default(),
             powerclip: Default::default(),
+            copy_perspective: false,
             group_edit: None,
             symbol_manager: false,
             view_mode: Default::default(),
@@ -549,6 +552,9 @@ impl VectorStudioApp {
             Command::SymbolRevert => (!doc.instances(&state.selection).is_empty(), None),
             Command::SymbolManager => (true, Some(state.symbol_manager)),
             Command::GroupFinishEdit => (state.group_edit.is_some(), None),
+            Command::AddPerspective => (doc.can_add_perspective(&state.selection), None),
+            Command::CopyPerspective => (crate::edit_tools::can_copy_perspective(state), None),
+            Command::ClearEffect => (!doc.with_perspective(&state.selection).is_empty(), None),
             _ => (true, None),
         }
     }
@@ -874,6 +880,7 @@ impl VectorStudioApp {
             }
             Command::ClipPlaceInside => {
                 s.copy_properties.picking = false;
+                s.copy_perspective = false;
                 s.powerclip.picking = true;
                 Ok(())
             }
@@ -932,6 +939,27 @@ impl VectorStudioApp {
             }
             Command::GroupFinishEdit => {
                 crate::symbol_menu::finish(s);
+                Ok(())
+            }
+            Command::AddPerspective => {
+                // Its corners are dragged with the Shape tool.
+                if let Some(id) = s.doc.add_perspective(&s.selection) {
+                    s.selection = vec![id];
+                    s.marquee_selection = None;
+                    s.tool = Tool::Shape;
+                    s.toolbox.remember(Tool::Shape);
+                    s.tools.nodes.clear();
+                }
+                Ok(())
+            }
+            Command::CopyPerspective => {
+                s.copy_properties.picking = false;
+                s.powerclip.picking = false;
+                s.copy_perspective = crate::edit_tools::can_copy_perspective(s);
+                Ok(())
+            }
+            Command::ClearEffect => {
+                s.doc.clear_perspective(&s.selection);
                 Ok(())
             }
             Command::ConvertText => {
@@ -1158,6 +1186,8 @@ impl VectorStudioApp {
                 s.needs_fit = true;
             } else if s.copy_properties.picking {
                 s.copy_properties.picking = false;
+            } else if s.copy_perspective {
+                s.copy_perspective = false;
             } else if s.powerclip.picking {
                 s.powerclip.picking = false;
             } else if s.tool == Tool::Crop && s.tools.crop.is_some() {
