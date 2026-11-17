@@ -1810,6 +1810,13 @@ pub fn hint(state: &AppState) -> String {
     if state.powerclip.editing.is_some() {
         return "Editing PowerClip contents · Finish editing PowerClip in the property bar puts them back".into();
     }
+    if let Some(edit) = &state.group_edit {
+        let what = match edit.kind {
+            crate::symbol_menu::GroupEditKind::Symmetry => "symmetry: the mirror follows each change",
+            crate::symbol_menu::GroupEditKind::Symbol => "symbol: every instance changes on Finish",
+        };
+        return format!("Editing {what} · {} in the property bar puts the objects back", edit.finish_label());
+    }
     let n = state.selection.len();
     let selected = match n {
         0 => "Nothing selected".to_string(),

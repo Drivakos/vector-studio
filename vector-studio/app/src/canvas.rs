@@ -119,7 +119,8 @@ impl GpuCanvas {
             page: state.doc.background.map_or(self.colors.page, |b| vs_render::to_color(b.color)),
             ..self.colors
         };
-        build_page_scene(&mut self.scene, state.doc.active_page(), &viewport, ppp, &colors, view.mode);
+        let page = crate::symbol_menu::shown_page(state);
+        build_page_scene(&mut self.scene, &page, &viewport, ppp, &colors, view.mode);
         let target = self.target.as_ref()?;
         let params = RenderParams {
             base_color: view.pasteboard.unwrap_or(self.colors.pasteboard),

@@ -27,6 +27,7 @@ pub mod paint_tools;
 pub mod panels;
 pub mod paste_special;
 pub mod printing;
+pub mod symbol_menu;
 pub mod templates;
 pub mod text_menu;
 pub mod text_tool;

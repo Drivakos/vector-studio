@@ -99,6 +99,21 @@ pub fn property_bar_ui(ui: &mut egui::Ui, state: &mut AppState, out: &mut Vec<Co
             }
             theme::vsep(ui);
         }
+        if let Some(edit) = &state.group_edit {
+            let label = edit.finish_label();
+            let resp = ui.button(format!("{}  {label}", <&str>::from(ICON_CHECK)));
+            crate::a11y::name(&resp, label);
+            if resp.clicked() {
+                out.push(Command::GroupFinishEdit);
+            }
+            if let Some(sym) = crate::symbol_menu::edited_symmetry(state) {
+                ui.label("Lines");
+                let field = egui::DragValue::new(&mut sym.lines).range(1..=vs_core::Symmetry::MAX_LINES).speed(0.05);
+                let resp = ui.add(field).on_hover_text("Symmetry lines");
+                crate::a11y::name(&resp, "Symmetry lines");
+            }
+            theme::vsep(ui);
+        }
         match state.tool {
             Tool::Pick | Tool::FreehandPick if state.has_selection() => selection_bar(ui, state, out),
             Tool::FreeTransform => {

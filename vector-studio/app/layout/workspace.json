@@ -126,11 +126,15 @@
         ] },
         { "label": "Symmetry", "items": [
           { "cmd": "object.symmetry_new", "label": "Create New Symmetry" },
-          { "cmd": "object.symmetry_edit", "label": "Edit Symmetry" }
+          { "cmd": "object.symmetry_edit", "label": "Edit Symmetry" },
+          { "cmd": "object.symmetry_remove", "label": "Remove Symmetry" }
         ] },
         { "label": "Symbol", "items": [
           { "cmd": "object.symbol_new", "label": "New Symbol" },
-          { "cmd": "object.symbol_edit", "label": "Edit Symbol" }
+          { "cmd": "object.symbol_edit", "label": "Edit Symbol" },
+          { "cmd": "object.symbol_revert", "label": "Revert to Objects" },
+          "-",
+          { "cmd": "object.symbol_manager", "label": "Symbol Manager…" }
         ] },
         "-",
         { "label": "Align and Distribute", "items": [

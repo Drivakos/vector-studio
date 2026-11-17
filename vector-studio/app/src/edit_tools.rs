@@ -279,7 +279,7 @@ pub fn press_place_inside(state: &mut AppState, p: Point, tolerance: f64) -> boo
 }
 
 pub fn can_edit_contents(state: &AppState) -> bool {
-    state.powerclip.editing.is_none() && state.selection.len() == 1 && state.doc.can_extract_contents(&state.selection)
+    state.powerclip.editing.is_none() && state.group_edit.is_none() && state.selection.len() == 1 && state.doc.can_extract_contents(&state.selection)
 }
 
 /// Edit Contents: take the selected container's contents out onto the page to edit them.

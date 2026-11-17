@@ -72,6 +72,7 @@ Names must be unique on screen, or a test cannot tell widgets apart.
 | Objects docker: select, Shift-select, rename, order, delete | `objects.rs` |
 | Layers: add, hide, lock, move objects, rename, delete, undo | `layers.rs` |
 | PowerClip: place inside (Esc cancels), clipped pixels, edit and finish, move with frame, extract; Create Empty Frame (the X in pixels, drop an object inside, undo) | `powerclip.rs` |
+| Symmetry: Create New Symmetry (mirror in pixels while editing and after a move, Lines on the property bar, Finish), Edit Symmetry, Remove Symmetry keeps the copies, undo; Symbols: New Symbol in place, Objects docker name, Symbol Manager (use count, Insert in the middle of the page, rename, Delete only when unused, Close), Edit Symbol (others wait, then all change on Finish), Revert to Objects | `symbols.rs` |
 | Page navigator, Pages docker, page size / orientation / width, Layout menu, PageUp / PageDown | `pages.rs` |
 | Rename Page (Layout menu, in the Pages docker), Go to Page (window, limited to the page count, Cancel), Insert Page Number (placement, renumbering, typing makes it plain text), Page Background (canvas pixels, SVG with and without Print and export, undo steps) | `pages.rs` |
 | Document Options (Cancel, OK, all pages, grid, nudge, units converting the fields) | `pages.rs` |

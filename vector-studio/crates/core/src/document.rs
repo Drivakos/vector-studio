@@ -333,6 +333,12 @@ pub struct Object {
     /// objects dropped on it go inside.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub frame: bool,
+    /// A symbol instance: a group whose members are a copy of this symbol's objects.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol: Option<crate::symbols::SymbolId>,
+    /// A symmetry group: its members are drawn again, mirrored (see [`crate::symmetry`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symmetry: Option<crate::symmetry::Symmetry>,
 }
 
 impl Object {
@@ -363,6 +369,8 @@ impl Object {
         match &self.name {
             Some(n) if !n.trim().is_empty() => n.clone(),
             _ => match &self.shape {
+                Shape::Group { .. } if self.symbol.is_some() => "Symbol".into(),
+                Shape::Group { .. } if self.symmetry.is_some() => "Symmetry".into(),
                 Shape::Group { children } => format!("Group of {} objects", children.len()),
                 shape if !self.contents.is_empty() => format!("PowerClip {}", shape.kind_label()),
                 shape if self.frame => format!("Empty PowerClip {}", shape.kind_label()),
@@ -554,6 +562,9 @@ pub struct Document {
     pub background: Option<Background>,
     #[serde(default, skip_serializing_if = "DocumentProperties::is_empty")]
     pub properties: DocumentProperties,
+    /// Symbol definitions, which symbol instances copy.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub symbols: Vec<crate::symbols::Symbol>,
     /// What each clone last took from its master (see [`Document::sync_clones`]).
     #[serde(skip)]
     pub(crate) clone_sync: crate::clones::CloneSync,
@@ -576,6 +587,7 @@ impl Document {
             next_id: 1,
             background: None,
             properties: DocumentProperties::default(),
+            symbols: Vec::new(),
             clone_sync: Default::default(),
         };
         let size = PAGE_PRESETS[1].size(Orientation::Portrait);
@@ -728,7 +740,7 @@ impl Document {
         let id = ObjectId(self.alloc_id());
         let page = self.active_page_mut();
         let layer = page.active_layer;
-        page.objects.push(Object { id, name: None, shape, style, transform: Affine::IDENTITY, locked: false, layer, contents: Vec::new(), clone_of: None, frame: false });
+        page.objects.push(Object { id, name: None, shape, style, transform: Affine::IDENTITY, locked: false, layer, contents: Vec::new(), clone_of: None, frame: false, symbol: None, symmetry: None });
         page.settle_layers();
         id
     }
@@ -756,6 +768,15 @@ impl Document {
         ObjectId(self.alloc_id())
     }
 
+    pub(crate) fn alloc_symbol_id(&mut self) -> crate::symbols::SymbolId {
+        crate::symbols::SymbolId(self.alloc_id())
+    }
+
+    /// The id the next new object gets: objects made from now on have this one or higher.
+    pub fn next_object_id(&self) -> ObjectId {
+        ObjectId(self.next_id)
+    }
+
     /// Fix up a document read from a file: ids never collide with new ones, the active
     /// page exists, and there is at least one page.
     pub fn repair(&mut self) {
@@ -771,6 +792,7 @@ impl Document {
             .pages
             .iter()
             .flat_map(|p| std::iter::once(p.id.0).chain(p.objects.iter().flat_map(Object::all_ids).map(|id| id.0)))
+            .chain(self.symbols.iter().flat_map(|s| std::iter::once(s.id.0).chain(s.objects.iter().flat_map(Object::all_ids).map(|id| id.0))))
             .max()
             .unwrap_or(0);
         self.next_id = self.next_id.max(max + 1);

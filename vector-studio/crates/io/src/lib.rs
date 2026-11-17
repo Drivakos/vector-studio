@@ -191,8 +191,17 @@ fn write_svg_object(out: &mut String, obj: &Object, parent: vs_core::kurbo::Affi
     }
     if let Shape::Group { children } = &obj.shape {
         let _ = writeln!(out, "{indent}<g>");
-        for child in children {
-            write_svg_object(out, child, parent * obj.transform, depth + 1);
+        for (copy, at) in obj.member_placements(parent * obj.transform).into_iter().enumerate() {
+            for child in children {
+                if copy == 0 {
+                    write_svg_object(out, child, at, depth + 1);
+                } else {
+                    // Mirrored copies need their own gradient and clip ids.
+                    let mut child = child.clone();
+                    tag_ids(&mut child, copy as u64);
+                    write_svg_object(out, &child, at, depth + 1);
+                }
+            }
         }
         let _ = writeln!(out, "{indent}</g>");
         return;
@@ -228,6 +237,15 @@ fn write_svg_object(out: &mut String, obj: &Object, parent: vs_core::kurbo::Affi
         write_svg_stroke(out, o, o.page_width(transform), opacity);
     }
     out.push_str("/>\n");
+}
+
+/// Give `obj` and everything in it ids that no object has, for copy `copy` of it.
+fn tag_ids(obj: &mut Object, copy: u64) {
+    obj.id.0 |= copy << 48;
+    if let Shape::Group { children } = &mut obj.shape {
+        children.iter_mut().for_each(|c| tag_ids(c, copy));
+    }
+    obj.contents.iter_mut().for_each(|c| tag_ids(c, copy));
 }
 
 /// A PowerClip: the container's fill, its contents clipped to its outline, then the
@@ -871,6 +889,27 @@ mod tests {
         assert!(pdf.starts_with(b"%PDF"));
         let reopened = document_from_str(&document_to_string(&doc).unwrap()).unwrap();
         assert_eq!(reopened.active_page().objects, doc.active_page().objects);
+    }
+
+    #[test]
+    fn symmetry_copies_export_with_their_own_gradient_ids() {
+        use vs_core::{Fill, Gradient, GradientKind};
+        let mut doc = Document::new("Mirror");
+        let rect = Rect::new(0.0, 0.0, 40.0, 40.0);
+        let mut style = Style::filled(Rgba::rgb(255, 0, 0));
+        style.fill = Some(Fill::Gradient(Gradient::across(GradientKind::Linear, rect, Rgba::rgb(255, 0, 0), Rgba::rgb(255, 0, 0))));
+        let a = doc.add_object(Shape::Rectangle { rect, corner_radius: 0.0 }, style);
+        let group = doc.create_symmetry(&[a]).unwrap();
+        // Mirror line at x = 60: the copy covers 80..120.
+        doc.active_page_mut().object_mut(group).unwrap().symmetry.as_mut().unwrap().center.x = 60.0;
+        let svg = page_to_svg(doc.active_page());
+        assert_eq!(svg.matches("<path ").count(), 2, "{svg}");
+        assert_eq!(svg.matches("<linearGradient id=").count(), 2);
+        assert_ne!(svg.find(&format!(r#"id="fill{}""#, a.0)), svg.rfind("<linearGradient id="), "the copy has its own id");
+        let png = page_to_png(doc.active_page(), &ExportOptions { dpi: 72.0, background: None }).unwrap();
+        let pixmap = resvg::tiny_skia::Pixmap::decode_png(&png).unwrap();
+        assert_eq!(pixmap.pixel(100, 20).unwrap().red(), 255, "the mirrored copy is drawn");
+        assert_eq!(pixmap.pixel(60, 20).unwrap().alpha(), 0);
     }
 
     #[test]

@@ -79,7 +79,9 @@ fn paste(state: &mut AppState, how: PasteAs, text: Option<String>) {
     match how {
         PasteAs::Objects => {
             let objects = state.internal_clipboard().to_vec();
+            let symbols = state.internal_clipboard_symbols().to_vec();
             state.selection = state.doc.paste_objects(&objects, vs_core::kurbo::Vec2::ZERO);
+            state.doc.adopt_symbols(&state.selection, &symbols);
             state.marquee_selection = None;
         }
         PasteAs::Svg => {

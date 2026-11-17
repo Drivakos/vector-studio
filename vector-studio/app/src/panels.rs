@@ -442,7 +442,8 @@ fn objects_of_layer(ui: &mut egui::Ui, state: &mut AppState, i: usize, layer: La
         .rev()
         .filter(|o| o.layer == layer)
         .map(|o| {
-            let label = if o.locked { format!("{}  {}", o.label(), <&str>::from(ICON_LOCK)) } else { o.label() };
+            let name = crate::symbol_menu::object_label(state, o);
+            let label = if o.locked { format!("{name}  {}", <&str>::from(ICON_LOCK)) } else { name };
             (o.id, label)
         })
         .collect();

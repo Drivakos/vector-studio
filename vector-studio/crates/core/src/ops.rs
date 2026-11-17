@@ -213,9 +213,15 @@ impl Document {
     /// Group the unlocked objects among `ids` (at least two). The group takes the place of
     /// the topmost one in the stack. Returns the group's id.
     pub fn group_objects(&mut self, ids: &[ObjectId]) -> Option<ObjectId> {
+        self.wrap_in_group(ids, 2)
+    }
+
+    /// Group the unlocked objects among `ids` if there are at least `min`, where the
+    /// topmost of them was. Returns the group.
+    pub(crate) fn wrap_in_group(&mut self, ids: &[ObjectId], min: usize) -> Option<ObjectId> {
         let page = self.active_page();
         let picked = |o: &Object| ids.contains(&o.id) && !o.locked;
-        if page.objects.iter().filter(|o| picked(o)).count() < 2 {
+        if page.objects.iter().filter(|o| picked(o)).count() < min.max(1) {
             return None;
         }
         let top = page.objects.iter().rposition(picked)?;
@@ -236,6 +242,8 @@ impl Document {
             contents: Vec::new(),
             clone_of: None,
             frame: false,
+            symbol: None,
+            symmetry: None,
         };
         objects.insert(top - below_top, group);
         Some(id)
@@ -244,6 +252,8 @@ impl Document {
     /// Replace each unlocked group among `ids` by its members, in place. Returns the ids of
     /// the members (to select them) and of any non-group objects in `ids`.
     pub fn ungroup_objects(&mut self, ids: &[ObjectId]) -> Vec<ObjectId> {
+        // A symmetry group's mirrored copies come out as objects too.
+        self.remove_symmetry(ids);
         let objects = &mut self.active_page_mut().objects;
         let mut out = Vec::new();
         let mut i = 0;

@@ -130,6 +130,8 @@ impl Document {
                     contents: Vec::new(),
                     clone_of: None,
                     frame: false,
+                    symbol: None,
+                    symmetry: None,
                 };
                 // On top of the selection, so the new object shows.
                 self.active_page_mut().objects.insert(picked[last] + 1, obj);

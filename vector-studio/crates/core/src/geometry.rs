@@ -157,7 +157,11 @@ impl Object {
         use std::borrow::Cow;
         let transform = parent * self.transform;
         match &self.shape {
-            Shape::Group { children } => children.iter().for_each(|c| c.collect_leaves(transform, clips, out)),
+            Shape::Group { children } => {
+                for at in self.member_placements(transform) {
+                    children.iter().for_each(|c| c.collect_leaves(at, clips, out));
+                }
+            }
             shape => {
                 let mut path = shape.to_path();
                 path.apply_affine(transform);
@@ -179,6 +183,13 @@ impl Object {
         }
     }
 
+    /// Where a group's members are drawn, given the group's own placement: once, plus
+    /// each mirrored copy of a symmetry group.
+    pub fn member_placements(&self, transform: Affine) -> Vec<Affine> {
+        let copies = self.symmetry.map(|s| s.copies()).unwrap_or_default();
+        std::iter::once(transform).chain(copies.into_iter().map(|m| transform * m)).collect()
+    }
+
     /// The outline in page space.
     pub fn world_path(&self) -> BezPath {
         let mut path = self.shape.to_path();
@@ -195,9 +206,10 @@ impl Object {
     fn bounds_in(&self, parent: Affine) -> Rect {
         let transform = parent * self.transform;
         match &self.shape {
-            Shape::Group { children } => children
-                .iter()
-                .map(|c| c.bounds_in(transform))
+            Shape::Group { children } => self
+                .member_placements(transform)
+                .into_iter()
+                .flat_map(|at| children.iter().map(move |c| c.bounds_in(at)))
                 .reduce(|a, b| a.union(b))
                 .unwrap_or_default(),
             Shape::Text(text) => transform.transform_rect_bbox(text.layout().bounds()),

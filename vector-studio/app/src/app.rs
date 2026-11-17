@@ -163,6 +163,10 @@ pub struct AppState {
     pub step_repeat: crate::edit_tools::StepRepeat,
     pub copy_properties: crate::edit_tools::CopyProperties,
     pub powerclip: crate::edit_tools::PowerClipState,
+    /// Edit Symmetry or Edit Symbol in progress.
+    pub group_edit: Option<crate::symbol_menu::GroupEdit>,
+    /// The Symbol Manager window is open.
+    pub symbol_manager: bool,
     /// How the canvas draws objects (not saved).
     pub view_mode: vs_render::ViewMode,
     /// Full-Screen Preview is on.
@@ -173,6 +177,8 @@ pub struct AppState {
     /// Last status message (e.g. "Exported …").
     pub status: Option<String>,
     clipboard: Vec<Object>,
+    /// The symbols the copied objects are instances of, for pasting into another drawing.
+    clipboard_symbols: Vec<vs_core::Symbol>,
     /// Text we put on the system clipboard with the last copy, to recognise our own paste.
     clipboard_text: String,
     pub(crate) untitled_count: u32,
@@ -302,12 +308,15 @@ impl AppState {
             step_repeat: Default::default(),
             copy_properties: Default::default(),
             powerclip: Default::default(),
+            group_edit: None,
+            symbol_manager: false,
             view_mode: Default::default(),
             preview: None,
             page_sorter: Default::default(),
             last_action: None,
             status: None,
             clipboard: Vec::new(),
+            clipboard_symbols: Vec::new(),
             clipboard_text: String::new(),
             untitled_count: 1,
             show_about: false,
@@ -352,6 +361,11 @@ impl AppState {
     /// The objects of the last copy or cut.
     pub fn internal_clipboard(&self) -> &[Object] {
         &self.clipboard
+    }
+
+    /// The symbols [`Self::internal_clipboard`]'s instances belong to.
+    pub fn internal_clipboard_symbols(&self) -> &[vs_core::Symbol] {
+        &self.clipboard_symbols
     }
 
     pub fn selected_objects(&self) -> impl Iterator<Item = &Object> {
@@ -527,6 +541,14 @@ impl VectorStudioApp {
             Command::ClipEdit => (crate::edit_tools::can_edit_contents(state), None),
             Command::ClipEmptyFrame => (doc.can_create_empty_frame(&state.selection), None),
             Command::ClipFinishEdit => (state.powerclip.editing.is_some(), None),
+            Command::SymmetryNew => (crate::symbol_menu::can_create_symmetry(state), None),
+            Command::SymmetryEdit => (crate::symbol_menu::can_edit_symmetry(state), None),
+            Command::SymmetryRemove => (!doc.symmetry_groups(&state.selection).is_empty(), None),
+            Command::SymbolNew => (crate::symbol_menu::can_make_symbol(state), None),
+            Command::SymbolEdit => (crate::symbol_menu::can_edit_symbol(state), None),
+            Command::SymbolRevert => (!doc.instances(&state.selection).is_empty(), None),
+            Command::SymbolManager => (true, Some(state.symbol_manager)),
+            Command::GroupFinishEdit => (state.group_edit.is_some(), None),
             _ => (true, None),
         }
     }
@@ -688,6 +710,7 @@ impl VectorStudioApp {
             Command::Paste => {
                 let objects = s.clipboard.clone();
                 s.selection = s.doc.paste_objects(&objects, Vec2::ZERO);
+                s.doc.adopt_symbols(&s.selection, &s.clipboard_symbols);
                 Ok(())
             }
             Command::PasteSpecial => {
@@ -872,6 +895,43 @@ impl VectorStudioApp {
             }
             Command::ClipFinishEdit => {
                 crate::edit_tools::finish_contents(s);
+                Ok(())
+            }
+            Command::SymmetryNew => {
+                crate::symbol_menu::create_symmetry(s);
+                Ok(())
+            }
+            Command::SymmetryEdit => {
+                crate::symbol_menu::edit_symmetry(s);
+                Ok(())
+            }
+            Command::SymmetryRemove => {
+                s.doc.remove_symmetry(&s.selection);
+                Ok(())
+            }
+            Command::SymbolNew => {
+                if crate::symbol_menu::can_make_symbol(s)
+                    && let Some(id) = s.doc.new_symbol(&s.selection)
+                {
+                    s.selection = vec![id];
+                    s.marquee_selection = None;
+                }
+                Ok(())
+            }
+            Command::SymbolEdit => {
+                crate::symbol_menu::edit_symbol(s);
+                Ok(())
+            }
+            Command::SymbolRevert => {
+                s.doc.revert_symbols(&s.selection);
+                Ok(())
+            }
+            Command::SymbolManager => {
+                s.symbol_manager = !s.symbol_manager;
+                Ok(())
+            }
+            Command::GroupFinishEdit => {
+                crate::symbol_menu::finish(s);
                 Ok(())
             }
             Command::ConvertText => {
@@ -1174,6 +1234,7 @@ impl VectorStudioApp {
         }
         s.doc.settle_layers();
         s.doc.sync_clones();
+        s.doc.sync_symbols();
         s.doc.sync_page_numbers();
         let page = s.doc.active_page();
         s.selection.retain(|id| page.object(*id).is_some_and(|o| page.is_selectable(o)));
@@ -1220,6 +1281,7 @@ fn keep_surviving(s: &mut AppState) {
 
 fn copy_selection(s: &mut AppState, ctx: &egui::Context) {
     s.clipboard = s.doc.copy_objects(&s.selection);
+    s.clipboard_symbols = s.doc.symbols_used_by(&s.clipboard);
     // Put the selection on the system clipboard as SVG, so it pastes into other apps.
     let mut page = s.doc.active_page().clone();
     page.objects = s.clipboard.clone();
@@ -1364,6 +1426,7 @@ impl eframe::App for VectorStudioApp {
         crate::text_menu::bullets_window(&ctx, &mut self.state);
         crate::text_menu::drop_cap_window(&ctx, &mut self.state);
         crate::text_menu::tabs_window(&ctx, &mut self.state);
+        crate::symbol_menu::symbol_manager_window(&ctx, &mut self.state);
         crate::bitmap_menu::convert_window(&ctx, &mut self.state);
         crate::bitmap_menu::resample_window(&ctx, &mut self.state);
         crate::bitmap_menu::effect_window(&ctx, &mut self.state);
