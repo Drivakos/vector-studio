@@ -144,6 +144,10 @@ pub struct AppState {
     /// The list style chosen in the open Bullets and Numbering window.
     pub bullets: Option<Option<vs_core::ListStyle>>,
     pub drop_cap: Option<crate::text_menu::DropCapDialog>,
+    pub convert_to_bitmap: Option<crate::bitmap_menu::ConvertDialog>,
+    pub resample: Option<crate::bitmap_menu::ResampleDialog>,
+    /// The bitmap effect whose settings window is open.
+    pub effect: Option<vs_core::raster::Effect>,
     pub save_template: Option<crate::templates::SaveTemplateDialog>,
     pub new_from_template: Option<crate::templates::NewFromTemplateDialog>,
     pub show_document_properties: bool,
@@ -277,6 +281,9 @@ impl AppState {
             columns: None,
             bullets: None,
             drop_cap: None,
+            convert_to_bitmap: None,
+            resample: None,
+            effect: None,
             save_template: None,
             new_from_template: None,
             show_document_properties: false,
@@ -501,6 +508,9 @@ impl VectorStudioApp {
             Command::Columns => (!crate::text_menu::column_targets(state).is_empty(), None),
             Command::Bullets => (!crate::text_menu::list_targets(state).is_empty(), None),
             Command::DropCap => (!crate::text_menu::column_targets(state).is_empty(), None),
+            Command::ConvertToBitmap => (crate::bitmap_menu::can_convert(state), None),
+            Command::Resample => (crate::bitmap_menu::resample_target(state).is_some(), None),
+            Command::BitmapEffect(_) => (!crate::bitmap_menu::bitmap_targets(state).is_empty(), None),
             Command::StraightenText => (doc.can_straighten_text(&state.selection), None),
             Command::ClipPlaceInside => (doc.can_place_inside(&state.selection), None),
             Command::ClipExtract => (doc.can_extract_contents(&state.selection), None),
@@ -577,6 +587,19 @@ impl VectorStudioApp {
             }
             Command::Bullets => {
                 crate::text_menu::open_bullets(s);
+                Ok(())
+            }
+            Command::ConvertToBitmap => {
+                crate::text_tool::finish(s);
+                crate::bitmap_menu::open_convert(s);
+                Ok(())
+            }
+            Command::Resample => {
+                crate::bitmap_menu::open_resample(s);
+                Ok(())
+            }
+            Command::BitmapEffect(kind) => {
+                crate::bitmap_menu::run_effect(s, kind);
                 Ok(())
             }
             Command::TextProperties => {
@@ -1308,6 +1331,9 @@ impl eframe::App for VectorStudioApp {
         crate::text_menu::columns_window(&ctx, &mut self.state);
         crate::text_menu::bullets_window(&ctx, &mut self.state);
         crate::text_menu::drop_cap_window(&ctx, &mut self.state);
+        crate::bitmap_menu::convert_window(&ctx, &mut self.state);
+        crate::bitmap_menu::resample_window(&ctx, &mut self.state);
+        crate::bitmap_menu::effect_window(&ctx, &mut self.state);
         crate::templates::new_window(&ctx, &mut self.state);
         crate::edit_tools::copy_properties_window(&ctx, &mut self.state);
         self.settle(&ctx);

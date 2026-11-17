@@ -1,7 +1,9 @@
 //! File formats: the native document format, SVG / PNG / PDF export and SVG import.
 
+mod bitmaps;
 mod import;
 
+pub use bitmaps::{apply_effect, bitmap_from_pixels, bitmap_pixels, drawn_bounds, objects_to_bitmap, resample};
 pub use import::{import_bitmap, import_svg};
 
 use std::fmt::Write as _;

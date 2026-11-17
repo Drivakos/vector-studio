@@ -16,6 +16,7 @@ pub mod nodes;
 pub mod ops;
 pub mod page_numbers;
 pub mod powerclip;
+pub mod raster;
 pub mod shaping;
 pub mod snap;
 pub mod align_guides;

@@ -3,6 +3,7 @@
 
 pub mod a11y;
 pub mod app;
+pub mod bitmap_menu;
 pub mod canvas;
 pub mod chrome;
 pub mod commands;

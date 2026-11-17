@@ -2,6 +2,7 @@
 //! input. One module per feature area; see `TESTING.md` for the map from features to tests.
 
 mod support;
+mod bitmaps;
 
 mod drawing;
 mod editing;
