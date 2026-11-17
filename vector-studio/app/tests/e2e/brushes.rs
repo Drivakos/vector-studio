@@ -1,4 +1,5 @@
-//! Smooth, Roughen, Twirl and Attract and Repel brush tools (Shape tool flyout).
+//! Smooth, Smudge, Twirl, Attract and Repel, Smear and Roughen brush tools (Shape tool
+//! flyout).
 
 use egui::{Key, Modifiers};
 use vs_core::kurbo::Shape as _;
@@ -109,4 +110,42 @@ fn attract_pulls_the_outline_in_and_repel_pushes_it_away() {
     let pushed = app.objects()[0].world_path().area().abs();
     assert!(pushed < pulled - 50.0, "{pulled} → {pushed}");
     assert!((app.objects()[0].world_bounds().y1 - 200.0).abs() < 0.01, "nothing pushed out past the edge");
+}
+
+#[test]
+fn smear_pulls_the_outline_out_and_pushes_it_in() {
+    let mut app = E2e::new();
+    app.draw_rect(100.0, 100.0, 300.0, 200.0);
+    let area = app.objects()[0].world_path().area().abs();
+    app.flyout_tool("Shape", "Smear");
+    // From the top edge up: the edge under the press follows the pointer out.
+    app.drag_doc((200.0, 100.0), (200.0, 60.0));
+    let b = app.objects()[0].world_bounds();
+    assert!((b.y0 - 60.0).abs() < 1.0, "pulled out to the pointer: {b:?}");
+    assert!((b.y1 - 200.0).abs() < 0.01 && (b.x0 - 100.0).abs() < 0.01 && (b.x1 - 300.0).abs() < 0.01, "{b:?}");
+    let pulled = app.objects()[0].world_path().area().abs();
+    assert!(pulled > area + 100.0, "{area} → {pulled}");
+
+    app.shortcut(Modifiers::COMMAND, Key::Z);
+    assert!(matches!(app.objects()[0].shape, Shape::Rectangle { .. }), "one undo step");
+
+    // From the bottom edge in: an indent.
+    app.drag_doc((200.0, 200.0), (200.0, 170.0));
+    assert!(app.objects()[0].world_path().area().abs() < area - 100.0);
+    assert!((app.objects()[0].world_bounds().y1 - 200.0).abs() < 0.01);
+}
+
+#[test]
+fn smudge_carries_the_outline_along_the_stroke() {
+    let mut app = E2e::new();
+    app.draw_rect(100.0, 100.0, 300.0, 200.0);
+    let area = app.objects()[0].world_path().area().abs();
+    app.flyout_tool("Shape", "Smudge");
+    assert!(!app.exists("Spike size"), "only the brush size on the property bar");
+    // From inside, out across the top edge.
+    app.stroke_doc(&[(200.0, 115.0), (200.0, 100.0), (200.0, 85.0), (200.0, 70.0)]);
+    let b = app.objects()[0].world_bounds();
+    assert!(b.y0 < 90.0, "the edge went out with the brush: {b:?}");
+    assert!((b.y1 - 200.0).abs() < 0.01, "{b:?}");
+    assert!(app.objects()[0].world_path().area().abs() > area + 50.0);
 }

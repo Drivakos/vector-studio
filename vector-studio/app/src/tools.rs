@@ -116,6 +116,11 @@ enum Drag {
     Roughen { originals: Vec<vs_core::Object>, stroke: Vec<Point> },
     /// Twirl, Attract and Repel: a dab every frame while the button is down.
     Warp,
+    /// Smudge: where the last dab was; each dab carries the outline on to the pointer.
+    Smudge { last: Point },
+    /// Smear: the objects as they were at the press, and where it was. Each move pulls
+    /// the outline that was under the press out to the pointer again.
+    Smear { originals: Vec<vs_core::Object>, press: Point },
     /// Text tool: dragging out a paragraph text frame (a click makes artistic text).
     TextFrame { start: Point },
     /// 2-Point Line tool: dragging the line.
@@ -736,7 +741,7 @@ pub fn finish_pen(state: &mut AppState) {
 }
 
 fn is_brush(tool: Tool) -> bool {
-    matches!(tool, Tool::Smooth | Tool::RoughenBrush | Tool::Twirl | Tool::AttractRepel)
+    matches!(tool, Tool::Smooth | Tool::RoughenBrush | Tool::Twirl | Tool::AttractRepel | Tool::Smudge | Tool::SmearBrush)
 }
 
 /// The brushes work on the selection; with nothing they can reshape selected, a
@@ -759,6 +764,11 @@ fn press_brush(state: &mut AppState, view: &View, p: Point) {
     } else if matches!(state.tool, Tool::Twirl | Tool::AttractRepel) {
         warp_at(state, p);
         state.tools.drag = Some(Drag::Warp);
+    } else if state.tool == Tool::Smudge {
+        state.tools.drag = Some(Drag::Smudge { last: p });
+    } else if state.tool == Tool::SmearBrush {
+        let originals: Vec<vs_core::Object> = state.selected_objects().filter(|o| o.can_brush()).cloned().collect();
+        state.tools.drag = Some(Drag::Smear { originals, press: p });
     } else {
         smooth_at(state, p);
         state.tools.drag = Some(Drag::Brush { last: p });
@@ -789,14 +799,26 @@ fn warp_at(state: &mut AppState, p: Point) {
     state.doc.warp_at(&ids, p, s.brush_size / 2.0, how);
 }
 
-/// Put `originals` back, then roughen them along `stroke`.
-fn roughen(state: &mut AppState, originals: &[vs_core::Object], stroke: &[Point]) {
+/// Move the outline under the brush at `at` by `by`.
+fn push_at(state: &mut AppState, at: Point, by: Vec2) {
+    let ids = state.selection.clone();
+    let radius = state.tools.settings.brush_size / 2.0;
+    state.doc.warp_at(&ids, at, radius, vs_core::brush::Warp::Push(by));
+}
+
+/// Put the brushed objects back as they were at the press.
+fn restore(state: &mut AppState, originals: &[vs_core::Object]) {
     let page = state.doc.active_page_mut();
     for original in originals {
         if let Some(obj) = page.object_mut(original.id) {
             *obj = original.clone();
         }
     }
+}
+
+/// Put `originals` back, then roughen them along `stroke`.
+fn roughen(state: &mut AppState, originals: &[vs_core::Object], stroke: &[Point]) {
+    restore(state, originals);
     let ids: Vec<ObjectId> = originals.iter().map(|o| o.id).collect();
     let s = &state.tools.settings;
     state.doc.roughen_along(&ids, stroke, s.brush_size / 2.0, s.spike_size);
@@ -930,6 +952,26 @@ fn drag_to(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers) {
         Drag::Warp => {
             warp_at(state, p);
             Drag::Warp
+        }
+        Drag::Smudge { last } => {
+            // A dab every eighth of the brush, each carrying the outline one step on.
+            let step = state.tools.settings.brush_size / 8.0;
+            let distance = (p - last).hypot();
+            if distance < step {
+                Drag::Smudge { last }
+            } else {
+                let n = (distance / step).floor() as usize;
+                for i in 0..n {
+                    let (from, to) = (last.lerp(p, i as f64 / n as f64), last.lerp(p, (i + 1) as f64 / n as f64));
+                    push_at(state, from, to - from);
+                }
+                Drag::Smudge { last: p }
+            }
+        }
+        Drag::Smear { originals, press } => {
+            restore(state, &originals);
+            push_at(state, press, p - press);
+            Drag::Smear { originals, press }
         }
         Drag::Roughen { originals, mut stroke } => {
             if stroke.last().is_none_or(|l| view.screen_dist(*l, p) > 1.5) {
@@ -1322,7 +1364,7 @@ fn release(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers) {
                 }
             }
         }
-        Drag::Brush { .. } | Drag::Warp => {
+        Drag::Brush { .. } | Drag::Warp | Drag::Smudge { .. } | Drag::Smear { .. } => {
             let ids = state.selection.clone();
             state.doc.refit_brushed(&ids, state.tools.settings.brush_size / 2.0);
         }
@@ -1839,6 +1881,8 @@ pub fn hint(state: &AppState) -> String {
         Tool::ThreePointEllipse => "Drag one axis, then click to set the other".into(),
         Tool::Smooth => "Select a curve or shape, then drag along its outline to smooth it · brush size and smoothness are on the property bar".into(),
         Tool::RoughenBrush => "Select a curve or shape, then drag along its outline to add spikes · brush and spike size are on the property bar".into(),
+        Tool::Smudge => "Select a curve or shape, then drag across its outline to carry it along · brush size is on the property bar".into(),
+        Tool::SmearBrush => "Select a curve or shape, then drag from its outline to pull it out or push it in · brush size is on the property bar".into(),
         Tool::Twirl => "Select a curve or shape, then hold the brush over its outline to swirl it · size, speed and direction are on the property bar".into(),
         Tool::AttractRepel if state.tools.settings.repel => "Select a curve or shape, then hold the brush near its outline to push it away · size and speed are on the property bar".into(),
         Tool::AttractRepel => "Select a curve or shape, then hold the brush near its outline to pull it in · size and speed are on the property bar".into(),

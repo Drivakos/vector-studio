@@ -200,7 +200,7 @@ pub fn property_bar_ui(ui: &mut egui::Ui, state: &mut AppState, out: &mut Vec<Co
                 theme::vsep(ui);
                 ui.label(egui::RichText::new(crate::tools::hint(state)).color(theme::TEXT_DIM));
             }
-            Tool::Smooth | Tool::RoughenBrush | Tool::Twirl | Tool::AttractRepel => {
+            Tool::Smooth | Tool::RoughenBrush | Tool::Twirl | Tool::AttractRepel | Tool::Smudge | Tool::SmearBrush => {
                 let unit = state.doc.display_unit;
                 let settings = &mut state.tools.settings;
                 let mut size = unit.from_points(settings.brush_size);
@@ -221,7 +221,7 @@ pub fn property_bar_ui(ui: &mut egui::Ui, state: &mut AppState, out: &mut Vec<Co
                     } else if let Some(i) = segmented(ui, "attract_repel", &[(ICON_COMPRESS, "Attract", !s.repel), (ICON_EXPAND, "Repel", s.repel)]) {
                         s.repel = i == 1;
                     }
-                } else {
+                } else if state.tool == Tool::RoughenBrush {
                     let mut spike = unit.from_points(state.tools.settings.spike_size);
                     if number_row(ui, Some(ICON_GRAIN), "Spike size", &mut spike, unit.suffix(), unit.from_points(0.25)..=unit.from_points(100.0), unit.step(), unit.decimals()) {
                         state.tools.settings.spike_size = unit.to_points(spike).max(0.25);

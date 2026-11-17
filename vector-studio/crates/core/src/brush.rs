@@ -2,9 +2,9 @@
 //!
 //! Each cuts the segments under the brush into short straight pieces and moves the points
 //! between them; the rest of the curve keeps its own segments. Smooth eases each point
-//! towards its neighbours, dab by dab; Attract, Repel and Twirl ([`warp`]) pull points in,
-//! push them out or turn them round the centre, most at the centre and not at all at the
-//! edge; Roughen pushes the points out and in by turns, as spikes, along a whole stroke at
+//! towards its neighbours, dab by dab; Attract, Repel, Twirl, Smudge and Smear ([`warp`])
+//! pull points in, push them out, turn them round the centre or carry them along with the
+//! pointer, most at the centre and not at all at the edge; Roughen pushes the points out and in by turns, as spikes, along a whole stroke at
 //! once. [`refit`] turns the short pieces back into a few Bézier curves once a stroke is
 //! done.
 
@@ -164,6 +164,8 @@ pub enum Warp {
     /// Turn points round the centre by this many radians; positive turns clockwise on
     /// the page (y down).
     Twirl(f64),
+    /// Move points by this much (Smudge and Smear: along with the pointer).
+    Push(Vec2),
 }
 
 impl Warp {
@@ -181,6 +183,7 @@ impl Warp {
             Warp::Repel(k) if d > 1e-9 => p + v / d * (radius - d) * (k * weight).clamp(0.0, 1.0),
             Warp::Repel(_) => p,
             Warp::Twirl(angle) => at + (kurbo::Affine::rotate(angle * weight) * v.to_point()).to_vec2(),
+            Warp::Push(by) => p + by * weight,
         }
     }
 }
@@ -545,6 +548,17 @@ mod tests {
         assert!((turned.distance(Point::new(50.0, 0.0)) - 5.0).abs() < 1e-9, "{turned:?}");
         let counter = warp(&line(), Point::new(50.0, 0.0), 20.0, Warp::Twirl(-0.3));
         assert!(ys(&counter).iter().any(|p| p.x > 50.0 && p.y < -0.1), "negative turns the other way");
+    }
+
+    #[test]
+    fn push_carries_the_outline_with_the_brush() {
+        let pulled = warp(&line(), Point::new(50.0, 0.0), 20.0, Warp::Push(Vec2::new(0.0, -30.0)));
+        let points = ys(&pulled);
+        let top = points.iter().map(|p| p.y).fold(f64::MAX, f64::min);
+        assert!((top + 30.0).abs() < 1.0, "the point under the centre goes all the way: {top}");
+        assert!(points.iter().all(|p| p.y.abs() < 1e-9 || (p.x - 50.0).abs() < 20.0), "only under the brush: {points:?}");
+        let spacing = smooth_spacing(20.0);
+        assert!(pulled.segments().all(|s| (s.end() - s.start()).hypot() <= spacing * 2.5 || s.start().y == 0.0), "stretched pieces are cut again");
     }
 
     #[test]
