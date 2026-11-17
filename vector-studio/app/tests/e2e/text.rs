@@ -507,3 +507,32 @@ fn drop_cap_enlarges_the_first_letter_beside_the_first_lines() {
     app.click("OK (Drop Cap)");
     assert_eq!(text(&app, 0).drop_cap, 0, "off again");
 }
+
+#[test]
+fn glyphs_window_inserts_characters_as_new_text_or_at_the_caret() {
+    let mut app = E2e::new();
+    app.menu(&["Text", "Glyphs"]);
+    assert!(app.exists("Font (Glyphs)"));
+    assert!(!app.is_enabled("Insert (Glyphs)"), "nothing picked yet");
+    app.click("U+0041 A");
+    assert!(app.is_selected("U+0041 A"));
+    app.click("Insert (Glyphs)");
+
+    // Nothing being edited: new text in the middle of the page.
+    assert_eq!(app.objects().len(), 1);
+    assert_eq!(text(&app, 0).content, "A");
+    assert_eq!(app.selection(), vec![app.ids()[0]]);
+    let page = app.doc().active_page().bounds();
+    let b = app.bounds(0);
+    assert!((b.center().x - page.center().x).abs() < 0.5 && (b.center().y - page.center().y).abs() < 0.5, "{b:?}");
+
+    // While typing: at the caret; a double-click inserts too.
+    app.key(Key::F8);
+    app.click_doc(100.0, 200.0);
+    app.type_text("xy");
+    app.key(Key::ArrowLeft);
+    app.double_click("U+0042 B");
+    app.type_text("z");
+    assert_eq!(text(&app, 1).content, "xBzy");
+    assert!(app.state().glyphs.is_some(), "the window stays open");
+}

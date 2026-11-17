@@ -68,6 +68,41 @@ pub fn shrink(pixels: &Pixels, longest: u32) -> (Pixels, f64) {
     (Pixels { width: w, height: h, data: small.into_raw() }, factor)
 }
 
+/// A `cell` × `cell` pixel picture of `ch` in the font for `family` and `style`: white
+/// on transparent (to tint), centred across, its baseline three quarters down.
+pub fn glyph_image(family: &str, style: &str, ch: char, cell: u32) -> Pixels {
+    use resvg::tiny_skia;
+    use vs_core::kurbo::{PathEl, Shape as _};
+    let mut text = vs_core::Text::new(ch.to_string());
+    text.family = family.to_owned();
+    text.style = style.to_owned();
+    text.size = f64::from(cell) * 0.7;
+    let path = text.to_path();
+    let bounds = path.bounding_box();
+    let mut out = Pixels::filled(cell, cell, [0; 4]);
+    let mut pb = tiny_skia::PathBuilder::new();
+    let to = |p: vs_core::kurbo::Point| ((p.x - bounds.center().x + f64::from(cell) / 2.0) as f32, (p.y + f64::from(cell) * 0.75) as f32);
+    for el in path.elements() {
+        match *el {
+            PathEl::MoveTo(p) => pb.move_to(to(p).0, to(p).1),
+            PathEl::LineTo(p) => pb.line_to(to(p).0, to(p).1),
+            PathEl::QuadTo(a, p) => pb.quad_to(to(a).0, to(a).1, to(p).0, to(p).1),
+            PathEl::CurveTo(a, b, p) => pb.cubic_to(to(a).0, to(a).1, to(b).0, to(b).1, to(p).0, to(p).1),
+            PathEl::ClosePath => pb.close(),
+        }
+    }
+    let (Some(shape), Some(mut pixmap)) = (pb.finish(), tiny_skia::Pixmap::new(cell, cell)) else { return out };
+    let mut paint = tiny_skia::Paint::default();
+    paint.set_color_rgba8(255, 255, 255, 255);
+    paint.anti_alias = true;
+    pixmap.fill_path(&shape, &paint, tiny_skia::FillRule::Winding, tiny_skia::Transform::identity(), None);
+    for (i, p) in pixmap.pixels().iter().enumerate() {
+        let c = p.demultiply();
+        out.data[i * 4..i * 4 + 4].copy_from_slice(&[c.red(), c.green(), c.blue(), c.alpha()]);
+    }
+    out
+}
+
 /// Area of `objects` that drawing them covers: their bounds with room for half the widest
 /// outline.
 pub fn drawn_bounds(objects: &[&Object]) -> Option<Rect> {
@@ -136,6 +171,18 @@ mod tests {
         assert_eq!(pixels.pixel(36, 36), [255, 0, 0, 255]);
         let white = objects_to_bitmap(&objects, 72.0, Some(Rgba::WHITE)).unwrap();
         assert_eq!(bitmap_pixels(&white).unwrap().pixel(0, 0)[3], 255);
+    }
+
+    #[test]
+    fn glyph_images_draw_the_letter_in_the_cell() {
+        let family = vs_core::text::default_family();
+        let style = vs_core::text::default_style();
+        let l = glyph_image(family, style, 'l', 32);
+        assert_eq!((l.width, l.height), (32, 32));
+        // A tall thin stroke down the middle, nothing at the sides.
+        assert!((14..18).any(|x| l.pixel(x, 16)[3] > 200), "the stroke in the middle");
+        assert!(l.pixel(2, 16)[3] == 0 && l.pixel(29, 16)[3] == 0 && l.pixel(16, 2)[3] == 0, "nothing at the sides or top");
+        assert!(glyph_image(family, style, '_', 32).pixel(16, 8)[3] == 0, "an underscore is low");
     }
 
     #[test]

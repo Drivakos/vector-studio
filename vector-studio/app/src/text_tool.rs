@@ -155,6 +155,11 @@ fn byte_at(content: &str, caret: usize) -> usize {
     content.char_indices().nth(caret).map_or(content.len(), |(b, _)| b)
 }
 
+/// Type `s` at the caret of the text being edited.
+pub fn insert_text(state: &mut AppState, s: &str) {
+    insert(state, s);
+}
+
 fn insert(state: &mut AppState, s: &str) {
     let Some(edit) = state.tools.text else { return };
     let s: String = s.chars().filter(|c| *c == '\n' || !c.is_control()).collect();

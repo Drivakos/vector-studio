@@ -822,6 +822,24 @@ pub fn styles(family: &str) -> Vec<String> {
     out
 }
 
+/// The visible characters the font for `family` and `style` has glyphs for, by code
+/// point (no controls or spaces).
+pub fn characters(family: &str, style: &str) -> Vec<char> {
+    let face = library().resolve(family, style);
+    let data = face.data();
+    let Ok(font) = FontRef::from_index(&data, face.index) else { return Vec::new() };
+    let mut out: Vec<char> = font
+        .charmap()
+        .mappings()
+        .filter(|(_, gid)| *gid != GlyphId::NOTDEF)
+        .filter_map(|(code, _)| char::from_u32(code))
+        .filter(|c| !c.is_control() && !c.is_whitespace())
+        .collect();
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -977,6 +995,9 @@ mod tests {
         let data = face.data();
         let font = FontRef::from_index(&data, face.index).unwrap();
         assert!(font.charmap().map('•').is_some(), "the default font has a bullet");
+        let chars = characters(default_family(), default_style());
+        assert!(chars.contains(&'A') && chars.contains(&'•') && !chars.contains(&' '), "{} characters", chars.len());
+        assert!(chars.windows(2).all(|w| w[0] < w[1]), "by code point");
         let plain = paragraph("alpha beta gamma\n\ndelta", 400.0, 400.0);
         let mut t = plain.clone();
         t.list = Some(ListStyle::Bullet);

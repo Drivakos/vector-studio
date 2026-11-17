@@ -14,6 +14,7 @@ pub mod export_for;
 pub mod files;
 pub mod fill_ui;
 pub mod free_transform;
+pub mod glyphs;
 pub mod find_ui;
 pub mod guides;
 pub mod insert_codes;

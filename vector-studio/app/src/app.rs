@@ -149,6 +149,7 @@ pub struct AppState {
     /// The bitmap effect whose settings window is open.
     pub effect: Option<crate::bitmap_menu::EffectDialog>,
     pub insert_qr: Option<crate::insert_codes::QrDialog>,
+    pub glyphs: Option<crate::glyphs::GlyphsDialog>,
     pub insert_barcode: Option<crate::insert_codes::BarcodeDialog>,
     pub save_template: Option<crate::templates::SaveTemplateDialog>,
     pub new_from_template: Option<crate::templates::NewFromTemplateDialog>,
@@ -287,6 +288,7 @@ impl AppState {
             resample: None,
             effect: None,
             insert_qr: None,
+            glyphs: None,
             insert_barcode: None,
             save_template: None,
             new_from_template: None,
@@ -819,6 +821,10 @@ impl VectorStudioApp {
                 crate::text_tool::open_edit_text(s);
                 Ok(())
             }
+            Command::Glyphs => {
+                crate::glyphs::open(s);
+                Ok(())
+            }
             Command::FitTextToPath => {
                 crate::text_tool::finish(s);
                 if let Some(text) = s.doc.fit_text_to_path(&s.selection) {
@@ -1349,6 +1355,7 @@ impl eframe::App for VectorStudioApp {
         crate::bitmap_menu::resample_window(&ctx, &mut self.state);
         crate::bitmap_menu::effect_window(&ctx, &mut self.state);
         crate::insert_codes::qr_window(&ctx, &mut self.state);
+        crate::glyphs::window(&ctx, &mut self.state);
         crate::insert_codes::barcode_window(&ctx, &mut self.state);
         crate::templates::new_window(&ctx, &mut self.state);
         crate::edit_tools::copy_properties_window(&ctx, &mut self.state);
