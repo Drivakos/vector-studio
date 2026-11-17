@@ -54,17 +54,23 @@ pub struct ToolSettings {
     /// Smart Fill: the fill colour of new areas, and whether they get the default outline.
     pub smart_fill: vs_core::Rgba,
     pub smart_fill_outline: bool,
-    /// Smooth and Roughen: brush diameter in points.
+    /// Shape-edit brushes: brush diameter in points.
     pub brush_size: f64,
     /// Smooth: how far each dab eases the curve, 0 to 100.
     pub smoothness: f64,
     /// Roughen: spike height in points.
     pub spike_size: f64,
+    /// Twirl, Attract and Repel: how fast holding the brush reshapes, 1 to 100.
+    pub brush_speed: f64,
+    /// Attract and Repel: whether the brush pushes away instead of pulling in.
+    pub repel: bool,
+    /// Twirl: whether it turns clockwise instead of counterclockwise.
+    pub twirl_clockwise: bool,
 }
 
 impl Default for ToolSettings {
     fn default() -> Self {
-        Self { polygon_sides: 5, star_points: 5, star_inner_ratio: 0.5, text: vs_core::Text::new(""), eraser_size: DEFAULT_ERASER_SIZE, spiral_turns: 4, graph_columns: 4, graph_rows: 3, common_shape: Default::default(), smart_fill: vs_core::Rgba::rgb(0xC0, 0xC0, 0xC0), smart_fill_outline: false, brush_size: 20.0, smoothness: 50.0, spike_size: 3.0 }
+        Self { polygon_sides: 5, star_points: 5, star_inner_ratio: 0.5, text: vs_core::Text::new(""), eraser_size: DEFAULT_ERASER_SIZE, spiral_turns: 4, graph_columns: 4, graph_rows: 3, common_shape: Default::default(), smart_fill: vs_core::Rgba::rgb(0xC0, 0xC0, 0xC0), smart_fill_outline: false, brush_size: 20.0, smoothness: 50.0, spike_size: 3.0, brush_speed: 50.0, repel: false, twirl_clockwise: false }
     }
 }
 
@@ -108,6 +114,8 @@ enum Drag {
     /// Roughen: the objects as they were at the press, and the stroke so far. Each move
     /// roughens the originals along the whole stroke again, so spikes alternate evenly.
     Roughen { originals: Vec<vs_core::Object>, stroke: Vec<Point> },
+    /// Twirl, Attract and Repel: a dab every frame while the button is down.
+    Warp,
     /// Text tool: dragging out a paragraph text frame (a click makes artistic text).
     TextFrame { start: Point },
     /// 2-Point Line tool: dragging the line.
@@ -154,6 +162,8 @@ pub struct ToolState {
     guide_lines: Vec<vs_core::align_guides::GuideLine>,
     /// Time and place of the last press, to spot double-clicks at press time.
     last_press: Option<(f64, Pos2)>,
+    /// Seconds since the last frame, for brushes that work while held.
+    frame_dt: f64,
 }
 
 impl ToolState {
@@ -237,9 +247,14 @@ pub fn cursor(tool: Tool) -> egui::CursorIcon {
 /// Pointer input for the active tool. `response` is the canvas widget's response.
 pub fn tool_input(ui: &egui::Ui, state: &mut AppState, response: &egui::Response, canvas: Rect) {
     let view = View::new(state, canvas);
-    let (pressed, released, pos, mods, time) = ui.input(|i| {
-        (i.pointer.primary_pressed(), i.pointer.primary_released(), i.pointer.latest_pos(), i.modifiers, i.time)
+    let (pressed, released, pos, mods, time, dt) = ui.input(|i| {
+        (i.pointer.primary_pressed(), i.pointer.primary_released(), i.pointer.latest_pos(), i.modifiers, i.time, i.stable_dt)
     });
+    state.tools.frame_dt = f64::from(dt).clamp(0.0, 0.1);
+    if matches!(state.tools.drag, Some(Drag::Warp)) {
+        // Holding the brush still keeps working.
+        ui.ctx().request_repaint();
+    }
     state.tools.guide_lines.clear();
     let Some(pos) = pos else {
         state.tools.pointer = None;
@@ -407,7 +422,7 @@ fn press(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers, dou
             }
         }
         Tool::Eraser => state.tools.drag = Some(Drag::Erase { points: vec![p] }),
-        Tool::Smooth | Tool::RoughenBrush => press_brush(state, view, p),
+        t if is_brush(t) => press_brush(state, view, p),
         Tool::SmartFill => {
             let s = &state.tools.settings;
             let mut style = vs_core::Style::filled(s.smart_fill);
@@ -721,10 +736,10 @@ pub fn finish_pen(state: &mut AppState) {
 }
 
 fn is_brush(tool: Tool) -> bool {
-    matches!(tool, Tool::Smooth | Tool::RoughenBrush)
+    matches!(tool, Tool::Smooth | Tool::RoughenBrush | Tool::Twirl | Tool::AttractRepel)
 }
 
-/// Smooth and Roughen work on the selection; with nothing they can reshape selected, a
+/// The brushes work on the selection; with nothing they can reshape selected, a
 /// press selects the object under the pointer first.
 fn press_brush(state: &mut AppState, view: &View, p: Point) {
     let page = state.doc.active_page();
@@ -741,6 +756,9 @@ fn press_brush(state: &mut AppState, view: &View, p: Point) {
         let stroke = vec![p];
         roughen(state, &originals, &stroke);
         state.tools.drag = Some(Drag::Roughen { originals, stroke });
+    } else if matches!(state.tool, Tool::Twirl | Tool::AttractRepel) {
+        warp_at(state, p);
+        state.tools.drag = Some(Drag::Warp);
     } else {
         smooth_at(state, p);
         state.tools.drag = Some(Drag::Brush { last: p });
@@ -751,6 +769,24 @@ fn smooth_at(state: &mut AppState, p: Point) {
     let ids = state.selection.clone();
     let s = &state.tools.settings;
     state.doc.smooth_at(&ids, p, s.brush_size / 2.0, s.smoothness / 100.0);
+}
+
+/// At full speed, at the brush's centre: Attract and Repel move points this fraction of
+/// the way per second, Twirl turns them this many radians per second (a full turn).
+const ATTRACT_RATE: f64 = 4.0;
+const TWIRL_RATE: f64 = std::f64::consts::TAU;
+
+/// One frame's worth of Twirl, Attract or Repel at `p`.
+fn warp_at(state: &mut AppState, p: Point) {
+    let ids = state.selection.clone();
+    let s = &state.tools.settings;
+    let amount = s.brush_speed / 100.0 * state.tools.frame_dt;
+    let how = match state.tool {
+        Tool::Twirl => vs_core::brush::Warp::Twirl(amount * TWIRL_RATE * if s.twirl_clockwise { 1.0 } else { -1.0 }),
+        _ if s.repel => vs_core::brush::Warp::Repel(amount * ATTRACT_RATE),
+        _ => vs_core::brush::Warp::Attract(amount * ATTRACT_RATE),
+    };
+    state.doc.warp_at(&ids, p, s.brush_size / 2.0, how);
 }
 
 /// Put `originals` back, then roughen them along `stroke`.
@@ -890,6 +926,10 @@ fn drag_to(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers) {
                 }
                 Drag::Brush { last: p }
             }
+        }
+        Drag::Warp => {
+            warp_at(state, p);
+            Drag::Warp
         }
         Drag::Roughen { originals, mut stroke } => {
             if stroke.last().is_none_or(|l| view.screen_dist(*l, p) > 1.5) {
@@ -1282,7 +1322,7 @@ fn release(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers) {
                 }
             }
         }
-        Drag::Brush { .. } => {
+        Drag::Brush { .. } | Drag::Warp => {
             let ids = state.selection.clone();
             state.doc.refit_brushed(&ids, state.tools.settings.brush_size / 2.0);
         }
@@ -1799,6 +1839,9 @@ pub fn hint(state: &AppState) -> String {
         Tool::ThreePointEllipse => "Drag one axis, then click to set the other".into(),
         Tool::Smooth => "Select a curve or shape, then drag along its outline to smooth it · brush size and smoothness are on the property bar".into(),
         Tool::RoughenBrush => "Select a curve or shape, then drag along its outline to add spikes · brush and spike size are on the property bar".into(),
+        Tool::Twirl => "Select a curve or shape, then hold the brush over its outline to swirl it · size, speed and direction are on the property bar".into(),
+        Tool::AttractRepel if state.tools.settings.repel => "Select a curve or shape, then hold the brush near its outline to push it away · size and speed are on the property bar".into(),
+        Tool::AttractRepel => "Select a curve or shape, then hold the brush near its outline to pull it in · size and speed are on the property bar".into(),
         Tool::ParallelDimension => "Drag between the two points to measure, then click where the dimension line goes".into(),
         Tool::HorizontalVerticalDimension => "Drag between the two points, then click above or below for the horizontal distance, beside for the vertical".into(),
         Tool::AngularDimension => "Drag from the vertex along the first arm, click the second arm, then click where the arc goes".into(),

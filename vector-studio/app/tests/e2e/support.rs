@@ -376,6 +376,19 @@ impl E2e {
         self.settle();
     }
 
+    /// Press at document point (`x`, `y`), keep the button down for `seconds` of frames
+    /// without moving, then release.
+    pub fn hold_doc(&mut self, x: f64, y: f64, seconds: f32) {
+        let p = self.at(x, y);
+        self.pointer(p);
+        self.button(p, PointerButton::Primary, true);
+        for _ in 0..(seconds * 60.0) as usize {
+            self.h.step();
+        }
+        self.button(p, PointerButton::Primary, false);
+        self.settle();
+    }
+
     /// Let double-click timing pass and the app settle.
     fn settle(&mut self) {
         // Moving away and waiting keeps the next click from counting as a double click.

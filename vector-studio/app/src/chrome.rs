@@ -200,7 +200,7 @@ pub fn property_bar_ui(ui: &mut egui::Ui, state: &mut AppState, out: &mut Vec<Co
                 theme::vsep(ui);
                 ui.label(egui::RichText::new(crate::tools::hint(state)).color(theme::TEXT_DIM));
             }
-            Tool::Smooth | Tool::RoughenBrush => {
+            Tool::Smooth | Tool::RoughenBrush | Tool::Twirl | Tool::AttractRepel => {
                 let unit = state.doc.display_unit;
                 let settings = &mut state.tools.settings;
                 let mut size = unit.from_points(settings.brush_size);
@@ -209,6 +209,18 @@ pub fn property_bar_ui(ui: &mut egui::Ui, state: &mut AppState, out: &mut Vec<Co
                 }
                 if state.tool == Tool::Smooth {
                     number_row(ui, Some(ICON_BLUR_ON), "Smoothness", &mut state.tools.settings.smoothness, "%", 1.0..=100.0, 1.0, 0);
+                } else if matches!(state.tool, Tool::Twirl | Tool::AttractRepel) {
+                    number_row(ui, Some(ICON_SPEED), "Speed", &mut state.tools.settings.brush_speed, "%", 1.0..=100.0, 1.0, 0);
+                    theme::vsep(ui);
+                    let s = &mut state.tools.settings;
+                    if state.tool == Tool::Twirl {
+                        let cw = s.twirl_clockwise;
+                        if let Some(i) = segmented(ui, "twirl_direction", &[(ICON_ROTATE_LEFT, "Counterclockwise", !cw), (ICON_ROTATE_RIGHT, "Clockwise", cw)]) {
+                            s.twirl_clockwise = i == 1;
+                        }
+                    } else if let Some(i) = segmented(ui, "attract_repel", &[(ICON_COMPRESS, "Attract", !s.repel), (ICON_EXPAND, "Repel", s.repel)]) {
+                        s.repel = i == 1;
+                    }
                 } else {
                     let mut spike = unit.from_points(state.tools.settings.spike_size);
                     if number_row(ui, Some(ICON_GRAIN), "Spike size", &mut spike, unit.suffix(), unit.from_points(0.25)..=unit.from_points(100.0), unit.step(), unit.decimals()) {

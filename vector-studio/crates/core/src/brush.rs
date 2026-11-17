@@ -1,10 +1,12 @@
-//! Smooth and Roughen brushes: dabs that reshape the parts of a curve under a round brush.
+//! Shape-edit brushes: dabs that reshape the parts of a curve under a round brush.
 //!
-//! Both cut the segments under the brush into short straight pieces and move the points
+//! Each cuts the segments under the brush into short straight pieces and moves the points
 //! between them; the rest of the curve keeps its own segments. Smooth eases each point
-//! towards its neighbours, dab by dab; Roughen pushes the points out and in by turns, as
-//! spikes, along a whole stroke at once. [`refit`] turns the short pieces back into a few
-//! Bézier curves once a smoothing stroke is done.
+//! towards its neighbours, dab by dab; Attract, Repel and Twirl ([`warp`]) pull points in,
+//! push them out or turn them round the centre, most at the centre and not at all at the
+//! edge; Roughen pushes the points out and in by turns, as spikes, along a whole stroke at
+//! once. [`refit`] turns the short pieces back into a few Bézier curves once a stroke is
+//! done.
 
 use kurbo::{BezPath, ParamCurve, ParamCurveArclen, ParamCurveNearest, PathEl, PathSeg, Point, Vec2};
 
@@ -106,26 +108,11 @@ pub fn smooth(path: &BezPath, at: Point, radius: f64, strength: f64) -> BezPath 
     let spacing = smooth_spacing(radius);
     let mut runs = runs(path);
     for run in &mut runs {
-        // Cut the part of each touched segment under the brush into pieces; the rest stays
-        // one segment, for later dabs to cut where they reach.
-        let mut segs = Vec::new();
-        for seg in &run.segs {
-            if distance(seg, at) < radius && !is_piece(seg, spacing) {
-                let ranges = inside(seg, |p| (p - at).hypot() < radius);
-                segs.extend(cut(seg, &ranges, spacing).into_iter().map(|(s, _)| s));
-            } else {
-                segs.push(*seg);
-            }
-        }
+        let mut segs = cut_under(&run.segs, at, radius, spacing);
         let n = segs.len();
         let old: Vec<Point> = segs.iter().map(|s| s.start()).collect();
         let mut points = old.clone();
-        let movable: Vec<bool> = (0..n)
-            .map(|i| {
-                let before = if i == 0 { run.closed.then(|| n - 1) } else { Some(i - 1) };
-                before.is_some_and(|b| is_piece(&segs[b], spacing) && is_piece(&segs[i], spacing))
-            })
-            .collect();
+        let movable = movable(&segs, run.closed, spacing);
         for i in (0..n).filter(|i| movable[*i]) {
             let d = (old[i] - at).hypot();
             if d < radius {
@@ -136,6 +123,84 @@ pub fn smooth(path: &BezPath, at: Point, radius: f64, strength: f64) -> BezPath 
         }
         move_points(&mut segs, &points, &movable, run.closed);
         run.segs = segs;
+    }
+    to_path(&runs)
+}
+
+/// `segs` with the part of each segment under the brush cut into pieces; the rest stays
+/// one segment, for later dabs to cut where they reach.
+fn cut_under(segs: &[PathSeg], at: Point, radius: f64, spacing: f64) -> Vec<PathSeg> {
+    let mut out = Vec::new();
+    for seg in segs {
+        if distance(seg, at) < radius && !is_piece(seg, spacing) {
+            let ranges = inside(seg, |p| (p - at).hypot() < radius);
+            out.extend(cut(seg, &ranges, spacing).into_iter().map(|(s, _)| s));
+        } else {
+            out.push(*seg);
+        }
+    }
+    out
+}
+
+/// For each segment's start point, whether a dab may move it: it lies between two pieces.
+fn movable(segs: &[PathSeg], closed: bool, spacing: f64) -> Vec<bool> {
+    let n = segs.len();
+    (0..n)
+        .map(|i| {
+            let before = if i == 0 { closed.then(|| n - 1) } else { Some(i - 1) };
+            before.is_some_and(|b| is_piece(&segs[b], spacing) && is_piece(&segs[i], spacing))
+        })
+        .collect()
+}
+
+/// How an Attract, Repel or Twirl dab moves the points under the brush. Each moves a
+/// point most at the brush's centre, less towards its edge, and not at all past it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Warp {
+    /// Pull points this fraction of the way to the centre (0 to 1).
+    Attract(f64),
+    /// Push points this fraction of the way out to the brush's edge (0 to 1).
+    Repel(f64),
+    /// Turn points round the centre by this many radians; positive turns clockwise on
+    /// the page (y down).
+    Twirl(f64),
+}
+
+impl Warp {
+    /// Where `p` goes in a dab at `at`, `radius` points round.
+    pub fn apply(self, p: Point, at: Point, radius: f64) -> Point {
+        let v = p - at;
+        let d = v.hypot();
+        if d >= radius {
+            return p;
+        }
+        // 1 at the centre down to 0 at the edge, with no kink at either.
+        let weight = (1.0 - (d / radius).powi(2)).powi(2);
+        match self {
+            Warp::Attract(k) => p - v * (k * weight).clamp(0.0, 1.0),
+            Warp::Repel(k) if d > 1e-9 => p + v / d * (radius - d) * (k * weight).clamp(0.0, 1.0),
+            Warp::Repel(_) => p,
+            Warp::Twirl(angle) => at + (kurbo::Affine::rotate(angle * weight) * v.to_point()).to_vec2(),
+        }
+    }
+}
+
+/// `path` (in page space) after one Attract, Repel or Twirl dab at `at`, `radius` points
+/// round. Pieces the dab stretches are cut again, so later dabs keep finding pieces.
+pub fn warp(path: &BezPath, at: Point, radius: f64, warp: Warp) -> BezPath {
+    let spacing = smooth_spacing(radius);
+    let mut runs = runs(path);
+    for run in &mut runs {
+        let mut segs = cut_under(&run.segs, at, radius, spacing);
+        let was_piece: Vec<bool> = segs.iter().map(|s| is_piece(s, spacing)).collect();
+        let movable = movable(&segs, run.closed, spacing);
+        let points: Vec<Point> = segs.iter().zip(&movable).map(|(s, m)| if *m { warp.apply(s.start(), at, radius) } else { s.start() }).collect();
+        move_points(&mut segs, &points, &movable, run.closed);
+        run.segs = segs
+            .into_iter()
+            .zip(was_piece)
+            .flat_map(|(s, piece)| if piece && (s.end() - s.start()).hypot() > spacing * 2.0 { pieces(&s, spacing) } else { vec![s] })
+            .collect();
     }
     to_path(&runs)
 }
@@ -335,6 +400,12 @@ impl Document {
         })
     }
 
+    /// One Attract, Repel or Twirl dab on every object among `ids` that the brushes can
+    /// reshape and the brush reaches; shapes become curves. Returns whether anything changed.
+    pub fn warp_at(&mut self, ids: &[ObjectId], at: Point, radius: f64, how: Warp) -> bool {
+        self.reshape(ids, |world| world.segments().any(|s| distance(&s, at) < radius).then(|| warp(world, at, radius, how)))
+    }
+
     /// Roughen every object among `ids` that the brushes can reshape along `stroke`;
     /// shapes become curves. Returns whether anything changed.
     pub fn roughen_along(&mut self, ids: &[ObjectId], stroke: &[Point], radius: f64, size: f64) -> bool {
@@ -426,12 +497,63 @@ mod tests {
         assert_eq!(smooth.elements().iter().filter(|e| matches!(e, PathEl::ClosePath)).count(), 1);
     }
 
+    fn line() -> BezPath {
+        let mut line = BezPath::new();
+        line.move_to((0.0, 0.0));
+        line.line_to((100.0, 0.0));
+        line
+    }
+
+    fn ys(path: &BezPath) -> Vec<Point> {
+        path.elements().iter().filter_map(|e| e.end_point()).collect()
+    }
+
+    #[test]
+    fn attract_and_repel_bend_the_line_towards_and_away_from_the_brush() {
+        let mut pulled = line();
+        for _ in 0..10 {
+            pulled = warp(&pulled, Point::new(50.0, 10.0), 20.0, Warp::Attract(0.3));
+        }
+        let points = ys(&pulled);
+        let deepest = points.iter().map(|p| p.y).fold(f64::MIN, f64::max);
+        assert!(deepest > 3.0, "pulled down towards the brush: {deepest}");
+        assert!(points.iter().all(|p| p.y >= -1e-9 && (p.y < 1e-9 || (p.x - 50.0).abs() < 20.0)), "only under the brush: {points:?}");
+        assert_eq!((points[0], *points.last().unwrap()), (Point::new(0.0, 0.0), Point::new(100.0, 0.0)), "open ends stay");
+
+        let mut pushed = line();
+        for _ in 0..10 {
+            pushed = warp(&pushed, Point::new(50.0, 5.0), 20.0, Warp::Repel(0.3));
+        }
+        let lowest = ys(&pushed).iter().map(|p| p.y).fold(f64::MAX, f64::min);
+        assert!(lowest < -3.0, "pushed up, away from the brush: {lowest}");
+        let spacing = smooth_spacing(20.0);
+        assert!(pushed.segments().all(|s| (s.end() - s.start()).hypot() <= spacing * 2.5 || s.start().y == 0.0), "stretched pieces are cut again");
+    }
+
+    #[test]
+    fn twirl_turns_the_outline_round_the_centre() {
+        let mut path = line();
+        for _ in 0..20 {
+            path = warp(&path, Point::new(50.0, 0.0), 20.0, Warp::Twirl(0.3));
+        }
+        let points = ys(&path);
+        // Clockwise on the page: right of the centre goes down, left of it goes up.
+        assert!(points.iter().any(|p| p.x > 50.0 && p.y > 2.0) && points.iter().any(|p| p.x < 50.0 && p.y < -2.0), "{points:?}");
+        assert!(points.iter().all(|p| p.distance(Point::new(50.0, 0.0)) < 20.0 + 1e-9 || p.y.abs() < 1e-9), "nothing outside the brush moves");
+        // Twirling keeps each point at its distance from the centre.
+        let turned = Warp::Twirl(1.0).apply(Point::new(55.0, 0.0), Point::new(50.0, 0.0), 20.0);
+        assert!((turned.distance(Point::new(50.0, 0.0)) - 5.0).abs() < 1e-9, "{turned:?}");
+        let counter = warp(&line(), Point::new(50.0, 0.0), 20.0, Warp::Twirl(-0.3));
+        assert!(ys(&counter).iter().any(|p| p.x > 50.0 && p.y < -0.1), "negative turns the other way");
+    }
+
     #[test]
     fn documents_brush_shapes_into_curves() {
         let mut doc = Document::default();
         let id = doc.add_object(Shape::Rectangle { rect: kurbo::Rect::new(0.0, 0.0, 100.0, 50.0), corner_radius: 0.0 }, crate::Style::default());
         assert!(!doc.smooth_at(&[id], Point::new(300.0, 300.0), 10.0, 1.0), "out of reach");
         assert!(!doc.roughen_along(&[id], &[Point::new(300.0, 300.0)], 10.0, 2.0), "out of reach");
+        assert!(!doc.warp_at(&[id], Point::new(300.0, 300.0), 10.0, Warp::Attract(0.5)), "out of reach");
         assert!(doc.roughen_along(&[id], &[Point::new(50.0, 0.0)], 10.0, 2.0));
         assert!(matches!(doc.active_page().objects[0].shape, Shape::Curve { .. }));
     }
