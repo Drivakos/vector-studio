@@ -7,6 +7,7 @@ pub mod bitmap_menu;
 pub mod canvas;
 pub mod chrome;
 pub mod commands;
+pub mod dimensions;
 pub mod dockers;
 pub mod edit_tools;
 pub mod export_for;

@@ -200,8 +200,10 @@ pub fn is_implemented(tool: Tool) -> bool {
         || is_three_point(tool)
 }
 
+/// Tools that take a drag for one edge, then a click for the third point (dimensions
+/// included: the click places the dimension line).
 fn is_three_point(tool: Tool) -> bool {
-    matches!(tool, Tool::ThreePointCurve | Tool::ThreePointRectangle | Tool::ThreePointEllipse)
+    matches!(tool, Tool::ThreePointCurve | Tool::ThreePointRectangle | Tool::ThreePointEllipse) || crate::dimensions::kind(tool).is_some()
 }
 
 pub fn cursor(tool: Tool) -> egui::CursorIcon {
@@ -693,6 +695,10 @@ pub fn finish_pen(state: &mut AppState) {
 
 /// A 3-point tool's third click: make the curve, rectangle or ellipse on edge `a` → `b`.
 fn finish_three_point(state: &mut AppState, a: Point, b: Point, c: Point) {
+    if let Some(kind) = crate::dimensions::kind(state.tool) {
+        crate::dimensions::finish(state, kind, a, b, c);
+        return;
+    }
     let Some((shape, transform)) = three_point_shape(state.tool, a, b, c) else { return };
     let id = state.doc.add_object(shape, Style::new_object());
     if let Some(obj) = state.doc.active_page_mut().object_mut(id) {
@@ -1529,6 +1535,11 @@ pub fn draw_overlay(painter: &egui::Painter, state: &AppState, canvas: Rect) {
             let mut path = shape.to_path();
             path.apply_affine(t);
             path_to_screen(painter, &path, &view, thin);
+        } else if let Some(d) = crate::dimensions::kind(state.tool).and_then(|k| vs_core::dimension::dimension(k, a, b, c)) {
+            path_to_screen(painter, &d.lines, &view, thin);
+            path_to_screen(painter, &d.arrows, &view, thin);
+            let at = view.screen(d.label_at);
+            painter.text(at, egui::Align2::CENTER_BOTTOM, crate::dimensions::label(state, d.length), egui::FontId::proportional(12.0), Color32::BLACK);
         }
     }
 
@@ -1649,6 +1660,8 @@ pub fn hint(state: &AppState) -> String {
         Tool::ThreePointCurve => "Drag from start to end, then click to set the curve".into(),
         Tool::ThreePointRectangle => "Drag one side, then click to set the height".into(),
         Tool::ThreePointEllipse => "Drag one axis, then click to set the other".into(),
+        Tool::ParallelDimension => "Drag between the two points to measure, then click where the dimension line goes".into(),
+        Tool::HorizontalVerticalDimension => "Drag between the two points, then click above or below for the horizontal distance, beside for the vertical".into(),
         Tool::Text if state.tools.text.is_some() => "Type the text · Enter starts a new line · Esc or another tool finishes".into(),
         Tool::Text => "Click to add artistic text, drag a frame for paragraph text, or click text to edit it".into(),
         Tool::InteractiveFill => "Click an object, then drag across it for a fountain fill · drag the ends to move it".into(),

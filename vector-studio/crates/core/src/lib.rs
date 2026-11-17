@@ -7,6 +7,7 @@ pub mod construct;
 pub mod controls;
 pub mod curves;
 pub mod cutting;
+pub mod dimension;
 pub mod document;
 pub mod fill;
 pub mod find;
