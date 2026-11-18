@@ -460,6 +460,47 @@ fn render_page(page: &Page, options: &ExportOptions) -> Result<resvg::tiny_skia:
     Ok(pixmap)
 }
 
+/// A page parsed once for the canvas's Normal view, which draws it without anti-aliasing.
+pub struct AliasedPage {
+    svg: String,
+    tree: resvg::usvg::Tree,
+    /// Page points per tree unit (the tree resolves the SVG's pt size to px).
+    unit: f64,
+}
+
+impl AliasedPage {
+    pub fn new(page: &Page) -> Result<Self, IoError> {
+        let svg = Self::svg(page);
+        let tree = resvg::usvg::Tree::from_str(&svg, &resvg::usvg::Options::default()).map_err(|e| IoError::Png(e.to_string()))?;
+        let unit = page.size.width / f64::from(tree.size().width());
+        Ok(Self { svg, tree, unit })
+    }
+
+    /// The page's SVG with edges and bitmaps drawn without smoothing.
+    fn svg(page: &Page) -> String {
+        page_to_svg(page).replacen("<svg ", r#"<svg shape-rendering="crispEdges" image-rendering="optimizeSpeed" "#, 1)
+    }
+
+    /// Whether this still shows `page` as it is.
+    pub fn shows(&self, page: &Page) -> bool {
+        self.svg == Self::svg(page)
+    }
+
+    /// The page's objects (no paper) in a `size` pixel image, `transform` mapping page
+    /// points to pixels: straight-alpha RGBA bytes.
+    pub fn render(&self, transform: vs_core::kurbo::Affine, size: [u32; 2]) -> Option<Vec<u8>> {
+        use resvg::tiny_skia;
+        let mut pixmap = tiny_skia::Pixmap::new(size[0], size[1])?;
+        let transform = transform * vs_core::kurbo::Affine::scale(self.unit);
+        let [a, b, c, d, e, f] = transform.as_coeffs().map(|v| v as f32);
+        resvg::render(&self.tree, tiny_skia::Transform::from_row(a, b, c, d, e, f), &mut pixmap.as_mut());
+        Some(pixmap.pixels().iter().flat_map(|p| {
+            let c = p.demultiply();
+            [c.red(), c.green(), c.blue(), c.alpha()]
+        }).collect())
+    }
+}
+
 /// A small picture of a page on `paper`, its longer side `longest` pixels: width,
 /// height and premultiplied RGBA bytes.
 pub fn page_thumbnail(page: &Page, paper: Rgba, longest: u32) -> Result<(u32, u32, Vec<u8>), IoError> {
@@ -1098,5 +1139,29 @@ mod tests {
     fn export_picks_format_by_extension() {
         assert_eq!(ExportFormat::from_path(Path::new("a.SVG")).unwrap(), ExportFormat::Svg);
         assert!(matches!(ExportFormat::from_path(Path::new("a.cdr")), Err(IoError::UnknownExtension(_))));
+    }
+
+    #[test]
+    fn aliased_page_has_hard_edges_where_the_export_smooths_them() {
+        let doc = sample();
+        let page = doc.active_page();
+        let aliased = AliasedPage::new(page).unwrap();
+        assert!(aliased.shows(page));
+        // Page point (100, 100) at pixel (0, 0), two pixels per point.
+        let size = [400, 400];
+        let px = aliased.render(Affine::scale(2.0) * Affine::translate((-100.0, -100.0)), size).unwrap();
+        assert_eq!(px.len(), 400 * 400 * 4);
+        let alphas: std::collections::BTreeSet<u8> = px.as_chunks::<4>().0.iter().map(|p| p[3]).collect();
+        assert_eq!(alphas, [0, 255].into(), "every pixel covered or not");
+        let reds = px.as_chunks::<4>().0.iter().filter(|p| p[..3] == [255, 0, 0] && p[3] == 255).count();
+        assert!(reds > 10_000, "the star's fill is there: {reds}");
+
+        let smooth = render_page(page, &ExportOptions { dpi: 144.0, background: None }).unwrap();
+        assert!(smooth.pixels().iter().any(|p| p.alpha() > 0 && p.alpha() < 255), "the export is anti-aliased");
+
+        let mut moved = doc.clone();
+        let id = moved.active_page().objects[0].id;
+        moved.move_objects(&[id], vs_core::kurbo::Vec2::new(5.0, 0.0));
+        assert!(!aliased.shows(moved.active_page()), "a change needs a new parse");
     }
 }

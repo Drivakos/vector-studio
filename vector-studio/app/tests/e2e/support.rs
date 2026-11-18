@@ -437,6 +437,16 @@ impl E2e {
         img.get_pixel((p.x * ppp) as u32, (p.y * ppp) as u32).0
     }
 
+    /// Every rendered pixel inside the document rectangle (`x0`, `y0`)–(`x1`, `y1`).
+    pub fn pixels_in(&mut self, x0: f64, y0: f64, x1: f64, y1: f64) -> Vec<[u8; 4]> {
+        let ppp = self.h.ctx.pixels_per_point();
+        let (a, b) = (self.at(x0, y0), self.at(x1, y1));
+        let img = self.h.render().expect("render");
+        let (px0, py0) = ((a.x.min(b.x) * ppp) as u32, (a.y.min(b.y) * ppp) as u32);
+        let (px1, py1) = ((a.x.max(b.x) * ppp) as u32, (a.y.max(b.y) * ppp) as u32);
+        (py0..py1).flat_map(|y| (px0..px1).map(move |x| (x, y))).map(|(x, y)| img.get_pixel(x, y).0).collect()
+    }
+
     // ---- Drawing helpers ------------------------------------------------------------
 
     /// Draw a rectangle with the Rectangle tool (F6), then go back to the Pick tool.

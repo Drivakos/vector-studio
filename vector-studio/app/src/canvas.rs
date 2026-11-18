@@ -4,6 +4,7 @@ use eframe::egui_wgpu;
 use egui::{Color32, CursorIcon, PointerButton, Pos2, Rect, Sense, Stroke, Vec2, pos2, vec2};
 use egui_material_icons::icons::*;
 use vs_core::kurbo::{self, Point};
+use vs_render::vello::peniko::{Blob, ImageAlphaType, ImageBrush, ImageData, ImageFormat, ImageQuality};
 use vs_render::vello::{AaConfig, AaSupport, RenderParams, Renderer, RendererOptions, Scene, wgpu};
 use vs_render::{CanvasColors, build_page_scene, ruler_ticks};
 
@@ -23,6 +24,15 @@ pub struct GpuCanvas {
     scene: Scene,
     target: Option<Target>,
     colors: CanvasColors,
+    normal: Option<NormalView>,
+}
+
+/// Normal view's objects, drawn on the CPU without anti-aliasing, kept until the page,
+/// the view or the canvas size changes.
+struct NormalView {
+    page: vs_io::AliasedPage,
+    key: ([f64; 6], [u32; 2], bool),
+    image: Option<ImageData>,
 }
 
 struct Target {
@@ -49,6 +59,7 @@ impl GpuCanvas {
             scene: Scene::new(),
             target: None,
             colors: CanvasColors::default(),
+            normal: None,
         })
     }
 
@@ -121,6 +132,16 @@ impl GpuCanvas {
         };
         let page = crate::symbol_menu::shown_page(state);
         build_page_scene(&mut self.scene, &page, &viewport, ppp, &colors, view.look);
+        if view.look.mode == vs_render::ViewMode::Normal {
+            let transform = kurbo::Affine::scale(ppp) * viewport.transform();
+            if let Some(image) = self.normal_objects(&page, transform, size, view.look.proof) {
+                let mut brush = ImageBrush::new(image);
+                brush.sampler.quality = ImageQuality::Low;
+                self.scene.draw_image(&brush, kurbo::Affine::IDENTITY);
+            }
+        } else {
+            self.normal = None;
+        }
         let target = self.target.as_ref()?;
         let params = RenderParams {
             base_color: view.pasteboard.unwrap_or(self.colors.pasteboard),
@@ -150,6 +171,33 @@ thread_local! {
 /// Whether View > Proof Colors can be used: the system's CMYK profile loaded.
 pub fn can_proof() -> bool {
     PROOF.with(Option::is_some)
+}
+
+impl GpuCanvas {
+    /// Normal view's picture of `page`'s objects: `size` pixels, `transform` mapping
+    /// page points to them.
+    fn normal_objects(&mut self, page: &vs_core::Page, transform: kurbo::Affine, size: [u32; 2], proof: Option<&vs_render::Proof>) -> Option<ImageData> {
+        let key = (transform.as_coeffs(), size, proof.is_some());
+        if self.normal.as_ref().is_none_or(|n| !n.page.shows(page)) {
+            let page = vs_io::AliasedPage::new(page).inspect_err(|e| log::error!("Normal view: {e}")).ok()?;
+            self.normal = Some(NormalView { page, key, image: None });
+        }
+        let normal = self.normal.as_mut()?;
+        if normal.image.is_none() || normal.key != key {
+            normal.key = key;
+            normal.image = normal.page.render(transform, size).map(|bytes| {
+                let image = ImageData {
+                    data: Blob::new(std::sync::Arc::new(bytes)),
+                    format: ImageFormat::Rgba8,
+                    alpha_type: ImageAlphaType::Alpha,
+                    width: size[0],
+                    height: size[1],
+                };
+                proof.map_or_else(|| image.clone(), |p| p.image(&image))
+            });
+        }
+        normal.image.clone()
+    }
 }
 
 /// What the canvas shows: the page through `viewport`, drawn in `mode`, on the desk

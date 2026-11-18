@@ -201,3 +201,37 @@ fn full_screen_preview_shows_only_the_page_until_a_key_or_click() {
     assert!(app.state().preview.is_none(), "so does a click");
     assert_eq!(app.selection(), vec![rect], "which selects nothing");
 }
+
+#[test]
+fn normal_view_draws_without_anti_aliasing() {
+    let mut app = E2e::new();
+    app.key(Key::F7);
+    app.drag_doc((100.0, 100.0), (300.0, 250.0));
+    app.pick_tool();
+    app.click("Swatch Red");
+    app.right_click("Swatch No color");
+    app.click_doc(500.0, 800.0);
+    let red = [0xE3, 0x06, 0x13];
+    let blends = |px: &[[u8; 4]]| px.iter().filter(|p| p[..3] != red && p[..3] != [255, 255, 255]).count();
+
+    let smooth = app.pixels_in(90.0, 90.0, 310.0, 260.0);
+    assert!(blends(&smooth) > 50, "Enhanced smooths the ellipse's edge");
+
+    app.menu(&["View", "Normal"]);
+    assert_eq!(app.state().view_mode, vs_render::ViewMode::Normal);
+    let hard = app.pixels_in(90.0, 90.0, 310.0, 260.0);
+    assert_eq!(blends(&hard), 0, "every pixel is the fill or the paper");
+    assert!(hard.iter().filter(|p| p[..3] == red).count() > smooth.iter().filter(|p| p[..3] == red).count() / 2, "the ellipse is drawn");
+
+    // Edits show at once, and the toolbar's View Modes list has it too.
+    app.click_doc(200.0, 175.0);
+    app.click("Swatch Blue");
+    app.click_doc(500.0, 800.0);
+    assert_eq!(app.pixel(200.0, 175.0)[..3], [0x00, 0x71, 0xBC]);
+    app.click("View modes");
+    app.click("Enhanced (view modes)");
+    assert_eq!(app.state().view_mode, vs_render::ViewMode::Enhanced);
+    app.click("View modes");
+    app.click("Normal (view modes)");
+    assert_eq!(app.state().view_mode, vs_render::ViewMode::Normal);
+}

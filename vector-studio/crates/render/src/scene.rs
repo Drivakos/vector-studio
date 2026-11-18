@@ -38,6 +38,10 @@ pub enum ViewMode {
     /// Every outline as a one-pixel line: no fills, bitmaps as frames, PowerClip
     /// contents not clipped.
     Wireframe,
+    /// Fills, outlines and bitmaps without anti-aliasing or bitmap smoothing. The scene
+    /// holds only the paper: the canvas draws the objects on the CPU (Vello always
+    /// anti-aliases).
+    Normal,
     /// As Enhanced, but as the bitmap the page would export to: drawn at the export
     /// resolution and magnified without smoothing (see [`pixel_grid`]).
     Pixels,
@@ -48,6 +52,7 @@ impl ViewMode {
         match self {
             ViewMode::Enhanced => "Enhanced",
             ViewMode::Wireframe => "Wireframe",
+            ViewMode::Normal => "Normal",
             ViewMode::Pixels => "Pixels",
         }
     }
@@ -174,6 +179,12 @@ pub fn build_page_scene<'a>(
         for leaf in page.shown_objects().flat_map(vs_core::Object::leaves) {
             scene.stroke(&line, doc, WIREFRAME, None, &leaf.path);
         }
+        if let Some(border) = colors.page_border {
+            scene.stroke(&Stroke::new(1.0), screen, border, None, &page_screen);
+        }
+        return;
+    }
+    if mode == ViewMode::Normal {
         if let Some(border) = colors.page_border {
             scene.stroke(&Stroke::new(1.0), screen, border, None, &page_screen);
         }

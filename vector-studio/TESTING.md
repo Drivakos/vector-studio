@@ -112,7 +112,7 @@ Names must be unique on screen, or a test cannot tell widgets apart.
 | Insert QR Code (size, centred, finder square pixels, undo) and Insert Barcode (Code 128 width and height, text under the bars, refused characters, without text) | `codes.rs` |
 | Convert to Bitmap (two objects into one bitmap in place, size at a resolution, white background, undo), Resample (proportions kept, then free, place kept), bitmap effects (Grayscale, Brightness, Gaussian Blur, Pixelate, Add Noise, Unsharp Mask, Cancel, undo), Tone Curve (preview follows the settings, Green channel only, node dragged on the curve, level through the curve, undo), Bitmap Color Mask (colour picked on the preview, hidden, outline kept, typed colour, Show colors), Straighten Image (same pixel size and place, turned within its frame), Image Adjustment Lab (eight settings start at 0, preview, result as the core effect, undo), Remove Background then Crop Bitmap (white edge gone, red kept, place kept until cropped, cropped to the red at the same resolution, nothing more to crop, undo) | `bitmaps.rs` |
 | The 13 units in the property bar and the Properties docker | `units.rs` |
-| Zoom (keys, toolbar, Zoom tool), Pan tool, rulers, dockers, palette, status bar | `view.rs` |
+| Zoom (keys, toolbar, Zoom tool), Pan tool, rulers, dockers, palette, status bar, Normal view (no anti-aliased pixels, updates on edits, View Modes list) | `view.rs` |
 | Pixels view mode: one colour per export-resolution pixel on screen, back to Enhanced | `view.rs` |
 | Full-Screen Preview: F9 and the View menu, page pixels on black, no chrome, a key or a click ends it without acting | `view.rs` |
 | Page Sorter View: thumbnails (pixels), click to pick, drag to move a page, undo, double-click back to drawing | `pages.rs` |
