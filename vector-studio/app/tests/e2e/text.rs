@@ -569,3 +569,65 @@ fn tab_key_and_tabs_window_set_where_tabs_stop() {
     app.shortcut(Modifiers::COMMAND, Key::Z);
     assert_eq!(text(&app, 0).tabs.len(), 1, "undo");
 }
+
+/// Where character `i`'s Shape-tool node is on the page.
+fn char_node(app: &E2e, i: usize) -> vs_core::kurbo::Point {
+    let obj = &app.objects()[0];
+    let node = vs_core::controls::controls(&obj.shape)
+        .into_iter()
+        .find(|(c, _)| *c == vs_core::controls::Control::Char(i))
+        .unwrap_or_else(|| panic!("no node for character {i}"));
+    obj.transform * node.1
+}
+
+#[test]
+fn shape_tool_shifts_characters_and_align_to_baseline_puts_them_back() {
+    let mut app = E2e::new();
+    app.key(Key::F8);
+    app.click_doc(100.0, 200.0);
+    app.type_text("Hello");
+    app.key(Key::Escape);
+    let flat = app.bounds(0);
+    assert!(!app.menu_enabled(&["Text", "Align to Baseline"]), "nothing is off the baseline");
+
+    // The Shape tool shows a node at each character; dragging one moves only it.
+    app.key(Key::F10);
+    let e = char_node(&app, 1);
+    let l = char_node(&app, 2);
+    assert!(close(e.y, 200.0) && e.x > 100.0, "on the baseline: {e:?}");
+    app.drag_doc((e.x, e.y), (e.x + 3.0, e.y - 30.0));
+    let shift = text(&app, 0).shifts[&1];
+    assert!(close(shift.x, 3.0) && close(shift.y, -30.0), "{shift:?}");
+    assert!((char_node(&app, 2) - l).hypot() < 1e-6, "the next character stays");
+    assert!(app.bounds(0).y0 < flat.y0 - 25.0, "the selection takes in the raised letter: {:?}", app.bounds(0));
+    app.click_doc(500.0, 700.0);
+    assert!(any_dark(&mut app, e.x + 3.0, e.y - 40.0, e.x + 12.0, e.y - 32.0), "the e is drawn up there");
+
+    // Undo puts it back; redo moves it again.
+    app.shortcut(Modifiers::COMMAND, Key::Z);
+    assert!(text(&app, 0).shifts.is_empty());
+    app.shortcut(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z);
+    assert!(!text(&app, 0).shifts.is_empty());
+
+    // Typing before it keeps the shift on the same letter.
+    app.pick_tool();
+    app.double_click_doc(flat.x0 + 2.0, 195.0);
+    assert_eq!(app.state().tool, Tool::Text);
+    app.key(Key::Home);
+    app.type_text("O");
+    app.key(Key::Escape);
+    assert_eq!(text(&app, 0).content, "OHello");
+    assert_eq!(text(&app, 0).shifts.keys().copied().collect::<Vec<_>>(), [2]);
+
+    app.pick_tool();
+    app.click_doc(flat.x0 + 2.0, 195.0);
+    assert!(app.menu_enabled(&["Text", "Align to Baseline"]));
+    app.menu(&["Text", "Align to Baseline"]);
+    let shift = text(&app, 0).shifts[&2];
+    assert!(close(shift.x, 3.0) && shift.y == 0.0, "back on the baseline, the sideways shift kept: {shift:?}");
+    assert!(close(app.bounds(0).y0, flat.y0), "{:?}", app.bounds(0));
+
+    // Straighten Text puts every character back in its place.
+    app.menu(&["Text", "Straighten Text"]);
+    assert!(text(&app, 0).shifts.is_empty());
+}

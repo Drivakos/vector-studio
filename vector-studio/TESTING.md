@@ -90,7 +90,7 @@ Names must be unique on screen, or a test cannot tell widgets apart.
 | Join Curves (Object menu) closing two nearly-touching paths, Convert Outline to Object (Cmd+Shift+Q) and how it renders | `curves.rs` |
 | Crop tool (Enter, Esc, double-click on the selection, canvas result, undo), Knife tool, Virtual Segment Delete (the part between crossings, a miss, undo), Eraser tool (size from the property bar, canvas result) | `cutting.rs` |
 | Shaping (Weld, Trim, Intersect, Simplify, Front/Back Minus, Boundary: property bar and Object > Shaping), the target rule (marquee vs Shift-click), Combine (Cmd+L) with even-odd holes, Break Apart (Cmd+K) | `shaping.rs` |
-| Text tool: typing, lines, caret keys, plain keys not running shortcuts, Esc, one undo step, empty text removed, clicking and Pick double-click to edit, font size and alignment for new and selected text, move, save/open, Convert to Curves | `text.rs` |
+| Text tool: typing, lines, caret keys, plain keys not running shortcuts, Esc, one undo step, empty text removed, clicking and Pick double-click to edit, font size and alignment for new and selected text, move, save/open, Convert to Curves, character shifts with the Shape tool (undo, typing before them), Align to Baseline, Straighten Text clearing shifts | `text.rs` |
 | Paragraph text: drag a frame, wrap, convert to artistic and back in place, frame height and overflow, empty frames stay | `text.rs` |
 | Edit Text window: Cmd+Shift+T and the Text menu, Cancel, OK, undo | `text.rs` |
 | Change Case (selected text, Cancel, while typing) | `text.rs` |

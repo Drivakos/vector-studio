@@ -11,7 +11,7 @@
 //! Fonts come from the bundled Ubuntu Light face plus the system font folders, which are
 //! scanned the first time a family that is not bundled, or the family list, is needed.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -112,6 +112,11 @@ pub struct Text {
     /// to the next one; past the last, to the next [`DEFAULT_TAB`] step.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tabs: Vec<f64>,
+    /// Characters moved off their place with the Shape tool, by index (counting `\n`):
+    /// how far each one's glyph is drawn from where the line puts it. The characters
+    /// after it stay where they are.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub shifts: BTreeMap<usize, kurbo::Vec2>,
 }
 
 /// Space between the tab stops a text has when it sets none of its own, or past its
@@ -176,7 +181,41 @@ impl Text {
             list: None,
             drop_cap: 0,
             tabs: Vec::new(),
+            shifts: BTreeMap::new(),
         }
+    }
+
+    /// Insert `s` before character `index`, keeping each shifted character's shift.
+    pub fn insert_at(&mut self, index: usize, s: &str) {
+        let at = self.content.char_indices().nth(index).map_or(self.content.len(), |(b, _)| b);
+        self.content.insert_str(at, s);
+        let n = s.chars().count();
+        self.shifts = std::mem::take(&mut self.shifts).into_iter().map(|(i, d)| (if i >= index { i + n } else { i }, d)).collect();
+    }
+
+    /// Remove character `index`, keeping the other characters' shifts.
+    pub fn remove_at(&mut self, index: usize) {
+        let Some((at, _)) = self.content.char_indices().nth(index) else { return };
+        self.content.remove(at);
+        self.shifts = std::mem::take(&mut self.shifts)
+            .into_iter()
+            .filter(|(i, _)| *i != index)
+            .map(|(i, d)| (if i > index { i - 1 } else { i }, d))
+            .collect();
+    }
+
+    /// Whether any character is moved up or down off its baseline.
+    pub fn is_off_baseline(&self) -> bool {
+        self.shifts.values().any(|d| d.y != 0.0)
+    }
+
+    /// Text > Align to Baseline: every character back on its line's baseline; sideways
+    /// shifts stay.
+    pub fn align_to_baseline(&mut self) {
+        self.shifts.retain(|_, d| {
+            d.y = 0.0;
+            d.x != 0.0
+        });
     }
 
     /// Paragraph text: the left edge and width of each column in the frame.
@@ -240,7 +279,14 @@ impl Text {
     pub fn to_path(&self) -> BezPath {
         let frame = self.frame.map(|f| (f.width.to_bits(), f.height.to_bits()));
         let guide = self.on_path.as_ref().map(BezPath::to_svg);
-        let columns = (self.columns, self.gutter.to_bits(), self.list, self.drop_cap, self.tabs.iter().map(|t| t.to_bits()).collect());
+        let columns = (
+            self.columns,
+            self.gutter.to_bits(),
+            self.list,
+            self.drop_cap,
+            self.tabs.iter().map(|t| t.to_bits()).collect(),
+            self.shifts.iter().map(|(i, d)| (*i, d.x.to_bits(), d.y.to_bits())).collect(),
+        );
         let key = (self.content.clone(), self.family.clone(), self.style.clone(), self.size.to_bits(), self.align, frame, guide, columns);
         let cache = PATHS.get_or_init(Mutex::default);
         if let Some(path) = cache.lock().expect("text cache").get(&key) {
@@ -256,7 +302,7 @@ impl Text {
     }
 }
 
-type PathKey = (String, String, String, u64, TextAlign, Option<(u64, u64)>, Option<String>, (u32, u64, Option<ListStyle>, u32, Vec<u64>));
+type PathKey = (String, String, String, u64, TextAlign, Option<(u64, u64)>, Option<String>, (u32, u64, Option<ListStyle>, u32, Vec<u64>, Vec<(usize, u64, u64)>));
 static PATHS: OnceLock<Mutex<HashMap<PathKey, BezPath>>> = OnceLock::new();
 
 /// One laid-out line.
@@ -284,6 +330,8 @@ pub struct TextLayout {
     pub overflow: bool,
     /// Lists: how far each line starts past its bullet or number.
     pub indent: f64,
+    /// The area of the characters drawn off their place (see [`Text::shifts`]).
+    pub shifted: Option<Rect>,
 }
 
 impl TextLayout {
@@ -299,6 +347,9 @@ impl TextLayout {
             let (x0, x1) = (line.carets[0], *line.carets.last().expect("a line has a caret"));
             let b = Rect::new(x0.min(x1) - self.indent, line.baseline - self.ascent, x0.max(x1), line.baseline + self.descent);
             r = Some(r.map_or(b, |r| r.union(b)));
+        }
+        if let Some(s) = self.shifted {
+            r = Some(r.map_or(s, |r| r.union(s)));
         }
         r.unwrap_or_default()
     }
@@ -397,6 +448,7 @@ fn layout(text: &Text) -> TextLayout {
     let mut path = BezPath::new();
     let mut lines = Vec::new();
     let mut overflow = false;
+    let mut shifted: Option<Rect> = None;
     let mut start = 0;
     for (para, paragraph) in text.content.split('\n').enumerate() {
         let drop = drop.as_ref().filter(|_| para == 0);
@@ -485,9 +537,15 @@ fn layout(text: &Text) -> TextLayout {
                     let _ = glyph.draw(DrawSettings::unhinted(Size::new(d.size as f32), location), &mut pen);
                 }
             }
-            for (ch, gid, advance) in &chars {
+            let first = start + range.start + usize::from(cap_here);
+            for (j, (ch, gid, advance)) in chars.iter().enumerate() {
+                let shift = text.shifts.get(&(first + j)).copied().unwrap_or_default();
+                if shift != kurbo::Vec2::ZERO {
+                    let cell = Rect::new(x, baseline - ascent, x + advance, baseline + descent) + shift;
+                    shifted = Some(shifted.map_or(cell, |s: Rect| s.union(cell)));
+                }
                 if !hidden && *ch != '\t' && let Some(glyph) = outlines.get(*gid) {
-                    let mut pen = Pen { path: &mut path, origin: Point::new(x, baseline) };
+                    let mut pen = Pen { path: &mut path, origin: Point::new(x, baseline) + shift };
                     // A glyph that fails to draw is left blank rather than failing the text.
                     let _ = glyph.draw(DrawSettings::unhinted(size, location), &mut pen);
                 }
@@ -498,7 +556,7 @@ fn layout(text: &Text) -> TextLayout {
         }
         start += glyphs.len() + 1;
     }
-    TextLayout { path, lines, ascent, descent, frame, overflow, indent: if frame.is_none() { indent } else { 0.0 } }
+    TextLayout { path, lines, ascent, descent, frame, overflow, indent: if frame.is_none() { indent } else { 0.0 }, shifted }
 }
 
 /// Accuracy of arc lengths along a text path, in points.
@@ -578,7 +636,7 @@ fn layout_on_path(text: &Text, guide: &BezPath, font: &FontRef, size: Size, asce
         carets.push(s);
     }
     let area = if path.is_empty() { guide.bounding_box() } else { path.bounding_box() };
-    TextLayout { path, lines: vec![Line { start: 0, baseline: 0.0, carets }], ascent, descent, frame: Some(area), overflow: false, indent: 0.0 }
+    TextLayout { path, lines: vec![Line { start: 0, baseline: 0.0, carets }], ascent, descent, frame: Some(area), overflow: false, indent: 0.0, shifted: None }
 }
 
 /// Split one paragraph into lines no wider than `width`: break after the last space that

@@ -553,6 +553,7 @@ impl VectorStudioApp {
             Command::Resample => (crate::bitmap_menu::resample_target(state).is_some(), None),
             Command::BitmapEffect(_) => (!crate::bitmap_menu::bitmap_targets(state).is_empty(), None),
             Command::StraightenText => (doc.can_straighten_text(&state.selection), None),
+            Command::AlignToBaseline => (doc.can_align_to_baseline(&state.selection), None),
             Command::ClipPlaceInside => (doc.can_place_inside(&state.selection), None),
             Command::ClipExtract => (doc.can_extract_contents(&state.selection), None),
             Command::ClipEdit => (crate::edit_tools::can_edit_contents(state), None),
@@ -927,6 +928,10 @@ impl VectorStudioApp {
             }
             Command::StraightenText => {
                 s.doc.straighten_text(&s.selection);
+                Ok(())
+            }
+            Command::AlignToBaseline => {
+                s.doc.align_to_baseline(&s.selection);
                 Ok(())
             }
             Command::ClipPlaceInside => {

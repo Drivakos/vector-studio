@@ -399,14 +399,19 @@ impl Document {
     }
 
     pub fn can_straighten_text(&self, ids: &[ObjectId]) -> bool {
-        self.active_page().objects.iter().any(|o| ids.contains(&o.id) && !o.locked && matches!(&o.shape, Shape::Text(t) if t.on_path.is_some()))
+        self.active_page()
+            .objects
+            .iter()
+            .any(|o| ids.contains(&o.id) && !o.locked && matches!(&o.shape, Shape::Text(t) if t.on_path.is_some() || !t.shifts.is_empty()))
     }
 
-    /// Straighten Text: the unlocked texts on a path among `ids` become plain artistic
-    /// text, starting where they started on the path.
+    /// Straighten Text: the unlocked texts among `ids` get every shifted character back
+    /// in its place, and texts on a path become plain artistic text, starting where they
+    /// started on the path.
     pub fn straighten_text(&mut self, ids: &[ObjectId]) {
         for obj in self.active_page_mut().objects.iter_mut().filter(|o| ids.contains(&o.id) && !o.locked) {
             let Shape::Text(text) = &mut obj.shape else { continue };
+            text.shifts.clear();
             let Some(guide) = text.on_path.take() else { continue };
             let carets = text.layout().lines[0].carets.clone();
             text.on_path = Some(guide.clone());
@@ -419,6 +424,22 @@ impl Document {
             let start = crate::text::point_along(&guide, anchor.max(0.0)).unwrap_or_default();
             text.on_path = None;
             obj.transform = Affine::translate((obj.transform * start).to_vec2()) * obj.transform.with_translation(Vec2::ZERO);
+        }
+    }
+
+    /// Whether Align to Baseline has something to do: an unlocked text among `ids` with a
+    /// character moved up or down.
+    pub fn can_align_to_baseline(&self, ids: &[ObjectId]) -> bool {
+        self.active_page().objects.iter().any(|o| ids.contains(&o.id) && !o.locked && matches!(&o.shape, Shape::Text(t) if t.is_off_baseline()))
+    }
+
+    /// Text > Align to Baseline: the characters of the unlocked texts among `ids` back
+    /// on their baselines.
+    pub fn align_to_baseline(&mut self, ids: &[ObjectId]) {
+        for obj in self.active_page_mut().objects.iter_mut().filter(|o| ids.contains(&o.id) && !o.locked) {
+            if let Shape::Text(text) = &mut obj.shape {
+                text.align_to_baseline();
+            }
         }
     }
 

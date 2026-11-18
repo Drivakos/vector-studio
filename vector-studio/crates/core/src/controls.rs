@@ -20,6 +20,9 @@ pub enum Control {
     Outer(u32),
     /// Inner vertex `i` of a star.
     Inner(u32),
+    /// Character `i` (counting `\n`) of artistic text: where its glyph starts on the
+    /// baseline.
+    Char(usize),
 }
 
 /// The shape's nodes in local space; empty for shapes edited another way.
@@ -42,6 +45,20 @@ pub fn controls(shape: &Shape) -> Vec<(Control, Point)> {
                         (Control::Outer(i), vertex(*rect, 2 * n, 2 * i, 1.0)),
                         (Control::Inner(i), vertex(*rect, 2 * n, 2 * i + 1, inner_ratio.clamp(0.01, 1.0))),
                     ]
+                })
+                .collect()
+        }
+        Shape::Text(text) if text.frame.is_none() && text.on_path.is_none() => {
+            let layout = text.layout();
+            layout
+                .lines
+                .iter()
+                .flat_map(|line| {
+                    let shifts = &text.shifts;
+                    line.carets[..line.carets.len() - 1].iter().enumerate().map(move |(j, x)| {
+                        let i = line.start + j;
+                        (Control::Char(i), Point::new(*x, line.baseline) + shifts.get(&i).copied().unwrap_or_default())
+                    })
                 })
                 .collect()
         }
@@ -113,6 +130,22 @@ pub fn drag(original: &Shape, control: Control, to: Point, constrain: bool) -> O
             // How far along its own spoke the pointer is.
             let ratio = (inner_ratio * (to - c).dot(v0) / v0.hypot2()).clamp(0.02, 1.0);
             Some((Shape::Star { rect: *rect, points: *points, inner_ratio: ratio }, Affine::IDENTITY))
+        }
+        (Shape::Text(text), Control::Char(i)) => {
+            let at = controls(original).into_iter().find(|(c, _)| *c == control)?.1;
+            let home = at - text.shifts.get(&i).copied().unwrap_or_default();
+            let mut shift = to - home;
+            // Cmd: only up and down, or only sideways.
+            if constrain {
+                if shift.x.abs() > shift.y.abs() { shift.y = 0.0 } else { shift.x = 0.0 }
+            }
+            let mut text = text.clone();
+            if shift.hypot() < 1e-9 {
+                text.shifts.remove(&i);
+            } else {
+                text.shifts.insert(i, shift);
+            }
+            Some((Shape::Text(text), Affine::IDENTITY))
         }
         _ => None,
     }
@@ -189,5 +222,40 @@ mod tests {
         let (shape, _) = drag(&star, control, c + (at - c) * 0.5, false).unwrap();
         let Shape::Star { inner_ratio, .. } = shape else { panic!() };
         assert!((inner_ratio - 0.25).abs() < 1e-9, "{inner_ratio}");
+    }
+
+    #[test]
+    fn text_character_nodes_move_one_character_and_align_to_baseline_drops_it_back() {
+        let text = Shape::Text(crate::Text::new("ab\ncd"));
+        let nodes = controls(&text);
+        assert_eq!(nodes.iter().map(|n| n.0).collect::<Vec<_>>(), [0, 1, 3, 4].map(Control::Char), "every character but the line break");
+        let (c, at) = nodes[3];
+        let before = text.to_path().bounding_box();
+        let (moved, _) = drag(&text, c, at + kurbo::Vec2::new(4.0, -10.0), false).unwrap();
+        let Shape::Text(t) = &moved else { panic!() };
+        assert_eq!(t.shifts.get(&4), Some(&kurbo::Vec2::new(4.0, -10.0)));
+        assert!(near(controls(&moved)[3].1, at + kurbo::Vec2::new(4.0, -10.0)), "the node follows the character");
+        assert!(near(controls(&moved)[2].1, nodes[2].1), "the others stay");
+        assert!(moved.to_path().bounding_box() != before, "the glyph is drawn there");
+        assert!(moved.frame().y0 < text.frame().y0 || moved.frame().x1 > text.frame().x1, "the bounds take it in");
+
+        let (cmd, _) = drag(&moved, c, at + kurbo::Vec2::new(4.0, -10.0) + kurbo::Vec2::new(1.0, 20.0), true).unwrap();
+        let Shape::Text(t2) = &cmd else { panic!() };
+        assert_eq!(t2.shifts.get(&4), Some(&kurbo::Vec2::new(0.0, 10.0)), "Cmd: along the longer axis only");
+
+        let mut t = t.clone();
+        assert!(t.is_off_baseline());
+        t.align_to_baseline();
+        assert!(!t.is_off_baseline());
+        assert_eq!(t.shifts.get(&4), Some(&kurbo::Vec2::new(4.0, 0.0)), "the sideways shift stays");
+
+        // Typing before a shifted character keeps the shift on it.
+        t.insert_at(0, "xy");
+        assert_eq!(t.content, "xyab\ncd");
+        assert_eq!(t.shifts.keys().copied().collect::<Vec<_>>(), [6]);
+        t.remove_at(6);
+        assert!(t.shifts.is_empty(), "deleting the character drops its shift");
+        t.insert_at(t.content.chars().count(), "!");
+        assert_eq!(t.content, "xyab\nc!");
     }
 }

@@ -159,10 +159,6 @@ fn line_end(content: &str, caret: usize) -> usize {
     (caret..chars.len()).find(|i| chars[*i] == '\n').unwrap_or(chars.len())
 }
 
-fn byte_at(content: &str, caret: usize) -> usize {
-    content.char_indices().nth(caret).map_or(content.len(), |(b, _)| b)
-}
-
 /// Type `s` at the caret of the text being edited.
 pub fn insert_text(state: &mut AppState, s: &str) {
     insert(state, s);
@@ -172,8 +168,7 @@ fn insert(state: &mut AppState, s: &str) {
     let Some(edit) = state.tools.text else { return };
     let s: String = s.chars().filter(|c| matches!(c, '\n' | '\t') || !c.is_control()).collect();
     let Some(text) = text_mut(state, edit.id) else { return };
-    let at = byte_at(&text.content, edit.caret);
-    text.content.insert_str(at, &s);
+    text.insert_at(edit.caret, &s);
     state.tools.text = Some(TextEdit { caret: edit.caret + s.chars().count(), ..edit });
 }
 
@@ -192,8 +187,7 @@ fn delete(state: &mut AppState, backwards: bool) {
         }
         edit.caret
     };
-    let b = byte_at(&text.content, at);
-    text.content.remove(b);
+    text.remove_at(at);
     state.tools.text = Some(TextEdit { caret: at, ..edit });
 }
 
@@ -431,7 +425,12 @@ mod tests {
 
     #[test]
     fn caret_positions_are_characters_not_bytes() {
-        assert_eq!(byte_at("é1", 1), 2);
-        assert_eq!(byte_at("é1", 5), 3);
+        let mut t = vs_core::Text::new("é1");
+        t.insert_at(1, "x");
+        assert_eq!(t.content, "éx1");
+        t.insert_at(9, "!");
+        assert_eq!(t.content, "éx1!", "past the end: at the end");
+        t.remove_at(0);
+        assert_eq!(t.content, "x1!");
     }
 }
