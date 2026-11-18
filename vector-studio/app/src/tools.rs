@@ -100,6 +100,8 @@ enum Drag {
     Corner { object: ObjectId, corner: Point },
     /// A perspective corner, 0 top-left then clockwise.
     Perspective { object: ObjectId, corner: usize },
+    /// A corner of the Draw in Perspective plane.
+    Plane { corner: usize },
     /// An ellipse, polygon or star node; `shape` and `transform` are as they were on press.
     Control { object: ObjectId, control: Control, shape: Shape, transform: Affine },
     /// A guideline of the active page, by index.
@@ -203,17 +205,27 @@ struct View {
     canvas: Rect,
     to_screen: Affine,
     zoom: f64,
+    /// Draw in Perspective, for a tool that draws on the plane: document points are on
+    /// the plane, and this maps them to where they show on the page (with its inverse).
+    plane: Option<(vs_core::Perspective, vs_core::Perspective)>,
 }
 
 impl View {
+    /// The view the active tool works in: on the Draw in Perspective plane if it draws on it.
     fn new(state: &AppState, canvas: Rect) -> Self {
-        Self { origin: canvas.min, canvas, to_screen: state.viewport.transform(), zoom: state.viewport.zoom() }
+        let plane = crate::draw_perspective::plane(state).and_then(|h| Some((h, h.inverse()?)));
+        Self { plane, ..Self::flat(state, canvas) }
+    }
+    /// The page as it is, without a plane.
+    fn flat(state: &AppState, canvas: Rect) -> Self {
+        Self { origin: canvas.min, canvas, to_screen: state.viewport.transform(), zoom: state.viewport.zoom(), plane: None }
     }
     fn doc(&self, p: Pos2) -> Point {
-        self.to_screen.inverse() * Point::new((p.x - self.origin.x) as f64, (p.y - self.origin.y) as f64)
+        let on_page = self.to_screen.inverse() * Point::new((p.x - self.origin.x) as f64, (p.y - self.origin.y) as f64);
+        self.plane.map_or(on_page, |(_, back)| back.apply(on_page))
     }
     fn screen(&self, p: Point) -> Pos2 {
-        let s = self.to_screen * p;
+        let s = self.to_screen * self.plane.map_or(p, |(h, _)| h.apply(p));
         Pos2::new(self.origin.x + s.x as f32, self.origin.y + s.y as f32)
     }
     /// Screen distance → document distance.
@@ -221,6 +233,9 @@ impl View {
         screen / self.zoom
     }
     fn screen_dist(&self, a: Point, b: Point) -> f64 {
+        if self.plane.is_some() {
+            return f64::from((self.screen(a) - self.screen(b)).length());
+        }
         (a - b).hypot() * self.zoom
     }
 }
@@ -276,7 +291,8 @@ pub fn tool_input(ui: &egui::Ui, state: &mut AppState, response: &egui::Response
         return;
     };
     let mut p = view.doc(pos);
-    if snaps_pointer(state.tool) {
+    // On a perspective plane, page snap targets are not where they seem.
+    if snaps_pointer(state.tool) && view.plane.is_none() {
         p = snapper(state, &view, &[]).point(p);
         p = guide_point(state, &view, p);
     }
@@ -285,7 +301,11 @@ pub fn tool_input(ui: &egui::Ui, state: &mut AppState, response: &egui::Response
     if pressed && response.hovered() {
         let double = state.tools.last_press.is_some_and(|(t, at)| time - t < 0.4 && at.distance(pos) < 4.0);
         state.tools.last_press = if double { None } else { Some((time, pos)) };
-        if !crate::edit_tools::press_copy_from(state, view.doc(pos), view.doc_len(HIT))
+        if state.tool == Tool::Pick
+            && let Some(corner) = crate::draw_perspective::corner_at(state, p, view.doc_len(HIT))
+        {
+            state.tools.drag = Some(Drag::Plane { corner });
+        } else if !crate::edit_tools::press_copy_from(state, view.doc(pos), view.doc_len(HIT))
             && !crate::edit_tools::press_place_inside(state, view.doc(pos), view.doc_len(HIT))
             && !crate::edit_tools::press_copy_perspective(state, view.doc(pos), view.doc_len(HIT))
         {
@@ -1123,6 +1143,10 @@ fn drag_to(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers) {
             Drag::Guide { index }
         }
         Drag::TableCells { again } => Drag::TableCells { again: !crate::table_tool::drag_to(state, p) && again },
+        Drag::Plane { corner } => {
+            crate::draw_perspective::move_corner(state, corner, p);
+            Drag::Plane { corner }
+        }
         other => other,
     };
     state.tools.drag = Some(drag);
@@ -1548,6 +1572,9 @@ fn snap_angle(d: Vec2) -> Vec2 {
 
 fn path_to_screen(painter: &egui::Painter, path: &BezPath, view: &View, stroke: Stroke) {
     let mut world = path.clone();
+    if let Some((h, _)) = view.plane {
+        world = h.map_path(&world);
+    }
     world.apply_affine(Affine::translate((view.origin.x as f64, view.origin.y as f64)) * view.to_screen);
     let mut line: Vec<Pos2> = Vec::new();
     let flush = |line: &mut Vec<Pos2>, closed: bool| {
@@ -1584,7 +1611,8 @@ fn handle_line(painter: &egui::Painter, from: Pos2, to: Pos2) {
 pub const GUIDE_LINE: Color32 = Color32::from_rgb(0x00, 0xA6, 0x51);
 
 pub fn draw_overlay(painter: &egui::Painter, state: &AppState, canvas: Rect) {
-    let view = View::new(state, canvas);
+    let view = View::flat(state, canvas);
+    crate::draw_perspective::draw(painter, state, |p| view.screen(p));
     let page = state.doc.active_page();
     let thin = Stroke::new(1.0, ACCENT);
     crate::text_tool::draw_frames(painter, state, |p| view.screen(p));
@@ -1686,10 +1714,12 @@ pub fn draw_overlay(painter: &egui::Painter, state: &AppState, canvas: Rect) {
         }
     }
 
+    // In-progress drawing shows where it goes: on the Draw in Perspective plane if on.
+    let draw = View::new(state, canvas);
     match &state.tools.drag {
         Some(Drag::Marquee { start, .. } | Drag::NodeMarquee { start, .. }) => {
             if let Some(p) = state.tools.pointer {
-                let r = Rect::from_two_pos(view.screen(*start), view.screen(p));
+                let r = Rect::from_two_pos(draw.screen(*start), draw.screen(p));
                 painter.rect_filled(r, 0.0, ACCENT.gamma_multiply(0.08));
                 painter.rect_stroke(r, 0.0, thin, egui::StrokeKind::Inside);
             }
@@ -1699,40 +1729,40 @@ pub fn draw_overlay(painter: &egui::Painter, state: &AppState, canvas: Rect) {
                 let mods = painter.ctx().input(|i| i.modifiers);
                 let rect = creation_rect(*start, p, mods);
                 if let Some(shape) = creation_shape(state.tool, rect, &state.tools.settings) {
-                    path_to_screen(painter, &shape.to_path(), &view, thin);
+                    path_to_screen(painter, &shape.to_path(), &draw, thin);
                 }
             }
         }
         Some(Drag::Freehand { points }) => {
-            let pts: Vec<Pos2> = points.iter().map(|p| view.screen(*p)).collect();
+            let pts: Vec<Pos2> = points.iter().map(|p| draw.screen(*p)).collect();
             painter.add(egui::Shape::line(pts, Stroke::new(1.0, Color32::BLACK)));
         }
         Some(Drag::Free { anchor, .. }) => {
-            let a = view.screen(*anchor);
+            let a = draw.screen(*anchor);
             painter.circle_stroke(a, 4.0, Stroke::new(1.5, ACCENT));
             if let Some(p) = state.tools.pointer {
-                painter.line_segment([a, view.screen(p)], thin);
+                painter.line_segment([a, draw.screen(p)], thin);
             }
         }
         Some(Drag::Lasso { points, .. }) => {
-            let pts: Vec<Pos2> = points.iter().map(|p| view.screen(*p)).collect();
+            let pts: Vec<Pos2> = points.iter().map(|p| draw.screen(*p)).collect();
             painter.add(egui::Shape::closed_line(pts, thin));
         }
         Some(Drag::Crop { start }) => {
             if let Some(p) = state.tools.pointer {
-                crop_frame(painter, &view, kurbo::Rect::from_points(*start, p));
+                crop_frame(painter, &draw, kurbo::Rect::from_points(*start, p));
             }
         }
         Some(Drag::Line { start } | Drag::FirstEdge { start }) => {
             if let Some(p) = state.tools.pointer {
-                painter.line_segment([view.screen(*start), view.screen(p)], thin);
+                painter.line_segment([draw.screen(*start), draw.screen(p)], thin);
             }
         }
         Some(Drag::Spiral { start }) => {
             if let Some(p) = state.tools.pointer {
                 let mods = painter.ctx().input(|i| i.modifiers);
                 let path = vs_core::construct::spiral(creation_rect(*start, p, mods), state.tools.settings.spiral_turns);
-                path_to_screen(painter, &path, &view, thin);
+                path_to_screen(painter, &path, &draw, thin);
             }
         }
         Some(Drag::GraphPaper { start }) => {
@@ -1740,7 +1770,7 @@ pub fn draw_overlay(painter: &egui::Painter, state: &AppState, canvas: Rect) {
                 let mods = painter.ctx().input(|i| i.modifiers);
                 let s = &state.tools.settings;
                 for cell in vs_core::construct::graph_paper(creation_rect(*start, p, mods), s.graph_columns, s.graph_rows) {
-                    painter.rect_stroke(Rect::from_two_pos(view.screen(cell.origin()), view.screen(Point::new(cell.x1, cell.y1))), 0.0, thin, egui::StrokeKind::Middle);
+                    painter.rect_stroke(Rect::from_two_pos(draw.screen(cell.origin()), draw.screen(Point::new(cell.x1, cell.y1))), 0.0, thin, egui::StrokeKind::Middle);
                 }
             }
         }
@@ -1749,30 +1779,30 @@ pub fn draw_overlay(painter: &egui::Painter, state: &AppState, canvas: Rect) {
                 let mods = painter.ctx().input(|i| i.modifiers);
                 let s = &state.tools.settings;
                 for cell in vs_core::construct::graph_paper(creation_rect(*start, p, mods), s.table_columns, s.table_rows) {
-                    painter.rect_stroke(Rect::from_two_pos(view.screen(cell.origin()), view.screen(Point::new(cell.x1, cell.y1))), 0.0, thin, egui::StrokeKind::Middle);
+                    painter.rect_stroke(Rect::from_two_pos(draw.screen(cell.origin()), draw.screen(Point::new(cell.x1, cell.y1))), 0.0, thin, egui::StrokeKind::Middle);
                 }
             }
         }
         Some(Drag::TextFrame { start }) => {
             if let Some(p) = state.tools.pointer {
-                let r = Rect::from_two_pos(view.screen(*start), view.screen(p));
+                let r = Rect::from_two_pos(draw.screen(*start), draw.screen(p));
                 painter.rect_stroke(r, 0.0, thin, egui::StrokeKind::Inside);
             }
         }
         Some(Drag::Knife { start }) => {
             if let Some(p) = state.tools.pointer {
-                painter.line_segment([view.screen(*start), view.screen(p)], Stroke::new(1.5, Color32::from_rgb(0xD0, 0x20, 0x20)));
+                painter.line_segment([draw.screen(*start), draw.screen(p)], Stroke::new(1.5, Color32::from_rgb(0xD0, 0x20, 0x20)));
             }
         }
         _ if is_brush(state.tool) => {
             if let Some(p) = state.tools.pointer {
-                let r = (state.tools.settings.brush_size / 2.0 * view.zoom) as f32;
-                painter.circle_stroke(view.screen(p), r, thin);
+                let r = (state.tools.settings.brush_size / 2.0 * draw.zoom) as f32;
+                painter.circle_stroke(draw.screen(p), r, thin);
             }
         }
         Some(Drag::Erase { points }) => {
-            let width = (state.tools.settings.eraser_size * view.zoom) as f32;
-            let pts: Vec<Pos2> = points.iter().map(|p| view.screen(*p)).collect();
+            let width = (state.tools.settings.eraser_size * draw.zoom) as f32;
+            let pts: Vec<Pos2> = points.iter().map(|p| draw.screen(*p)).collect();
             let wash = Color32::from_rgba_unmultiplied(0x1E, 0x6F, 0xD9, 0x50);
             if let [only] = pts.as_slice() {
                 painter.circle_filled(*only, width / 2.0, wash);
@@ -1785,49 +1815,49 @@ pub fn draw_overlay(painter: &egui::Painter, state: &AppState, canvas: Rect) {
     if state.tool == Tool::Crop
         && let Some(area) = state.tools.crop
     {
-        crop_frame(painter, &view, area);
+        crop_frame(painter, &draw, area);
     }
 
     if state.tool == Tool::SegmentDimension
         && state.tools.first_edge.is_none()
         && let Some(p) = state.tools.pointer
-        && let Some((a, b)) = vs_core::dimension::segment_at(state.doc.active_page(), p, view.doc_len(HIT))
+        && let Some((a, b)) = vs_core::dimension::segment_at(state.doc.active_page(), p, draw.doc_len(HIT))
     {
-        painter.line_segment([view.screen(a), view.screen(b)], Stroke::new(2.0, ACCENT));
+        painter.line_segment([draw.screen(a), draw.screen(b)], Stroke::new(2.0, ACCENT));
     }
     if let (Some((a, b)), Some(c)) = (state.tools.first_edge, state.tools.pointer) {
-        painter.line_segment([view.screen(a), view.screen(b)], thin);
+        painter.line_segment([draw.screen(a), draw.screen(b)], thin);
         if state.tool == Tool::AngularDimension {
             match state.tools.arm {
                 Some(arm) => {
                     if let Some(d) = vs_core::dimension::angular_dimension(a, b, arm, c) {
-                        path_to_screen(painter, &d.lines, &view, thin);
-                        path_to_screen(painter, &d.arrows, &view, thin);
+                        path_to_screen(painter, &d.lines, &draw, thin);
+                        path_to_screen(painter, &d.arrows, &draw, thin);
                         let label = crate::dimensions::degrees(d.angle);
-                        painter.text(view.screen(d.label_at), egui::Align2::CENTER_BOTTOM, label, egui::FontId::proportional(12.0), Color32::BLACK);
+                        painter.text(draw.screen(d.label_at), egui::Align2::CENTER_BOTTOM, label, egui::FontId::proportional(12.0), Color32::BLACK);
                     }
                 }
                 None => {
-                    painter.line_segment([view.screen(a), view.screen(c)], thin);
+                    painter.line_segment([draw.screen(a), draw.screen(c)], thin);
                 }
             }
         } else if state.tool == Tool::Callout {
-            painter.line_segment([view.screen(b), view.screen(c)], thin);
+            painter.line_segment([draw.screen(b), draw.screen(c)], thin);
         } else if let Some((shape, t)) = three_point_shape(state.tool, a, b, c) {
             let mut path = shape.to_path();
             path.apply_affine(t);
-            path_to_screen(painter, &path, &view, thin);
+            path_to_screen(painter, &path, &draw, thin);
         } else if let Some(d) = crate::dimensions::kind(state.tool).and_then(|k| vs_core::dimension::dimension(k, a, b, c)) {
-            path_to_screen(painter, &d.lines, &view, thin);
-            path_to_screen(painter, &d.arrows, &view, thin);
-            let at = view.screen(d.label_at);
+            path_to_screen(painter, &d.lines, &draw, thin);
+            path_to_screen(painter, &d.arrows, &draw, thin);
+            let at = draw.screen(d.label_at);
             painter.text(at, egui::Align2::CENTER_BOTTOM, crate::dimensions::label(state, d.length), egui::FontId::proportional(12.0), Color32::BLACK);
         }
     }
 
     if let Some(pen) = &state.tools.pen {
         let line = if pen.kind == Tool::BSpline { thin } else { Stroke::new(1.0, Color32::BLACK) };
-        path_to_screen(painter, &pen.path, &view, line);
+        path_to_screen(painter, &pen.path, &draw, line);
         let els = pen.path.elements();
         let last = els.last().and_then(|e| e.end_point());
         if pen.kind == Tool::BSpline
@@ -1839,7 +1869,7 @@ pub fn draw_overlay(painter: &egui::Painter, state: &AppState, canvas: Rect) {
                 _ => None,
             }).collect();
             nodes.push(cursor);
-            path_to_screen(painter, &vs_core::construct::bspline(&nodes, false), &view, Stroke::new(1.5, ACCENT));
+            path_to_screen(painter, &vs_core::construct::bspline(&nodes, false), &draw, Stroke::new(1.5, ACCENT));
         }
         if let (Some(last), Some(cursor)) = (last, state.tools.pointer)
             && matches!(pen.kind, Tool::Pen | Tool::Polyline | Tool::BSpline)
@@ -1851,17 +1881,17 @@ pub fn draw_overlay(painter: &egui::Painter, state: &AppState, canvas: Rect) {
                 Some(h) => preview.curve_to(h, cursor, cursor),
                 None => preview.line_to(cursor),
             }
-            path_to_screen(painter, &preview, &view, thin);
+            path_to_screen(painter, &preview, &draw, thin);
         }
         for el in els {
             if let Some(p) = el.end_point() {
-                square(painter, view.screen(p), false);
+                square(painter, draw.screen(p), false);
             }
         }
         if let (Some(last), Some(h)) = (last, pen.out_handle) {
-            let at = view.screen(last);
-            handle_line(painter, at, view.screen(h));
-            handle_line(painter, at, view.screen(last + (last - h)));
+            let at = draw.screen(last);
+            handle_line(painter, at, draw.screen(h));
+            handle_line(painter, at, draw.screen(last + (last - h)));
         }
     }
 }

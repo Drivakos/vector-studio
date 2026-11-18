@@ -8,6 +8,7 @@ pub mod canvas;
 pub mod chrome;
 pub mod commands;
 pub mod dimensions;
+pub mod draw_perspective;
 pub mod dockers;
 pub mod edit_tools;
 pub mod export_for;

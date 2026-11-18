@@ -1,5 +1,6 @@
 //! Object > Perspective > Add Perspective (corners dragged with the Shape tool), Object >
-//! Copy Effect > Perspective From, Object > Clear Effect.
+//! Copy Effect > Perspective From, Object > Clear Effect, Object > Perspective > Draw in
+//! Perspective.
 
 use egui::{Key, Modifiers};
 use vs_core::Shape;
@@ -70,4 +71,69 @@ fn add_perspective_drag_its_corners_copy_it_and_clear_it() {
     let obj = &app.objects()[0];
     assert!(obj.perspective.is_none() && matches!(obj.shape, Shape::Curve { .. }));
     assert!(!obj.hit(Point::new(110.0, 106.0), 0.0) && obj.hit(Point::new(152.0, 106.0), 0.0));
+}
+
+#[test]
+fn draw_in_perspective_puts_new_shapes_on_the_plane_under_the_pointer() {
+    let mut app = E2e::new();
+    assert!(!app.menu_enabled(&["Object", "Perspective", "Add Perspective"]), "nothing selected");
+    app.menu(&["Object", "Perspective", "Draw in Perspective"]);
+    let plane = app.state().draw_perspective.clone().expect("on");
+    let page = app.doc().active_page().bounds();
+    let quad = plane.quad(page);
+    assert!(quad[1].x - quad[0].x < quad[2].x - quad[3].x, "the plane narrows away from the viewer: {quad:?}");
+
+    // A rectangle dragged from (200, 500) to (400, 700) on the plane.
+    app.key(Key::F6);
+    app.drag_doc((200.0, 500.0), (400.0, 700.0));
+    assert_eq!(app.objects().len(), 1);
+    let c = corners(&app, 0);
+    assert!(near(c[0], 200.0, 500.0) && near(c[2], 400.0, 700.0), "the corners dragged stay under the pointer: {c:?}");
+    assert!(c[1].x - c[0].x < c[2].x - c[3].x - 5.0, "the far edge is shorter: {c:?}");
+    assert!(app.objects()[0].perspective.is_some(), "it keeps the perspective");
+
+    app.pick_tool();
+    app.click("Swatch Red");
+    app.click_doc(20.0, 40.0);
+    assert!(is_red(app.pixel(300.0, 650.0)), "{:?}", app.pixel(300.0, 650.0));
+
+    // Drawing and the perspective are one undo step (after the fill's).
+    app.shortcut(Modifiers::COMMAND, Key::Z);
+    assert!(app.objects()[0].perspective.is_some());
+    app.shortcut(Modifiers::COMMAND, Key::Z);
+    assert!(app.objects().is_empty(), "{:?}", app.objects().len());
+
+    // The Pick tool drags the plane's corners.
+    app.pick_tool();
+    app.drag_doc((quad[0].x, quad[0].y), (quad[0].x - 60.0, quad[0].y));
+    let moved = app.state().draw_perspective.as_ref().unwrap().quad(page);
+    assert!(near(moved[0], quad[0].x - 60.0, quad[0].y), "{moved:?}");
+    assert!(app.objects().is_empty(), "dragging a corner draws nothing");
+    // A corner never goes where it would fold the plane.
+    let fold = (moved[2].x + 50.0, moved[2].y + 50.0);
+    app.drag_doc((moved[0].x, moved[0].y), fold);
+    let plane = app.state().draw_perspective.clone().unwrap();
+    assert!(plane.map(page).is_some(), "still a plane");
+    assert!(!near(plane.quad(page)[0], fold.0, fold.1), "{:?}", plane.quad(page));
+    app.shortcut(Modifiers::COMMAND, Key::Z);
+    assert_eq!(app.state().draw_perspective, Some(plane), "moving the plane is not an undo step");
+
+    // Ellipses and freehand lines go onto the plane too; the Text tool draws flat.
+    app.key(Key::F7);
+    app.drag_doc((150.0, 600.0), (250.0, 700.0));
+    assert!(app.objects().last().unwrap().perspective.is_some());
+    app.key(Key::F8);
+    app.click_doc(100.0, 780.0);
+    app.type_text("Flat");
+    app.key(Key::Escape);
+    assert!(matches!(app.objects().last().unwrap().shape, Shape::Text(_)));
+    assert!(app.objects().last().unwrap().perspective.is_none());
+
+    // Off again: shapes are drawn flat.
+    app.menu(&["Object", "Perspective", "Draw in Perspective"]);
+    assert!(app.state().draw_perspective.is_none());
+    app.key(Key::F6);
+    app.drag_doc((300.0, 100.0), (400.0, 200.0));
+    assert!(app.objects().last().unwrap().perspective.is_none());
+    assert_eq!(app.state().tool, Tool::Rectangle);
 }

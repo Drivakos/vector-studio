@@ -124,6 +124,7 @@ pub enum Command {
     /// End Edit Symmetry or Edit Symbol (property bar button).
     GroupFinishEdit,
     AddPerspective,
+    DrawInPerspective,
     /// Copy Effect > Perspective From: waits for the click on the source.
     CopyPerspective,
     /// Clear Effect: removes a perspective.
@@ -284,6 +285,7 @@ impl Command {
             "object.symbol_revert" => SymbolRevert,
             "object.symbol_manager" => SymbolManager,
             "object.add_perspective" => AddPerspective,
+            "object.draw_in_perspective" => DrawInPerspective,
             "object.copy_perspective" => CopyPerspective,
             "object.clear_effect" => ClearEffect,
             "table.create" => TableCreate,
@@ -475,6 +477,7 @@ impl Command {
         Command::SymbolRevert,
         Command::SymbolManager,
         Command::AddPerspective,
+        Command::DrawInPerspective,
         Command::CopyPerspective,
         Command::ClearEffect,
         Command::TableCreate,

@@ -178,6 +178,8 @@ pub struct AppState {
     pub simulate_overprints: bool,
     /// View > Proof Colors (not saved).
     pub proof_colors: bool,
+    /// Object > Perspective > Draw in Perspective is on: its plane (not saved).
+    pub draw_perspective: Option<crate::draw_perspective::DrawPerspective>,
     /// Full-Screen Preview is on.
     pub preview: Option<Preview>,
     pub page_sorter: crate::page_sorter::PageSorter,
@@ -325,6 +327,7 @@ impl AppState {
             view_mode: Default::default(),
             simulate_overprints: false,
             proof_colors: false,
+            draw_perspective: None,
             preview: None,
             page_sorter: Default::default(),
             last_action: None,
@@ -568,6 +571,7 @@ impl VectorStudioApp {
             Command::SymbolManager => (true, Some(state.symbol_manager)),
             Command::GroupFinishEdit => (state.group_edit.is_some(), None),
             Command::AddPerspective => (doc.can_add_perspective(&state.selection), None),
+            Command::DrawInPerspective => (true, Some(state.draw_perspective.is_some())),
             Command::CopyPerspective => (crate::edit_tools::can_copy_perspective(state), None),
             Command::ClearEffect => (!doc.with_perspective(&state.selection).is_empty(), None),
             Command::TextToTable => (crate::table_tool::can_text_to_table(state), None),
@@ -997,6 +1001,10 @@ impl VectorStudioApp {
                 crate::symbol_menu::finish(s);
                 Ok(())
             }
+            Command::DrawInPerspective => {
+                crate::draw_perspective::toggle(s);
+                Ok(())
+            }
             Command::AddPerspective => {
                 // Its corners are dragged with the Shape tool.
                 if let Some(id) = s.doc.add_perspective(&s.selection) {
@@ -1345,6 +1353,10 @@ impl VectorStudioApp {
             s.tools.nodes.clear();
             s.nodes_owner = target;
         }
+
+        // Shapes just drawn on the Draw in Perspective plane take its perspective, in
+        // the same undo step.
+        crate::draw_perspective::sync(s);
 
         // One undo step per finished gesture or edit.
         let busy = s.tools.is_dragging() || s.tools.text.is_some() || ctx.input(|i| i.pointer.any_down()) || ctx.egui_wants_keyboard_input();

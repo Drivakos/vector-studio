@@ -40,6 +40,17 @@ impl Perspective {
         Perspective::from_affine(t).then(self).then(Perspective::from_affine(t.inverse()))
     }
 
+    /// The map that undoes this one, if it can be undone.
+    pub fn inverse(&self) -> Option<Perspective> {
+        let [a, b, c, d, e, f, g, h, i] = self.0;
+        let det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
+        if det.abs() < 1e-12 {
+            return None;
+        }
+        let m = [e * i - f * h, c * h - b * i, b * f - c * e, f * g - d * i, a * i - c * g, c * d - a * f, d * h - e * g, b * g - a * h, a * e - b * d];
+        Some(Perspective(m.map(|v| v / det)))
+    }
+
     pub fn apply(&self, p: Point) -> Point {
         let m = &self.0;
         let w = m[6] * p.x + m[7] * p.y + m[8];
@@ -263,6 +274,18 @@ mod tests {
     use super::*;
     use crate::{Rgba, Style};
     use kurbo::Shape as _;
+
+    #[test]
+    fn inverse_undoes_the_map() {
+        let rect = Rect::new(0.0, 0.0, 100.0, 50.0);
+        let quad = [Point::new(20.0, 10.0), Point::new(80.0, 5.0), Point::new(110.0, 60.0), Point::new(-5.0, 55.0)];
+        let h = Perspective::rect_to_quad(rect, quad).unwrap();
+        let back = h.inverse().unwrap();
+        for p in [Point::new(0.0, 0.0), Point::new(37.0, 12.5), Point::new(100.0, 50.0)] {
+            assert!((back.apply(h.apply(p)) - p).hypot() < 1e-9, "{p:?}");
+        }
+        assert!(Perspective([0.0; 9]).inverse().is_none());
+    }
 
     fn near(a: Point, b: Point) -> bool {
         (a - b).hypot() < 1e-6
