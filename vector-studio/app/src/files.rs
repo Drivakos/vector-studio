@@ -169,7 +169,8 @@ pub fn open(state: &mut AppState) {
     if !confirm_discard(state) {
         return;
     }
-    let Some(path) = state.dialogs.open_file("Open Drawing", "Vector Studio drawing", &[FILE_EXTENSION]) else {
+    let extensions = [&[FILE_EXTENSION], vs_io::CDR_EXTENSIONS].concat();
+    let Some(path) = state.dialogs.open_file("Open Drawing", "Vector Studio or CorelDRAW drawing", &extensions) else {
         return;
     };
     open_path(state, &path);
@@ -199,28 +200,45 @@ pub fn revert(state: &mut AppState) {
     }
 }
 
+/// Open a drawing. A CorelDRAW file opens as a new, untitled-to-disk drawing named after
+/// it, so Save asks where to keep it as a Vector Studio drawing.
 pub fn open_path(state: &mut AppState, path: &Path) {
-    match vs_io::open_document(path) {
-        Ok(doc) => set_document(state, doc, Some(path.to_path_buf())),
+    let corel = vs_io::is_cdr_path(path);
+    let doc = if corel { vs_io::open_cdr(path) } else { vs_io::open_document(path) };
+    match doc {
+        Ok(doc) => set_document(state, doc, (!corel).then(|| path.to_path_buf())),
         Err(e) => error(state, "Could not open", format!("{}: {e}", path.display())),
     }
 }
 
 /// What Import offers.
-pub const IMPORT_EXTENSIONS: &[&str] = &["svg", "png", "jpg", "jpeg"];
+pub const IMPORT_EXTENSIONS: &[&str] = &["svg", "png", "jpg", "jpeg", "cdr", "cmx"];
 
-/// Ask for an SVG, PNG or JPEG file and place it in the middle of the page, selected.
+/// Ask for an SVG, PNG, JPEG or CorelDRAW file and place it in the middle of the page,
+/// selected.
 pub fn import(state: &mut AppState) {
-    let Some(path) = state.dialogs.open_file("Import", "SVG, PNG or JPEG image", IMPORT_EXTENSIONS) else {
+    let Some(path) = state.dialogs.open_file("Import", "SVG, PNG, JPEG or CorelDRAW file", IMPORT_EXTENSIONS) else {
         return;
     };
     import_path(state, &path);
 }
 
+/// The first page of a CorelDRAW file that has anything on it, as one group when it has
+/// several objects (as an SVG file comes in).
+fn import_cdr(data: &[u8]) -> Result<Vec<vs_core::Object>, vs_io::IoError> {
+    let mut objects = vs_io::read_cdr(data)?.into_iter().map(|p| p.objects).find(|o| !o.is_empty()).unwrap_or_default();
+    if objects.len() > 1 {
+        objects = vec![vs_core::Object::new(vs_core::ObjectId(0), vs_core::Shape::Group { children: objects }, vs_core::Style::default())];
+    }
+    Ok(objects)
+}
+
 pub fn import_path(state: &mut AppState, path: &Path) {
-    let svg = path.extension().is_some_and(|e| e.eq_ignore_ascii_case("svg") || e.eq_ignore_ascii_case("svgz"));
-    let result = std::fs::read(path).map_err(vs_io::IoError::from).and_then(|data| {
-        if svg { vs_io::import_svg(&data) } else { vs_io::import_bitmap(&data).map(|o| vec![o]) }
+    let extension = path.extension().and_then(|e| e.to_str()).unwrap_or_default().to_ascii_lowercase();
+    let result = std::fs::read(path).map_err(vs_io::IoError::from).and_then(|data| match extension.as_str() {
+        "svg" | "svgz" => vs_io::import_svg(&data),
+        _ if vs_io::is_cdr_path(path) => import_cdr(&data),
+        _ => vs_io::import_bitmap(&data).map(|o| vec![o]),
     });
     match result.map(|objects| place_on_page(state, objects)) {
         Ok(true) => state.status = Some(format!("Imported {}", path.display())),

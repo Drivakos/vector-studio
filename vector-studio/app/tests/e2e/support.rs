@@ -35,6 +35,8 @@ pub struct Script {
     pub clipboard: Option<String>,
     /// Titles of every dialog shown, in order.
     pub shown: Vec<String>,
+    /// The file types each open dialog offered, in order.
+    pub offered: Vec<Vec<String>>,
     pub errors: Vec<String>,
 }
 
@@ -47,9 +49,10 @@ impl Dialogs for ScriptedDialogs {
         s.save_paths.pop_front()
     }
 
-    fn open_file(&mut self, title: &str, _filter: &str, _extensions: &[&str]) -> Option<PathBuf> {
+    fn open_file(&mut self, title: &str, _filter: &str, extensions: &[&str]) -> Option<PathBuf> {
         let mut s = self.0.borrow_mut();
         s.shown.push(title.to_owned());
+        s.offered.push(extensions.iter().map(|e| (*e).to_owned()).collect());
         s.open_paths.pop_front()
     }
 

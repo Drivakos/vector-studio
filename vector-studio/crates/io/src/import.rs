@@ -3,7 +3,7 @@
 use resvg::usvg;
 use std::sync::Arc;
 
-use vs_core::kurbo::{Affine, BezPath, Point, Rect};
+use vs_core::kurbo::{Affine, BezPath, Point, Rect, Size};
 use vs_core::{Bitmap, BitmapFormat, Fill, Gradient, GradientKind, GradientStop, LineCap, LineJoin, LineStyle, Object, ObjectId, Outline, Rgba, Shape, Style};
 
 use crate::IoError;
@@ -13,16 +13,42 @@ const PX_TO_PT: f64 = 72.0 / 96.0;
 
 /// Read an SVG file as objects in page space (points), with the drawing's top-left corner
 /// at the origin. Several top-level shapes come back as one group. Shapes, groups,
-/// solid and fountain fills, outlines and opacity are kept; text, images, patterns,
-/// clipping, masks and filters are not.
+/// solid and fountain fills, outlines, opacity and PNG and JPEG images are kept, and text
+/// comes in as curves drawn with the system's fonts; patterns, clipping, masks and
+/// filters are not.
 pub fn import_svg(data: &[u8]) -> Result<Vec<Object>, IoError> {
-    let tree = usvg::Tree::from_data(data, &usvg::Options::default()).map_err(|e| IoError::Svg(e.to_string()))?;
-    let mut objects = Vec::new();
-    collect(tree.root(), 1.0, &mut objects);
+    let (_, mut objects) = svg_drawing(data)?;
     if objects.len() > 1 {
         objects = vec![object(Shape::Group { children: objects }, Style::default())];
     }
     Ok(objects)
+}
+
+/// An SVG drawing's size in points and its objects in page space, the top-level ones
+/// side by side (see [`import_svg`]).
+pub(crate) fn svg_drawing(data: &[u8]) -> Result<(Size, Vec<Object>), IoError> {
+    let mut options = usvg::Options::default();
+    // Loading the system's fonts takes a moment, so it waits for a drawing with text.
+    if [b"<text".as_slice(), b":text"].iter().any(|t| data.windows(t.len()).any(|w| w == *t)) {
+        options.fontdb = system_fonts();
+    }
+    let tree = usvg::Tree::from_data(data, &options).map_err(|e| IoError::Svg(e.to_string()))?;
+    let size = Size::new(f64::from(tree.size().width()) * PX_TO_PT, f64::from(tree.size().height()) * PX_TO_PT);
+    let mut objects = Vec::new();
+    collect(tree.root(), 1.0, &mut objects);
+    Ok((size, objects))
+}
+
+/// The system's fonts, loaded once.
+fn system_fonts() -> Arc<usvg::fontdb::Database> {
+    static FONTS: std::sync::OnceLock<Arc<usvg::fontdb::Database>> = std::sync::OnceLock::new();
+    FONTS
+        .get_or_init(|| {
+            let mut fonts = usvg::fontdb::Database::new();
+            fonts.load_system_fonts();
+            Arc::new(fonts)
+        })
+        .clone()
 }
 
 /// Read a PNG or JPEG file as a bitmap object at 96 pixels per inch, its top-left corner
@@ -53,21 +79,29 @@ fn affine(t: usvg::Transform) -> Affine {
 /// the groups around them.
 fn collect(group: &usvg::Group, opacity: f64, out: &mut Vec<Object>) {
     for node in group.children() {
-        match node {
-            usvg::Node::Group(g) => {
-                let mut children = Vec::new();
-                collect(g, opacity * f64::from(g.opacity().get()), &mut children);
-                match children.len() {
-                    0 => {}
-                    1 => out.append(&mut children),
-                    _ => out.push(object(Shape::Group { children }, Style::default())),
-                }
+        // Text comes as its glyphs' outlines, one object for the whole text.
+        let inner = match node {
+            usvg::Node::Group(g) => Some(g.as_ref()),
+            usvg::Node::Text(t) => Some(t.flattened()),
+            _ => None,
+        };
+        if let Some(g) = inner {
+            let mut children = Vec::new();
+            collect(g, opacity * f64::from(g.opacity().get()), &mut children);
+            match children.len() {
+                0 => {}
+                1 => out.append(&mut children),
+                _ => out.push(object(Shape::Group { children }, Style::default())),
             }
+            continue;
+        }
+        match node {
             usvg::Node::Path(p) if p.is_visible() => {
                 if let Some(obj) = path_object(p, opacity) {
                     out.push(obj);
                 }
             }
+            usvg::Node::Image(i) if i.is_visible() => out.extend(image_object(i, opacity)),
             _ => {}
         }
     }
@@ -130,6 +164,23 @@ fn path_object(p: &usvg::Path, opacity: f64) -> Option<Object> {
     Some(object(Shape::Curve { path }, style))
 }
 
+/// A PNG or JPEG image as a bitmap; other kinds are left out.
+fn image_object(image: &usvg::Image, opacity: f64) -> Option<Object> {
+    let (format, data) = match image.kind() {
+        usvg::ImageKind::PNG(d) => (BitmapFormat::Png, d),
+        usvg::ImageKind::JPEG(d) => (BitmapFormat::Jpeg, d),
+        _ => return None,
+    };
+    let (width, height) = image::ImageReader::new(std::io::Cursor::new(&data[..])).with_guessed_format().ok()?.into_dimensions().ok()?;
+    // usvg places the image at its own size; the transform takes it to its place.
+    let size = image.size();
+    let rect = Rect::new(0.0, 0.0, f64::from(size.width()), f64::from(size.height()));
+    let style = Style { transparency: 1.0 - opacity.clamp(0.0, 1.0), ..Style::default() };
+    let mut obj = object(Shape::Image(Bitmap { format, width, height, rect, data: data.clone() }), style);
+    obj.transform = Affine::scale(PX_TO_PT) * affine(image.abs_transform());
+    Some(obj)
+}
+
 fn color(c: usvg::Color, alpha: f64) -> Rgba {
     Rgba { r: c.red, g: c.green, b: c.blue, a: (alpha.clamp(0.0, 1.0) * 255.0).round() as u8 }
 }
@@ -179,6 +230,33 @@ pub(crate) mod tests {
         assert_eq!(o.style.fill, Some(Fill::Solid(Rgba::rgb(255, 0, 0))));
         let outline = o.style.outline.as_ref().expect("outline");
         assert_eq!((outline.color, outline.width), (Rgba::rgb(0, 0, 255), 3.0));
+    }
+
+    #[test]
+    fn text_comes_in_as_curves_in_its_place() {
+        let objs = import(r##"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100"><text x="20" y="60" font-family="Helvetica, Arial, sans-serif" font-size="40" fill="#0000ff">Hi</text></svg>"##);
+        assert_eq!(objs.len(), 1, "one object for the text: {objs:?}");
+        assert!(matches!(objs[0].shape, Shape::Curve { .. }), "{:?}", objs[0].shape);
+        assert_eq!(objs[0].style.fill, Some(Fill::Solid(Rgba::rgb(0, 0, 255))));
+        // Starts at x = 20 px (15 pt), stands on the baseline at y = 60 px (45 pt), and
+        // "H" is about 0.7 of the 40 px size tall.
+        let b = objs[0].world_bounds();
+        assert!((b.x0 - 15.0).abs() < 3.0 && (b.y1 - 45.0).abs() < 1.0 && (b.height() - 21.0).abs() < 3.0, "{b:?}");
+    }
+
+    #[test]
+    fn an_embedded_png_comes_in_as_a_bitmap_where_it_was() {
+        let mut png = Vec::new();
+        image::RgbaImage::from_pixel(4, 2, image::Rgba([0, 128, 0, 255])).write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
+        let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &png);
+        let objs = import(&format!(r#"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100"><image x="40" y="20" width="80" height="40" opacity="0.5" href="data:image/png;base64,{b64}"/></svg>"#));
+        let [o] = objs.as_slice() else { panic!("one object: {objs:?}") };
+        let Shape::Image(b) = &o.shape else { panic!("a bitmap: {:?}", o.shape) };
+        assert_eq!((b.width, b.height, b.format), (4, 2, BitmapFormat::Png));
+        assert_eq!(b.data.as_slice(), png.as_slice(), "the file's own bytes");
+        let r = o.world_bounds();
+        assert!((r.x0 - 30.0).abs() < 1e-6 && (r.y0 - 15.0).abs() < 1e-6 && (r.width() - 60.0).abs() < 1e-6 && (r.height() - 30.0).abs() < 1e-6, "{r:?}");
+        assert!((o.style.transparency - 0.5).abs() < 1e-6);
     }
 
     #[test]

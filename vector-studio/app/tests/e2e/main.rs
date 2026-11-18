@@ -36,3 +36,4 @@ mod find;
 mod pages;
 mod view;
 mod tracing;
+mod corel;

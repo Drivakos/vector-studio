@@ -1,9 +1,12 @@
-//! File formats: the native document format, SVG / PNG / PDF export and SVG import.
+//! File formats: the native document format, SVG / PNG / PDF export, SVG import and
+//! CorelDRAW files.
 
 mod bitmaps;
+mod cdr;
 mod import;
 
 pub use bitmaps::{apply_effect, bitmap_from_pixels, bitmap_pixels, drawn_bounds, glyph_image, objects_to_bitmap, rasterize, resample, shrink, trim_transparent};
+pub use cdr::{CAN_READ_CDR, CDR_EXTENSIONS, CdrPage, cdr_document, is_cdr_path, open_cdr, read_cdr, testing as cdr_testing};
 pub use import::{import_bitmap, import_svg};
 
 use std::fmt::Write as _;
@@ -30,6 +33,7 @@ pub enum IoError {
     Pdf(String),
     Svg(String),
     Image(String),
+    Cdr(String),
 }
 
 impl std::fmt::Display for IoError {
@@ -44,6 +48,7 @@ impl std::fmt::Display for IoError {
             IoError::Pdf(e) => write!(f, "PDF export failed: {e}"),
             IoError::Svg(e) => write!(f, "not a readable SVG file ({e})"),
             IoError::Image(e) => write!(f, "not a readable image ({e})"),
+            IoError::Cdr(e) => write!(f, "{e}"),
         }
     }
 }
