@@ -69,6 +69,20 @@ fn open_turns_each_coreldraw_page_into_a_page_and_save_asks_for_a_new_file() {
 }
 
 #[test]
+fn a_coreldraw_file_dropped_on_the_window_opens() {
+    if !vs_io::CAN_READ_CDR {
+        return;
+    }
+    let path = two_pages("corel-drop", "Poster.cdr");
+    let mut app = E2e::new();
+    app.drop_files(&[path]);
+    assert!(app.script.borrow().errors.is_empty(), "{:?}", app.script.borrow().errors);
+    assert_eq!(app.doc().title, "Poster");
+    assert_eq!(app.doc().page_count(), 2);
+    assert_eq!(app.state().file_path, None);
+}
+
+#[test]
 fn import_places_a_coreldraw_page_as_one_selected_group() {
     if !vs_io::CAN_READ_CDR {
         return;

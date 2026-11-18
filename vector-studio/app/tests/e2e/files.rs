@@ -47,6 +47,36 @@ fn open_replaces_the_document_and_command_line_files_open_at_start() {
 }
 
 #[test]
+fn dropped_files_open_the_drawing_then_import_the_images() {
+    let dir = temp_dir("drop");
+    let drawing = dir.join("two.vstudio");
+    let mut doc = vs_core::Document::new("two");
+    doc.insert_page_after(0).unwrap();
+    vs_io::save_document(&doc, &drawing).unwrap();
+    let svg = dir.join("mark.svg");
+    std::fs::write(&svg, r##"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><rect width="40" height="40" fill="#ff0000"/></svg>"##).unwrap();
+    let notes = dir.join("notes.txt");
+    std::fs::write(&notes, "hello").unwrap();
+
+    let mut app = E2e::new();
+    app.draw_rect(100.0, 100.0, 200.0, 200.0);
+    app.script.borrow_mut().unsaved.push_back(Unsaved::Discard);
+    app.drop_files(&[svg, drawing.clone(), notes]);
+
+    assert!(app.script.borrow().shown.iter().any(|t| t == "Unsaved changes"), "asks before replacing the drawing");
+    assert_eq!(app.state().file_path.as_deref(), Some(drawing.as_path()), "the drawing opens");
+    assert_eq!(app.doc().page_count(), 2);
+    assert_eq!(app.objects().len(), 1, "the SVG goes into the opened drawing");
+    assert_eq!(app.selection(), vec![app.objects()[0].id]);
+    let errors = app.script.borrow().errors.clone();
+    assert!(errors.len() == 1 && errors[0].starts_with("Could not open") && errors[0].contains("notes.txt"), "{errors:?}");
+
+    app.drop_files(&[dir.join("mark.svg")]);
+    assert_eq!(app.objects().len(), 2, "an image alone is imported, nothing asked");
+    assert_eq!(app.script.borrow().shown.iter().filter(|t| *t == "Unsaved changes").count(), 1);
+}
+
+#[test]
 fn a_damaged_file_shows_an_error_and_keeps_the_document() {
     let dir = temp_dir("damaged");
     let path = dir.join("bad.vstudio");

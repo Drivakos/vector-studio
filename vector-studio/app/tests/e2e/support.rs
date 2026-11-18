@@ -97,6 +97,20 @@ impl ClipboardText for ScriptedClipboard {
     }
 }
 
+/// A file dropped on the window.
+#[derive(Debug)]
+struct Dropped(PathBuf);
+
+impl egui::DroppedFile for Dropped {
+    fn path(&self) -> &std::path::Path {
+        &self.0
+    }
+
+    fn bytes(&self) -> Result<Vec<u8>, String> {
+        std::fs::read(&self.0).map_err(|e| e.to_string())
+    }
+}
+
 pub struct E2e {
     pub h: Harness<'static, VectorStudioApp>,
     pub script: Rc<RefCell<Script>>,
@@ -305,6 +319,13 @@ impl E2e {
     /// Let `seconds` of frames pass.
     pub fn wait(&mut self, seconds: f32) {
         self.h.run_steps((seconds * 60.0) as usize);
+    }
+
+    /// Drop `paths` on the window, as from the Finder.
+    pub fn drop_files(&mut self, paths: &[PathBuf]) {
+        let files = paths.iter().map(|p| std::sync::Arc::new(Dropped(p.clone())) as egui::DroppedFileHandle);
+        self.h.input_mut().dropped_files.extend(files);
+        self.run();
     }
 
     // ---- Keyboard ----------------------------------------------------------------

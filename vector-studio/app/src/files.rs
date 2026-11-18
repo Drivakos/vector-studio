@@ -223,6 +223,26 @@ pub fn import(state: &mut AppState) {
     import_path(state, &path);
 }
 
+/// Files dropped on the window. The first drawing among them (Vector Studio or CorelDRAW)
+/// opens in place of this one, after asking to save changes; then SVG, PNG and JPEG files
+/// are imported into it. Anything else is refused.
+pub fn open_dropped(state: &mut AppState, paths: &[PathBuf]) {
+    let extension = |p: &Path| p.extension().and_then(|e| e.to_str()).unwrap_or_default().to_ascii_lowercase();
+    let drawing = |p: &Path| extension(p) == FILE_EXTENSION || vs_io::is_cdr_path(p);
+    if let Some(path) = paths.iter().find(|p| drawing(p))
+        && confirm_discard(state)
+    {
+        open_path(state, path);
+    }
+    for path in paths.iter().filter(|p| !drawing(p)) {
+        if IMPORT_EXTENSIONS.contains(&extension(path).as_str()) {
+            import_path(state, path);
+        } else {
+            error(state, "Could not open", format!("{}: not a drawing or image this app reads", path.display()));
+        }
+    }
+}
+
 /// The first page of a CorelDRAW file that has anything on it, as one group when it has
 /// several objects (as an SVG file comes in).
 fn import_cdr(data: &[u8]) -> Result<Vec<vs_core::Object>, vs_io::IoError> {

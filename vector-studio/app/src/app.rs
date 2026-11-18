@@ -1435,6 +1435,10 @@ impl eframe::App for VectorStudioApp {
             commands.extend(menu.drain());
         }
         self.handle_keys(&ctx, &mut commands);
+        let dropped: Vec<_> = ctx.input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).collect());
+        if !dropped.is_empty() {
+            files::open_dropped(&mut self.state, &dropped);
+        }
 
         if self.state.preview.is_some() {
             egui::CentralPanel::default()
