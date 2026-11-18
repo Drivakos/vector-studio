@@ -5,6 +5,7 @@ use vello::Scene;
 use vello::peniko::{BlendMode, Brush, Color, Fill, Gradient, Mix};
 use vs_core::{GradientKind, Page, Rgba, Shape};
 
+use crate::proof::Proof;
 use crate::viewport::Viewport;
 
 #[derive(Clone, Copy, Debug)]
@@ -53,15 +54,24 @@ impl ViewMode {
 }
 
 /// How the canvas draws objects: the view mode and View-menu simulations.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Look {
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Look<'a> {
     pub mode: ViewMode,
     /// Simulate Overprints: overprinted fills and outlines multiply with what is below,
     /// as inks printed on top of each other do.
     pub overprints: bool,
+    /// Proof Colors: every colour as it would print.
+    pub proof: Option<&'a Proof>,
 }
 
-impl From<ViewMode> for Look {
+impl Look<'_> {
+    /// `c` as this look shows it.
+    pub fn color(&self, c: Rgba) -> Rgba {
+        self.proof.map_or(c, |p| p.color(c))
+    }
+}
+
+impl From<ViewMode> for Look<'_> {
     fn from(mode: ViewMode) -> Self {
         Self { mode, ..Self::default() }
     }
@@ -113,14 +123,19 @@ pub fn to_color(c: Rgba) -> Color {
 
 /// The brush for `fill` at `opacity`, in the fill's (object-local) space.
 pub fn to_brush(fill: &vs_core::Fill, opacity: f64) -> Brush {
+    to_brush_with(fill, opacity, &|c| c)
+}
+
+/// [`to_brush`] with every colour passed through `tint`.
+fn to_brush_with(fill: &vs_core::Fill, opacity: f64, tint: &dyn Fn(Rgba) -> Rgba) -> Brush {
     match fill {
-        vs_core::Fill::Solid(c) => Brush::Solid(to_color(c.faded(opacity))),
+        vs_core::Fill::Solid(c) => Brush::Solid(to_color(tint(*c).faded(opacity))),
         vs_core::Fill::Gradient(g) => {
             let gradient = match g.kind {
                 GradientKind::Linear => Gradient::new_linear(g.start, g.end),
                 GradientKind::Radial => Gradient::new_radial(g.start, (g.end - g.start).hypot() as f32),
             };
-            let stops: Vec<(f32, Color)> = g.stops.iter().map(|s| (s.offset as f32, to_color(s.color.faded(opacity)))).collect();
+            let stops: Vec<(f32, Color)> = g.stops.iter().map(|s| (s.offset as f32, to_color(tint(s.color).faded(opacity)))).collect();
             Brush::Gradient(gradient.with_stops(stops.as_slice()))
         }
     }
@@ -130,15 +145,17 @@ pub fn to_brush(fill: &vs_core::Fill, opacity: f64) -> Brush {
 ///
 /// `pixels_per_point` converts the viewport's logical screen points to the
 /// physical pixels of the target texture.
-pub fn build_page_scene(
+pub fn build_page_scene<'a>(
     scene: &mut Scene,
     page: &Page,
     viewport: &Viewport,
     pixels_per_point: f64,
     colors: &CanvasColors,
-    look: impl Into<Look>,
+    look: impl Into<Look<'a>>,
 ) {
-    let Look { mode, overprints } = look.into();
+    let look = look.into();
+    let Look { mode, overprints, proof } = look;
+    let tint = |c: Rgba| look.color(c);
     let screen = Affine::scale(pixels_per_point);
     let doc = screen * viewport.transform();
     let page_rect = page.bounds();
@@ -165,14 +182,18 @@ pub fn build_page_scene(
     for object in page.shown_objects() {
         for leaf in object.leaves() {
             let opacity = leaf.style.opacity();
-            let fill = leaf.fill().map(|f| to_brush(f, opacity));
+            let fill = leaf.fill().map(|f| to_brush_with(f, opacity, &tint));
             let outline = leaf.style.outline.as_ref().map(|o| {
                 let width = if o.width > 0.0 { o.page_width(leaf.transform) } else { hairline };
-                (o.stroke(width), to_color(o.color.faded(opacity)), o.behind_fill)
+                (o.stroke(width), to_color(tint(o.color).faded(opacity)), o.behind_fill)
             });
             let draw_fill = |scene: &mut Scene| {
                 if let Shape::Image(bitmap) = leaf.shape {
-                    if let Some(image) = crate::bitmaps::decoded(bitmap) {
+                    let image = match proof {
+                        Some(p) => p.bitmap(bitmap),
+                        None => crate::bitmaps::decoded(bitmap),
+                    };
+                    if let Some(image) = image {
                         let place = Affine::translate(bitmap.rect.origin().to_vec2())
                             * Affine::scale_non_uniform(bitmap.rect.width() / f64::from(image.width), bitmap.rect.height() / f64::from(image.height));
                         let mut brush = vello::peniko::ImageBrush::new(image);

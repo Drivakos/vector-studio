@@ -91,6 +91,7 @@ pub enum Command {
     /// Object > Overprint Fill / Overprint Outline: on and off.
     Overprint(vs_core::OverprintPart),
     SimulateOverprints,
+    ProofColors,
     ConvertOutline,
     ConvertText,
     EditText,
@@ -254,6 +255,7 @@ impl Command {
             "object.overprint_fill" => Overprint(vs_core::OverprintPart::Fill),
             "object.overprint_outline" => Overprint(vs_core::OverprintPart::Outline),
             "view.simulate_overprints" => SimulateOverprints,
+            "view.proof_colors" => ProofColors,
             "object.convert_outline" => ConvertOutline,
             "text.convert" => ConvertText,
             "text.edit" => EditText,
@@ -442,6 +444,7 @@ impl Command {
         Command::Overprint(vs_core::OverprintPart::Fill),
         Command::Overprint(vs_core::OverprintPart::Outline),
         Command::SimulateOverprints,
+        Command::ProofColors,
         Command::ConvertOutline,
         Command::ConvertText,
         Command::EditText,

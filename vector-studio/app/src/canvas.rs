@@ -116,7 +116,7 @@ impl GpuCanvas {
         self.scene.reset();
         // A page background shows on screen whether or not it prints and exports.
         let colors = CanvasColors {
-            page: state.doc.background.map_or(self.colors.page, |b| vs_render::to_color(b.color)),
+            page: state.doc.background.map_or(self.colors.page, |b| vs_render::to_color(view.look.color(b.color))),
             ..self.colors
         };
         let page = crate::symbol_menu::shown_page(state);
@@ -142,11 +142,21 @@ impl GpuCanvas {
     }
 }
 
+thread_local! {
+    /// View > Proof Colors' soft proof, loaded once.
+    static PROOF: Option<vs_render::Proof> = vs_render::Proof::system();
+}
+
+/// Whether View > Proof Colors can be used: the system's CMYK profile loaded.
+pub fn can_proof() -> bool {
+    PROOF.with(Option::is_some)
+}
+
 /// What the canvas shows: the page through `viewport`, drawn in `mode`, on the desk
 /// colour unless `pasteboard` gives another.
-struct View {
+struct View<'a> {
     viewport: vs_render::Viewport,
-    look: vs_render::Look,
+    look: vs_render::Look<'a>,
     pasteboard: Option<vs_render::vello::peniko::Color>,
 }
 
@@ -191,12 +201,15 @@ pub fn canvas_pane_ui(
         (canvas_rect.height() * ppp).round().max(0.0) as u32,
     ];
     let painter = ui.painter_at(canvas_rect);
-    let view = View {
-        viewport: state.viewport,
-        look: vs_render::Look { mode: state.view_mode, overprints: state.simulate_overprints },
-        pasteboard: None,
-    };
-    match gpu.render(state, &view, size_px, ppp as f64) {
+    let rendered = PROOF.with(|proof| {
+        let look = vs_render::Look {
+            mode: state.view_mode,
+            overprints: state.simulate_overprints,
+            proof: proof.as_ref().filter(|_| state.proof_colors),
+        };
+        gpu.render(state, &View { viewport: state.viewport, look, pasteboard: None }, size_px, ppp as f64)
+    });
+    match rendered {
         Some((tex, place)) => {
             let place = place.translate(canvas_rect.min.to_vec2());
             painter.image(tex, place, Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0)), Color32::WHITE);

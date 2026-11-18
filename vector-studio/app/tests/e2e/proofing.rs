@@ -97,3 +97,54 @@ fn overprint_items_need_a_selection_and_are_saved() {
     assert!(back.overprints(&[cyan], OverprintPart::Fill), "saved with the drawing");
     assert!(!back.overprints(&[cyan], OverprintPart::Outline));
 }
+
+#[test]
+fn proof_colors_shows_screen_colours_as_they_would_print() {
+    let dir = crate::support::temp_dir("proof");
+    let svg = dir.join("screen.svg");
+    std::fs::write(
+        &svg,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="96">
+            <rect width="96" height="96" fill="#0000ff"/>
+            <rect x="104" width="96" height="96" fill="#808080"/>
+        </svg>"##,
+    )
+    .unwrap();
+    let mut app = E2e::new();
+    app.script.borrow_mut().open_paths.push_back(svg);
+    app.shortcut(Modifiers::COMMAND, Key::I);
+    let b = app.objects()[0].world_bounds();
+    let (blue, grey) = ((b.x0 + 36.0, b.center().y), (b.x1 - 36.0, b.center().y));
+    app.click_doc(10.0, 800.0);
+    assert!(near(app.pixel(blue.0, blue.1), [0, 0, 255], 2), "screen blue: {:?}", app.pixel(blue.0, blue.1));
+
+    assert!(app.menu_enabled(&["View", "Proof Colors"]), "macOS has a CMYK profile");
+    app.menu(&["View", "Proof Colors"]);
+    assert!(app.state().proof_colors);
+    let px = app.pixel(blue.0, blue.1);
+    assert!(px[0] > 20 && px[1] > 20 && px[2] < 235, "inks can't print screen blue: {px:?}");
+    let px = app.pixel(grey.0, grey.1);
+    assert!(px[..3].iter().all(|v| v.abs_diff(128) < 20), "grey stays grey: {px:?}");
+    assert!(near(app.pixel(10.0, 10.0), [255, 255, 255], 2), "paper stays white");
+    assert_eq!(app.objects()[0].leaves()[0].style.fill, Some(vs_core::Rgba::rgb(0, 0, 255).into()), "the drawing keeps its colours");
+
+    app.menu(&["View", "Proof Colors"]);
+    assert!(!app.state().proof_colors);
+    assert!(near(app.pixel(blue.0, blue.1), [0, 0, 255], 2), "off again: {:?}", app.pixel(blue.0, blue.1));
+}
+
+#[test]
+fn proof_colors_reaches_bitmaps() {
+    let path = crate::support::temp_dir("proof-bitmap").join("blue.png");
+    let img = image::RgbaImage::from_pixel(64, 64, image::Rgba([0, 0, 255, 255]));
+    img.save(&path).unwrap();
+    let mut app = E2e::new();
+    app.script.borrow_mut().open_paths.push_back(path);
+    app.shortcut(Modifiers::COMMAND, Key::I);
+    let c = app.objects()[0].world_bounds().center();
+    app.click_doc(10.0, 800.0);
+    assert!(near(app.pixel(c.x, c.y), [0, 0, 255], 2), "{:?}", app.pixel(c.x, c.y));
+    app.menu(&["View", "Proof Colors"]);
+    let px = app.pixel(c.x, c.y);
+    assert!(px[0] > 20 && px[1] > 20 && px[2] < 235, "proofed bitmap: {px:?}");
+}

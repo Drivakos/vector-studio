@@ -176,6 +176,8 @@ pub struct AppState {
     pub view_mode: vs_render::ViewMode,
     /// View > Simulate Overprints (not saved).
     pub simulate_overprints: bool,
+    /// View > Proof Colors (not saved).
+    pub proof_colors: bool,
     /// Full-Screen Preview is on.
     pub preview: Option<Preview>,
     pub page_sorter: crate::page_sorter::PageSorter,
@@ -322,6 +324,7 @@ impl AppState {
             symbol_manager: false,
             view_mode: Default::default(),
             simulate_overprints: false,
+            proof_colors: false,
             preview: None,
             page_sorter: Default::default(),
             last_action: None,
@@ -495,6 +498,7 @@ impl VectorStudioApp {
             Command::ToggleAlignmentGuides => (true, Some(state.prefs.alignment_guides)),
             Command::ToggleNonprinting => (true, Some(state.prefs.show_nonprinting)),
             Command::SimulateOverprints => (true, Some(state.simulate_overprints)),
+            Command::ProofColors => (crate::canvas::can_proof(), Some(state.proof_colors)),
             Command::Overprint(part) => (state.selected_objects().any(|o| !o.locked), Some(doc.overprints(&state.selection, part))),
             Command::ToggleDynamicGuides => (true, Some(state.prefs.dynamic_guides)),
             Command::ToggleSnap(target) => (true, Some(*state.prefs.snap_flag(target))),
@@ -1065,6 +1069,10 @@ impl VectorStudioApp {
             }
             Command::SimulateOverprints => {
                 let _: () = s.simulate_overprints ^= true;
+                Ok(())
+            }
+            Command::ProofColors => {
+                s.proof_colors = !s.proof_colors && crate::canvas::can_proof();
                 Ok(())
             }
             Command::Overprint(part) => {
