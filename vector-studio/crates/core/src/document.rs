@@ -572,6 +572,9 @@ pub struct Document {
     /// Symbol definitions, which symbol instances copy.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub symbols: Vec<crate::symbols::Symbol>,
+    /// Print Merge data: the fields text can hold, and the records merged into them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merge: Option<crate::merge::MergeData>,
     /// What each clone last took from its master (see [`Document::sync_clones`]).
     #[serde(skip)]
     pub(crate) clone_sync: crate::clones::CloneSync,
@@ -595,6 +598,7 @@ impl Document {
             background: None,
             properties: DocumentProperties::default(),
             symbols: Vec::new(),
+            merge: None,
             clone_sync: Default::default(),
         };
         let size = PAGE_PRESETS[1].size(Orientation::Portrait);
@@ -603,7 +607,7 @@ impl Document {
         doc
     }
 
-    fn alloc_id(&mut self) -> u64 {
+    pub(crate) fn alloc_id(&mut self) -> u64 {
         let id = self.next_id;
         self.next_id += 1;
         id
@@ -625,7 +629,7 @@ impl Document {
     /// Whether `other` has the same drawing: pages and document settings, ignoring view
     /// state such as the active page. Undo steps and unsaved changes follow this.
     pub fn same_content(&self, other: &Document) -> bool {
-        self.pages == other.pages && self.background == other.background && self.properties == other.properties
+        self.pages == other.pages && self.background == other.background && self.properties == other.properties && self.merge == other.merge
     }
 
     /// The background colour to print and export, if there is one.

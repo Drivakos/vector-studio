@@ -26,6 +26,7 @@ pub mod page_sorter;
 pub mod paint_tools;
 pub mod panels;
 pub mod paste_special;
+pub mod print_merge;
 pub mod printing;
 pub mod symbol_menu;
 pub mod templates;

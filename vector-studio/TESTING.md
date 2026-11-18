@@ -83,6 +83,7 @@ Names must be unique on screen, or a test cannot tell widgets apart.
 | Save as Template (name, replace prompt), New from Template (list, Open, Browse…, untitled result) | `files.rs` |
 | Export For Web (72 dpi PNG, pixel size, extension added), Print-Ready PDF (trim and bleed boxes, cancel keeps the window) | `files.rs` |
 | Print (no printer, default printer, copies, page range and current page, the PDF sent; the print queue is scripted) | `files.rs` |
+| Print Merge (import errors and data, record stepping, a field at the caret or as new text, Remove Data and undo, data saved with the drawing, Print… of the merged pages, Merge to New Document: unsaved prompt, filled pages, unsaved result) | `print_merge.rs` |
 | Group, Ungroup, Ungroup All, Lock, Unlock, Unlock All | `groups.rs` |
 | Join Curves (Object menu) closing two nearly-touching paths, Convert Outline to Object (Cmd+Shift+Q) and how it renders | `curves.rs` |
 | Crop tool (Enter, Esc, double-click on the selection, canvas result, undo), Knife tool, Virtual Segment Delete (the part between crossings, a miss, undo), Eraser tool (size from the property bar, canvas result) | `cutting.rs` |

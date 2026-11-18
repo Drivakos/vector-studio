@@ -22,7 +22,7 @@ pub struct Symbol {
 }
 
 /// Turn `obj` and everything in it from instances into plain groups.
-fn unlink(obj: &mut Object) {
+pub(crate) fn unlink(obj: &mut Object) {
     obj.symbol = None;
     if let Shape::Group { children } = &mut obj.shape {
         children.iter_mut().for_each(unlink);

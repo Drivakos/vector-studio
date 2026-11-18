@@ -150,6 +150,7 @@ pub struct AppState {
     /// The bitmap effect whose settings window is open.
     pub effect: Option<crate::bitmap_menu::EffectDialog>,
     pub insert_qr: Option<crate::insert_codes::QrDialog>,
+    pub print_merge: Option<crate::print_merge::PrintMergeDialog>,
     pub glyphs: Option<crate::glyphs::GlyphsDialog>,
     pub insert_barcode: Option<crate::insert_codes::BarcodeDialog>,
     pub save_template: Option<crate::templates::SaveTemplateDialog>,
@@ -298,6 +299,7 @@ impl AppState {
             resample: None,
             effect: None,
             insert_qr: None,
+            print_merge: None,
             glyphs: None,
             insert_barcode: None,
             save_template: None,
@@ -603,6 +605,10 @@ impl VectorStudioApp {
             }
             Command::Print => {
                 crate::printing::open(s);
+                Ok(())
+            }
+            Command::PrintMerge => {
+                crate::print_merge::open(s);
                 Ok(())
             }
             Command::DocumentProperties => {
@@ -1443,6 +1449,7 @@ impl eframe::App for VectorStudioApp {
         files::export_window(&ctx, &mut self.state);
         files::document_properties_window(&ctx, &mut self.state);
         crate::printing::print_window(&ctx, &mut self.state);
+        crate::print_merge::print_merge_window(&ctx, &mut self.state);
         crate::text_tool::edit_text_window(&ctx, &mut self.state);
         crate::paste_special::paste_special_window(&ctx, &mut self.state);
         crate::page_dialogs::go_to_page_window(&ctx, &mut self.state);

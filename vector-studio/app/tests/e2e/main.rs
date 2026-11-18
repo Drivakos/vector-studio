@@ -25,6 +25,7 @@ mod edit;
 mod objects;
 mod layers;
 mod powerclip;
+mod print_merge;
 mod symbols;
 mod perspective;
 mod lines;

@@ -71,11 +71,15 @@ pub struct PrintDialog {
     copies: u32,
     pages: PrintPages,
     range: String,
+    /// Print Merge: the merged drawing to print in place of the open one.
+    merged: Option<vs_core::Document>,
+    /// Print Merge: how many records were merged.
+    records: usize,
 }
 
 impl Default for PrintDialog {
     fn default() -> Self {
-        Self { open: false, printers: Vec::new(), printer: None, copies: 1, pages: PrintPages::All, range: String::new() }
+        Self { open: false, printers: Vec::new(), printer: None, copies: 1, pages: PrintPages::All, range: String::new(), merged: None, records: 0 }
     }
 }
 
@@ -106,14 +110,32 @@ pub fn open(state: &mut AppState) {
     }
     dialog.printers = printers;
     dialog.open = true;
+    dialog.merged = None;
+}
+
+/// Open the Print window for the pages Print Merge made from `records` records.
+pub fn open_merged(state: &mut AppState, doc: vs_core::Document, records: usize) {
+    open(state);
+    let dialog = &mut state.print;
+    dialog.merged = Some(doc);
+    dialog.records = records;
+    if dialog.pages == PrintPages::Current {
+        dialog.pages = PrintPages::All;
+    }
+}
+
+/// The drawing the Print window prints: the merged one, or the open one.
+fn source(state: &AppState) -> &vs_core::Document {
+    state.print.merged.as_ref().unwrap_or(&state.doc)
 }
 
 /// The pages the Print window would print, 0-based.
 fn chosen_pages(state: &AppState) -> Option<Vec<usize>> {
-    let count = state.doc.page_count();
+    let doc = source(state);
+    let count = doc.page_count();
     match state.print.pages {
         PrintPages::All => Some((0..count).collect()),
-        PrintPages::Current => Some(vec![state.doc.active_page_index()]),
+        PrintPages::Current => Some(vec![doc.active_page_index()]),
         PrintPages::Range => parse_page_range(&state.print.range, count),
     }
 }
@@ -122,10 +144,11 @@ fn chosen_pages(state: &AppState) -> Option<Vec<usize>> {
 fn print(state: &mut AppState) {
     let (Some(printer), Some(pages)) = (state.print.printer.clone(), chosen_pages(state)) else { return };
     let job = PrintJob { printer, copies: state.print.copies.max(1), title: crate::files::file_stem(state) };
-    let result = vs_io::pages_to_pdf(&state.doc, &pages).map_err(|e| e.to_string()).and_then(|pdf| state.printing.print(&pdf, &job));
+    let result = vs_io::pages_to_pdf(source(state), &pages).map_err(|e| e.to_string()).and_then(|pdf| state.printing.print(&pdf, &job));
     match result {
         Ok(()) => {
             state.print.open = false;
+            state.print.merged = None;
             let n = pages.len();
             state.status = Some(format!("Sent {n} page{} to {}", if n == 1 { "" } else { "s" }, job.printer));
         }
@@ -138,7 +161,7 @@ pub fn print_window(ctx: &egui::Context, state: &mut AppState) {
     if !state.print.open {
         return;
     }
-    let count = state.doc.page_count();
+    let count = source(state).page_count();
     let pages = chosen_pages(state);
     let mut open = true;
     let mut go = false;
@@ -149,6 +172,10 @@ pub fn print_window(ctx: &egui::Context, state: &mut AppState) {
         .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
         .show(ctx, |ui| {
             let d = &mut state.print;
+            if d.merged.is_some() {
+                ui.label(format!("Print Merge: {} record{}, one copy of the pages each.", d.records, if d.records == 1 { "" } else { "s" }));
+                ui.add_space(8.0);
+            }
             if d.printers.is_empty() {
                 ui.label("No printers are set up. Add one in System Settings › Printers & Scanners.");
                 ui.add_space(8.0);
@@ -171,7 +198,9 @@ pub fn print_window(ctx: &egui::Context, state: &mut AppState) {
                 ui.label("Pages:");
                 ui.vertical(|ui| {
                     ui.radio_value(&mut d.pages, PrintPages::All, format!("All pages ({count})"));
-                    ui.radio_value(&mut d.pages, PrintPages::Current, "Current page");
+                    if d.merged.is_none() {
+                        ui.radio_value(&mut d.pages, PrintPages::Current, "Current page");
+                    }
                     ui.horizontal(|ui| {
                         ui.radio_value(&mut d.pages, PrintPages::Range, "Pages:");
                         let field = crate::a11y::add(ui, egui::TextEdit::singleline(&mut d.range).hint_text("1-3, 5").desired_width(100.0), "Page range");
@@ -191,11 +220,13 @@ pub fn print_window(ctx: &egui::Context, state: &mut AppState) {
                 go = crate::a11y::window_button(ui, ready, "Print", "Print").clicked();
                 if crate::a11y::window_button(ui, true, "Cancel", "Print").clicked() {
                     d.open = false;
+                    d.merged = None;
                 }
             });
         });
     if !open {
         state.print.open = false;
+        state.print.merged = None;
     }
     if go {
         print(state);
