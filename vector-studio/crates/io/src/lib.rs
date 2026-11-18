@@ -769,7 +769,7 @@ mod tests {
         let mut doc = Document::new("Logo");
         let id = doc.add_object(
             Shape::Star { rect: Rect::new(100.0, 100.0, 300.0, 300.0), points: 5, inner_ratio: 0.5 },
-            Style { fill: Some(Rgba::rgb(255, 0, 0).into()), outline: Some(Outline::new(Rgba::BLACK, 2.0)), transparency: 0.0 },
+            Style { fill: Some(Rgba::rgb(255, 0, 0).into()), outline: Some(Outline::new(Rgba::BLACK, 2.0)), ..Style::default() },
         );
         doc.transform_objects(&[id], Affine::rotate_about(0.2, vs_core::kurbo::Point::new(200.0, 200.0)));
         doc.add_object(Shape::Ellipse { rect: Rect::new(10.0, 10.0, 60.0, 40.0), arc: None }, Style::new_object());

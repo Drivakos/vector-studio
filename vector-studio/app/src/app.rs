@@ -174,6 +174,8 @@ pub struct AppState {
     pub symbol_manager: bool,
     /// How the canvas draws objects (not saved).
     pub view_mode: vs_render::ViewMode,
+    /// View > Simulate Overprints (not saved).
+    pub simulate_overprints: bool,
     /// Full-Screen Preview is on.
     pub preview: Option<Preview>,
     pub page_sorter: crate::page_sorter::PageSorter,
@@ -319,6 +321,7 @@ impl AppState {
             group_edit: None,
             symbol_manager: false,
             view_mode: Default::default(),
+            simulate_overprints: false,
             preview: None,
             page_sorter: Default::default(),
             last_action: None,
@@ -491,6 +494,8 @@ impl VectorStudioApp {
             Command::ToggleGuidelines => (true, Some(state.prefs.show_guidelines)),
             Command::ToggleAlignmentGuides => (true, Some(state.prefs.alignment_guides)),
             Command::ToggleNonprinting => (true, Some(state.prefs.show_nonprinting)),
+            Command::SimulateOverprints => (true, Some(state.simulate_overprints)),
+            Command::Overprint(part) => (state.selected_objects().any(|o| !o.locked), Some(doc.overprints(&state.selection, part))),
             Command::ToggleDynamicGuides => (true, Some(state.prefs.dynamic_guides)),
             Command::ToggleSnap(target) => (true, Some(*state.prefs.snap_flag(target))),
             Command::ToggleStatusBar => (true, Some(state.prefs.show_status_bar)),
@@ -1056,6 +1061,15 @@ impl VectorStudioApp {
             }
             Command::ViewMode(mode) => {
                 s.view_mode = mode;
+                Ok(())
+            }
+            Command::SimulateOverprints => {
+                let _: () = s.simulate_overprints ^= true;
+                Ok(())
+            }
+            Command::Overprint(part) => {
+                let on = !s.doc.overprints(&s.selection, part);
+                s.doc.set_overprint(&s.selection, part, on);
                 Ok(())
             }
             Command::PageSorter => {

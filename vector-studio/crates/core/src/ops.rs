@@ -2,7 +2,7 @@
 
 use kurbo::{Affine, Rect, Vec2};
 
-use crate::document::{Document, Object, ObjectId, Shape, Style};
+use crate::document::{Document, Object, ObjectId, OverprintPart, Shape, Style};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Align {
@@ -208,6 +208,18 @@ impl Document {
         for obj in self.active_page_mut().objects.iter_mut().filter(|o| ids.contains(&o.id)) {
             obj.locked = locked;
         }
+    }
+
+    /// Whether every object among `ids` (every member of a group) overprints `part`.
+    /// False when `ids` names no object.
+    pub fn overprints(&self, ids: &[ObjectId], part: OverprintPart) -> bool {
+        let mut styles = self.active_page().objects.iter().filter(|o| ids.contains(&o.id)).flat_map(Object::styles).peekable();
+        styles.peek().is_some() && styles.all(|s| s.overprints(part))
+    }
+
+    /// Turn overprinting of `part` on or off for the unlocked objects among `ids`.
+    pub fn set_overprint(&mut self, ids: &[ObjectId], part: OverprintPart, on: bool) {
+        self.restyle_objects(ids, |s| s.set_overprint(part, on));
     }
 
     /// Group the unlocked objects among `ids` (at least two). The group takes the place of
@@ -650,6 +662,24 @@ mod tests {
         assert!(page.object(ids[1]).unwrap().style.fill.is_none());
         doc.delete_objects(&ids);
         assert_eq!(order(&doc), vec![ids[0]]);
+    }
+
+    #[test]
+    fn overprint_reaches_group_members_and_skips_locked_objects() {
+        use crate::OverprintPart::{Fill, Outline};
+        let r = Rect::new(0.0, 0.0, 1.0, 1.0);
+        let (mut doc, ids) = doc_with(&[r, r, r]);
+        let group = doc.group_objects(&ids[..2]).unwrap();
+        assert!(!doc.overprints(&[group], Fill));
+        assert!(!doc.overprints(&[], Fill), "nothing selected");
+        doc.set_overprint(&[group], Fill, true);
+        assert!(doc.overprints(&[group], Fill) && !doc.overprints(&[group], Outline), "fill only");
+        assert!(!doc.overprints(&[group, ids[2]], Fill), "not every object");
+        doc.set_locked(&ids[2..], true);
+        doc.set_overprint(&ids[2..], Outline, true);
+        assert!(!doc.overprints(&ids[2..], Outline), "locked objects stay as they are");
+        let saved = serde_json::to_string(doc.active_page().object(group).unwrap()).unwrap();
+        assert!(saved.contains("overprint_fill") && !saved.contains("overprint_outline"), "only set flags are written");
     }
 
     #[test]

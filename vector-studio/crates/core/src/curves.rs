@@ -106,7 +106,8 @@ impl Document {
                 STROKE_ACCURACY,
             );
             let Some(path) = nonzero_region(&stroked).filter(|p| !p.is_empty()) else { continue };
-            let style = Style { fill: Some(Fill::Solid(outline.color)), outline: None, transparency: obj.style.transparency };
+            // The outline's overprint becomes the new curve's fill overprint.
+            let style = Style { fill: Some(Fill::Solid(outline.color)), transparency: obj.style.transparency, overprint_fill: obj.style.overprint_outline, ..Style::default() };
             let layer = obj.layer;
             let id = self.alloc_object_id();
             let curve = Object { id, name: None, shape: Shape::Curve { path }, style, transform: Affine::IDENTITY, locked: false, layer, contents: Vec::new(), clone_of: None, frame: false, symbol: None, symmetry: None, perspective: None, table: None };

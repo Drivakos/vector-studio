@@ -195,6 +195,8 @@
         { "cmd": "object.convert_to_curves", "label": "Convert to Curves", "shortcut": "CmdOrCtrl+Q" },
         { "cmd": "object.convert_outline", "label": "Convert Outline to Object", "shortcut": "CmdOrCtrl+Shift+Q" },
         { "cmd": "object.join_curves", "label": "Join Curves" },
+        { "cmd": "object.overprint_fill", "label": "Overprint Fill" },
+        { "cmd": "object.overprint_outline", "label": "Overprint Outline" },
         "-",
         { "cmd": "object.properties", "label": "Properties", "shortcut": "Alt+Enter" }
       ]

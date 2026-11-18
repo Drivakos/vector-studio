@@ -126,7 +126,7 @@ fn path_object(p: &usvg::Path, opacity: f64) -> Option<Object> {
     if fill.is_none() && outline.is_none() {
         return None;
     }
-    let style = Style { fill, outline, transparency: 1.0 - opacity.clamp(0.0, 1.0) };
+    let style = Style { fill, outline, transparency: 1.0 - opacity.clamp(0.0, 1.0), ..Style::default() };
     Some(object(Shape::Curve { path }, style))
 }
 

@@ -28,6 +28,7 @@ mod powerclip;
 mod print_merge;
 mod symbols;
 mod perspective;
+mod proofing;
 mod tables;
 mod lines;
 mod files;

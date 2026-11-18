@@ -31,7 +31,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Style {
             fill: Some(Rgba::rgb(0, 150, 64).into()),
             outline: Some(Outline { join: LineJoin::Round, behind_fill: true, ..Outline::new(Rgba::BLACK, 6.0) }),
-            transparency: 0.0,
+            ..Style::default()
         },
     );
     let mut swoosh = BezPath::new();
@@ -42,7 +42,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Style {
             fill: None,
             outline: Some(Outline { style: LineStyle::Dash, cap: LineCap::Round, ..Outline::new(Rgba::rgb(243, 146, 0), 6.0) }),
-            transparency: 0.0,
+            ..Style::default()
         },
     );
 

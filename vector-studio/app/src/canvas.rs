@@ -99,7 +99,7 @@ impl GpuCanvas {
             return None;
         }
         // Pixels view: draw the export-resolution bitmap's pixels, shown magnified.
-        let grid = (view.mode == vs_render::ViewMode::Pixels)
+        let grid = (view.look.mode == vs_render::ViewMode::Pixels)
             .then(|| vs_render::pixel_grid(&view.viewport, size, pixels_per_point, state.export.dpi))
             .flatten();
         let (viewport, ppp, size, place) = match grid {
@@ -120,7 +120,7 @@ impl GpuCanvas {
             ..self.colors
         };
         let page = crate::symbol_menu::shown_page(state);
-        build_page_scene(&mut self.scene, &page, &viewport, ppp, &colors, view.mode);
+        build_page_scene(&mut self.scene, &page, &viewport, ppp, &colors, view.look);
         let target = self.target.as_ref()?;
         let params = RenderParams {
             base_color: view.pasteboard.unwrap_or(self.colors.pasteboard),
@@ -146,7 +146,7 @@ impl GpuCanvas {
 /// colour unless `pasteboard` gives another.
 struct View {
     viewport: vs_render::Viewport,
-    mode: vs_render::ViewMode,
+    look: vs_render::Look,
     pasteboard: Option<vs_render::vello::peniko::Color>,
 }
 
@@ -191,7 +191,11 @@ pub fn canvas_pane_ui(
         (canvas_rect.height() * ppp).round().max(0.0) as u32,
     ];
     let painter = ui.painter_at(canvas_rect);
-    let view = View { viewport: state.viewport, mode: state.view_mode, pasteboard: None };
+    let view = View {
+        viewport: state.viewport,
+        look: vs_render::Look { mode: state.view_mode, overprints: state.simulate_overprints },
+        pasteboard: None,
+    };
     match gpu.render(state, &view, size_px, ppp as f64) {
         Some((tex, place)) => {
             let place = place.translate(canvas_rect.min.to_vec2());
@@ -438,7 +442,7 @@ pub fn preview_ui(ui: &mut egui::Ui, state: &mut AppState, gpu: &mut GpuCanvas) 
     state.preview = Some(crate::app::Preview { viewport, rect });
     let ppp = ui.ctx().pixels_per_point();
     let size = [(rect.width() * ppp).round().max(0.0) as u32, (rect.height() * ppp).round().max(0.0) as u32];
-    let view = View { viewport, mode: vs_render::ViewMode::Enhanced, pasteboard: Some(vs_render::vello::peniko::Color::BLACK) };
+    let view = View { viewport, look: vs_render::ViewMode::Enhanced.into(), pasteboard: Some(vs_render::vello::peniko::Color::BLACK) };
     if let Some((tex, place)) = gpu.render(state, &view, size, ppp as f64) {
         ui.painter_at(rect).image(tex, place.translate(rect.min.to_vec2()), Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0)), Color32::WHITE);
     }

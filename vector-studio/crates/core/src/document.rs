@@ -200,10 +200,20 @@ pub struct Style {
     /// Uniform transparency of the whole object: 0 is opaque, 1 invisible.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub transparency: f64,
+    /// Print the fill over what is below it instead of knocking it out (the inks mix).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub overprint_fill: bool,
+    /// Print the outline over what is below it.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub overprint_outline: bool,
 }
 
 fn is_zero(v: &f64) -> bool {
     *v == 0.0
+}
+
+fn is_false(v: &bool) -> bool {
+    !*v
 }
 
 impl Style {
@@ -219,18 +229,40 @@ impl Style {
 
     /// A uniform fill and no outline.
     pub fn filled(color: Rgba) -> Self {
-        Self { fill: Some(Fill::Solid(color)), outline: None, transparency: 0.0 }
+        Self { fill: Some(Fill::Solid(color)), ..Self::default() }
     }
 
     /// An outline and no fill.
     pub fn outlined(outline: Outline) -> Self {
-        Self { fill: None, outline: Some(outline), transparency: 0.0 }
+        Self { outline: Some(outline), ..Self::default() }
+    }
+
+    /// Whether `part` overprints.
+    pub fn overprints(&self, part: OverprintPart) -> bool {
+        match part {
+            OverprintPart::Fill => self.overprint_fill,
+            OverprintPart::Outline => self.overprint_outline,
+        }
+    }
+
+    pub fn set_overprint(&mut self, part: OverprintPart, on: bool) {
+        match part {
+            OverprintPart::Fill => self.overprint_fill = on,
+            OverprintPart::Outline => self.overprint_outline = on,
+        }
     }
 
     /// How opaque the object is: 1 − transparency.
     pub fn opacity(&self) -> f64 {
         1.0 - self.transparency.clamp(0.0, 1.0)
     }
+}
+
+/// The part of an object that Object > Overprint Fill / Overprint Outline sets.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum OverprintPart {
+    Fill,
+    Outline,
 }
 
 /// Whether a cut ellipse is closed through its centre (pie) or left open (arc).
@@ -417,6 +449,17 @@ impl Object {
         match &mut self.shape {
             Shape::Group { children } => children.iter_mut().step_by(if table { 2 } else { 1 }).for_each(|c| c.restyle(f)),
             _ => f(&mut self.style),
+        }
+    }
+
+    /// The styles [`Object::restyle`] changes.
+    pub fn styles(&self) -> Vec<&Style> {
+        match &self.shape {
+            Shape::Group { children } => {
+                let step = if self.table().is_some() { 2 } else { 1 };
+                children.iter().step_by(step).flat_map(Object::styles).collect()
+            }
+            _ => vec![&self.style],
         }
     }
 

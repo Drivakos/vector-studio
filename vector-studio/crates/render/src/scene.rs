@@ -1,8 +1,8 @@
 //! Builds a Vello scene for one page of a document.
 
-use kurbo::{Affine, Rect, Stroke};
+use kurbo::{Affine, Rect, Shape as _, Stroke};
 use vello::Scene;
-use vello::peniko::{Brush, Color, Fill, Gradient};
+use vello::peniko::{BlendMode, Brush, Color, Fill, Gradient, Mix};
 use vs_core::{GradientKind, Page, Rgba, Shape};
 
 use crate::viewport::Viewport;
@@ -49,6 +49,21 @@ impl ViewMode {
             ViewMode::Wireframe => "Wireframe",
             ViewMode::Pixels => "Pixels",
         }
+    }
+}
+
+/// How the canvas draws objects: the view mode and View-menu simulations.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Look {
+    pub mode: ViewMode,
+    /// Simulate Overprints: overprinted fills and outlines multiply with what is below,
+    /// as inks printed on top of each other do.
+    pub overprints: bool,
+}
+
+impl From<ViewMode> for Look {
+    fn from(mode: ViewMode) -> Self {
+        Self { mode, ..Self::default() }
     }
 }
 
@@ -121,8 +136,9 @@ pub fn build_page_scene(
     viewport: &Viewport,
     pixels_per_point: f64,
     colors: &CanvasColors,
-    mode: ViewMode,
+    look: impl Into<Look>,
 ) {
+    let Look { mode, overprints } = look.into();
     let screen = Affine::scale(pixels_per_point);
     let doc = screen * viewport.transform();
     let page_rect = page.bounds();
@@ -175,16 +191,34 @@ pub fn build_page_scene(
             for clip in &leaf.clips {
                 scene.push_clip_layer(Fill::EvenOdd, doc, clip);
             }
-            match outline {
-                Some((stroke, color, true)) => {
-                    scene.stroke(&stroke, doc, color, None, &leaf.path);
-                    draw_fill(scene);
+            // An overprinted part is drawn in a layer that multiplies with what is below.
+            let reach = outline.as_ref().map_or(0.0, |(stroke, ..)| stroke.width * stroke.miter_limit.max(1.0));
+            let bounds = leaf.path.bounding_box().inflate(reach + 1.0, reach + 1.0);
+            let overprinted = |scene: &mut Scene, on: bool, draw: &dyn Fn(&mut Scene)| {
+                let on = overprints && on;
+                if on {
+                    scene.push_layer(Fill::NonZero, BlendMode::from(Mix::Multiply), 1.0, doc, &bounds);
                 }
-                Some((stroke, color, false)) => {
-                    draw_fill(scene);
-                    scene.stroke(&stroke, doc, color, None, &leaf.path);
+                draw(scene);
+                if on {
+                    scene.pop_layer();
                 }
-                None => draw_fill(scene),
+            };
+            let fill_part = |scene: &mut Scene| overprinted(scene, leaf.style.overprint_fill, &draw_fill);
+            match &outline {
+                Some((stroke, color, behind)) => {
+                    let outline_part = |scene: &mut Scene| {
+                        overprinted(scene, leaf.style.overprint_outline, &|scene: &mut Scene| scene.stroke(stroke, doc, *color, None, &leaf.path));
+                    };
+                    if *behind {
+                        outline_part(scene);
+                        fill_part(scene);
+                    } else {
+                        fill_part(scene);
+                        outline_part(scene);
+                    }
+                }
+                None => fill_part(scene),
             }
             for _ in &leaf.clips {
                 scene.pop_layer();

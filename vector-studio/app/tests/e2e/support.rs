@@ -200,6 +200,27 @@ impl E2e {
         !self.h.get_by_label(name).accesskit_node().is_disabled()
     }
 
+    /// Whether the in-window menu entry at `path` can be used, e.g. `["Object", "Overprint Fill"]`.
+    /// Opens the menus on the way and closes them again.
+    pub fn menu_enabled(&mut self, path: &[&str]) -> bool {
+        let (item, menus) = path.split_last().expect("a menu path");
+        if !menus.is_empty() {
+            self.menu(menus);
+        }
+        let prefix = format!("{item} ");
+        let enabled = self
+            .h
+            .query_all_by(|n| n.label().is_some_and(|l| l == *item || l.starts_with(&prefix)))
+            .map(|n| !n.accesskit_node().is_disabled())
+            .collect::<Vec<_>>();
+        assert!(!enabled.is_empty(), "no menu entry {item:?}");
+        // A second click on the menu bar entry closes the menu.
+        if let Some(top) = menus.first() {
+            self.click_menu_bar(top);
+        }
+        enabled.into_iter().all(|e| e)
+    }
+
     /// Whether the toggle named `name` shows as on.
     pub fn is_selected(&self, name: &str) -> bool {
         let node = self.h.get_by_label(name).accesskit_node();
@@ -249,6 +270,11 @@ impl E2e {
             if i > 0 && i + 1 < path.len() { node.hover() } else { node.click() }
             self.run();
         }
+    }
+
+    fn click_menu_bar(&mut self, name: &str) {
+        self.h.query_all_by_label(name).next().unwrap_or_else(|| panic!("no menu {name:?}")).click();
+        self.run();
     }
 
     /// Show a docker with its button in the docker strip.
