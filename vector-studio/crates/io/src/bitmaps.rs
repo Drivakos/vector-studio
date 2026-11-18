@@ -129,7 +129,6 @@ pub fn drawn_bounds(objects: &[&Object]) -> Option<Rect> {
 /// `objects` (bottom first) drawn into a bitmap at `dpi`, on `background` or transparent.
 /// The bitmap covers [`drawn_bounds`], rounded out to whole pixels, and is placed there.
 pub fn objects_to_bitmap(objects: &[&Object], dpi: f64, background: Option<Rgba>) -> Result<Bitmap, IoError> {
-    use resvg::{tiny_skia, usvg};
     let bounds = drawn_bounds(objects).ok_or_else(|| IoError::Png("nothing to convert".into()))?;
     let scale = dpi / 72.0;
     let width = (bounds.width() * scale).ceil().max(1.0) as u32;
@@ -137,9 +136,17 @@ pub fn objects_to_bitmap(objects: &[&Object], dpi: f64, background: Option<Rgba>
     // The whole pixels, back in points, so the bitmap is not stretched.
     let rect = Rect::from_origin_size(bounds.origin(), (f64::from(width) / scale, f64::from(height) / scale));
 
+    let to_pixels = Affine::scale(scale) * Affine::translate(-rect.origin().to_vec2());
+    let pixels = rasterize(objects, to_pixels, width, height, background)?;
+    bitmap_from_pixels(&pixels, rect)
+}
+
+/// `objects` (bottom first) drawn into `width` × `height` pixels through `to_pixels`, on
+/// `background` or transparent.
+pub fn rasterize(objects: &[&Object], to_pixels: Affine, width: u32, height: u32, background: Option<Rgba>) -> Result<Pixels, IoError> {
+    use resvg::{tiny_skia, usvg};
     let mut svg = String::new();
     let _ = writeln!(svg, r#"<svg xmlns="http://www.w3.org/2000/svg" version="1.1" width="{width}" height="{height}">"#);
-    let to_pixels = Affine::scale(scale) * Affine::translate(-rect.origin().to_vec2());
     for obj in objects {
         crate::write_svg_object(&mut svg, obj, to_pixels, 1);
     }
@@ -151,13 +158,12 @@ pub fn objects_to_bitmap(objects: &[&Object], dpi: f64, background: Option<Rgba>
         pixmap.fill(tiny_skia::Color::from_rgba8(bg.r, bg.g, bg.b, bg.a));
     }
     resvg::render(&tree, tiny_skia::Transform::identity(), &mut pixmap.as_mut());
-    // tiny-skia keeps premultiplied colour; the bitmap file wants it straight.
+    // tiny-skia keeps premultiplied colour; callers want it straight.
     let data = pixmap.pixels().iter().flat_map(|p| {
         let c = p.demultiply();
         [c.red(), c.green(), c.blue(), c.alpha()]
     });
-    let pixels = Pixels::new(width, height, data.collect()).ok_or_else(|| IoError::Png("unexpected pixel layout".into()))?;
-    bitmap_from_pixels(&pixels, rect)
+    Pixels::new(width, height, data.collect()).ok_or_else(|| IoError::Png("unexpected pixel layout".into()))
 }
 
 #[cfg(test)]

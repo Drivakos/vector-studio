@@ -38,5 +38,6 @@ pub mod theme;
 pub mod titlebar;
 pub mod toolbox;
 pub mod tools;
+pub mod trace_menu;
 
 pub use app::{Startup, VectorStudioApp};

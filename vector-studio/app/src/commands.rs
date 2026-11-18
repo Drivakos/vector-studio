@@ -144,6 +144,10 @@ pub enum Command {
     Resample,
     /// Trim the selected bitmaps' transparent edges.
     CropBitmap,
+    /// Trace the selected bitmaps at once, with Outline Trace's last settings.
+    QuickTrace,
+    /// Open the Outline Trace or Centerline Trace window.
+    TraceBitmap(vs_core::trace::TraceMethod),
     InsertQrCode,
     InsertBarcode,
     /// A bitmap effect of the Effects menu.
@@ -304,6 +308,9 @@ impl Command {
             "object.insert_barcode" => InsertBarcode,
             "bitmap.resample" => Resample,
             "bitmap.crop" => CropBitmap,
+            "bitmap.quick_trace" => QuickTrace,
+            "bitmap.outline_trace" => TraceBitmap(vs_core::trace::TraceMethod::Outline),
+            "bitmap.centerline_trace" => TraceBitmap(vs_core::trace::TraceMethod::Centerline),
             "bitmap.adjustment_lab" => BitmapEffect(EffectKind::AdjustmentLab),
             "bitmap.remove_background" => BitmapEffect(EffectKind::RemoveBackground),
             "fx.auto_adjust" => BitmapEffect(EffectKind::AutoAdjust),
@@ -494,6 +501,9 @@ impl Command {
         Command::ConvertToBitmap,
         Command::Resample,
         Command::CropBitmap,
+        Command::QuickTrace,
+        Command::TraceBitmap(vs_core::trace::TraceMethod::Outline),
+        Command::TraceBitmap(vs_core::trace::TraceMethod::Centerline),
         Command::InsertQrCode,
         Command::InsertBarcode,
         Command::BitmapEffect(EffectKind::AutoAdjust),

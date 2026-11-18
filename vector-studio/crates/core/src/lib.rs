@@ -30,6 +30,7 @@ pub mod table;
 pub mod align_guides;
 pub mod text;
 pub mod text_tools;
+pub mod trace;
 pub mod units;
 
 pub use document::{

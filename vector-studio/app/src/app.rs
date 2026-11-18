@@ -149,6 +149,8 @@ pub struct AppState {
     pub resample: Option<crate::bitmap_menu::ResampleDialog>,
     /// The bitmap effect whose settings window is open.
     pub effect: Option<crate::bitmap_menu::EffectDialog>,
+    /// Trace Bitmap: the open trace window and the settings the windows remember.
+    pub trace: crate::trace_menu::TraceState,
     pub insert_qr: Option<crate::insert_codes::QrDialog>,
     pub print_merge: Option<crate::print_merge::PrintMergeDialog>,
     /// Picked table cells, a cell being typed into, and the Table menu's windows.
@@ -306,6 +308,7 @@ impl AppState {
             convert_to_bitmap: None,
             resample: None,
             effect: None,
+            trace: Default::default(),
             insert_qr: None,
             print_merge: None,
             table: Default::default(),
@@ -552,6 +555,7 @@ impl VectorStudioApp {
             Command::DropCap => (!crate::text_menu::column_targets(state).is_empty(), None),
             Command::Tabs => (!crate::text_menu::list_targets(state).is_empty(), None),
             Command::CropBitmap => (!crate::bitmap_menu::bitmap_targets(state).is_empty(), None),
+            Command::QuickTrace | Command::TraceBitmap(_) => (crate::trace_menu::can_trace(state), None),
             Command::ConvertToBitmap => (crate::bitmap_menu::can_convert(state), None),
             Command::Resample => (crate::bitmap_menu::resample_target(state).is_some(), None),
             Command::BitmapEffect(_) => (!crate::bitmap_menu::bitmap_targets(state).is_empty(), None),
@@ -694,6 +698,14 @@ impl VectorStudioApp {
             }
             Command::CropBitmap => {
                 crate::bitmap_menu::crop_bitmaps(s);
+                Ok(())
+            }
+            Command::QuickTrace => {
+                crate::trace_menu::quick_trace(s);
+                Ok(())
+            }
+            Command::TraceBitmap(method) => {
+                crate::trace_menu::open(s, method);
                 Ok(())
             }
             Command::Tabs => {
@@ -1543,6 +1555,7 @@ impl eframe::App for VectorStudioApp {
         crate::bitmap_menu::convert_window(&ctx, &mut self.state);
         crate::bitmap_menu::resample_window(&ctx, &mut self.state);
         crate::bitmap_menu::effect_window(&ctx, &mut self.state);
+        crate::trace_menu::window(&ctx, &mut self.state);
         crate::insert_codes::qr_window(&ctx, &mut self.state);
         crate::glyphs::window(&ctx, &mut self.state);
         crate::insert_codes::barcode_window(&ctx, &mut self.state);
