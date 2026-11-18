@@ -91,12 +91,15 @@ pub fn start_paragraph(state: &mut AppState, frame: Rect) {
 }
 
 /// Stop typing. Artistic text left empty is removed; an empty paragraph frame stays.
+/// Text typed into a table cell goes back into it.
 pub fn finish(state: &mut AppState) {
-    let Some(edit) = state.tools.text.take() else { return };
-    if text_of(state, edit.id).is_some_and(|(t, _)| t.content.is_empty() && !t.is_paragraph()) {
+    if let Some(edit) = state.tools.text.take()
+        && text_of(state, edit.id).is_some_and(|(t, _)| t.content.is_empty() && !t.is_paragraph())
+    {
         state.doc.delete_objects(&[edit.id]);
         state.selection.retain(|id| *id != edit.id);
     }
+    crate::table_tool::end_typing(state);
 }
 
 /// Typing while text is being edited. Takes the text and plain keys out of this frame's

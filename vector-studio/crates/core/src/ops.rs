@@ -245,6 +245,7 @@ impl Document {
             symbol: None,
             symmetry: None,
             perspective: None,
+            table: None,
         };
         objects.insert(top - below_top, group);
         Some(id)

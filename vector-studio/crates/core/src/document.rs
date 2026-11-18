@@ -343,9 +343,17 @@ pub struct Object {
     /// `transform`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub perspective: Option<crate::perspective::Perspective>,
+    /// A table: this group's members are its cells (see [`crate::table`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub table: Option<crate::table::Table>,
 }
 
 impl Object {
+    /// A plain, unlocked object on no particular layer, placed by `shape` alone.
+    pub fn new(id: ObjectId, shape: Shape, style: Style) -> Self {
+        Self { id, name: None, shape, style, transform: Affine::IDENTITY, locked: false, layer: LayerId::default(), contents: Vec::new(), clone_of: None, frame: false, symbol: None, symmetry: None, perspective: None, table: None }
+    }
+
     /// Turn this object, or every member of this group, into curves. Locked objects
     /// stay as they are.
     pub fn convert_to_curves(&mut self) {
@@ -356,7 +364,11 @@ impl Object {
         self.bake_perspective();
         match &mut self.shape {
             Shape::Curve { .. } | Shape::Image(_) => {}
-            Shape::Group { children } => children.iter_mut().for_each(Object::convert_to_curves),
+            Shape::Group { children } => {
+                // Curves are no longer a table's cells.
+                self.table = None;
+                children.iter_mut().for_each(Object::convert_to_curves);
+            }
             shape => *shape = Shape::Curve { path: shape.to_path() },
         }
     }
@@ -378,6 +390,7 @@ impl Object {
             _ => match &self.shape {
                 Shape::Group { .. } if self.symbol.is_some() => "Symbol".into(),
                 Shape::Group { .. } if self.symmetry.is_some() => "Symmetry".into(),
+                Shape::Group { .. } if self.table().is_some() => "Table".into(),
                 Shape::Group { children } => format!("Group of {} objects", children.len()),
                 shape if !self.contents.is_empty() => format!("PowerClip {}", shape.kind_label()),
                 shape if self.frame => format!("Empty PowerClip {}", shape.kind_label()),
@@ -397,10 +410,12 @@ impl Object {
         out
     }
 
-    /// Apply `f` to this object's style, or to every object inside it if it is a group.
+    /// Apply `f` to this object's style, or to every object inside it if it is a group
+    /// (a table's cell rectangles, not their text).
     pub fn restyle(&mut self, f: &mut impl FnMut(&mut Style)) {
+        let table = self.table().is_some();
         match &mut self.shape {
-            Shape::Group { children } => children.iter_mut().for_each(|c| c.restyle(f)),
+            Shape::Group { children } => children.iter_mut().step_by(if table { 2 } else { 1 }).for_each(|c| c.restyle(f)),
             _ => f(&mut self.style),
         }
     }
@@ -408,8 +423,9 @@ impl Object {
     /// Like [`Object::restyle`], also passing each object's local frame (for fills that
     /// are placed on the object, like fountain fills).
     pub fn restyle_framed(&mut self, f: &mut impl FnMut(&mut Style, Rect)) {
+        let table = self.table().is_some();
         if let Shape::Group { children } = &mut self.shape {
-            children.iter_mut().for_each(|c| c.restyle_framed(f));
+            children.iter_mut().step_by(if table { 2 } else { 1 }).for_each(|c| c.restyle_framed(f));
         } else {
             let frame = self.shape.frame();
             f(&mut self.style, frame);
@@ -751,7 +767,7 @@ impl Document {
         let id = ObjectId(self.alloc_id());
         let page = self.active_page_mut();
         let layer = page.active_layer;
-        page.objects.push(Object { id, name: None, shape, style, transform: Affine::IDENTITY, locked: false, layer, contents: Vec::new(), clone_of: None, frame: false, symbol: None, symmetry: None, perspective: None });
+        page.objects.push(Object { id, name: None, shape, style, transform: Affine::IDENTITY, locked: false, layer, contents: Vec::new(), clone_of: None, frame: false, symbol: None, symmetry: None, perspective: None, table: None });
         page.settle_layers();
         id
     }

@@ -133,6 +133,7 @@ impl Document {
                     symbol: None,
                     symmetry: None,
                     perspective: None,
+                    table: None,
                 };
                 // On top of the selection, so the new object shows.
                 self.active_page_mut().objects.insert(picked[last] + 1, obj);

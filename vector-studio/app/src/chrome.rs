@@ -158,6 +158,7 @@ pub fn property_bar_ui(ui: &mut egui::Ui, state: &mut AppState, out: &mut Vec<Co
                 }
             }
             Tool::Text => crate::text_tool::controls(ui, state),
+            Tool::Table => crate::table_tool::controls(ui, state),
             Tool::Spiral => {
                 let mut turns = f64::from(state.tools.settings.spiral_turns);
                 if number_row(ui, Some(ICON_CYCLONE), "Spiral turns", &mut turns, "", 1.0..=100.0, 1.0, 0) {
@@ -776,7 +777,12 @@ pub fn palette_ui(ui: &mut egui::Ui, state: &mut AppState) {
     }
 }
 
+/// Restyle the selection, or only the picked cells of a table.
 fn set_style(state: &mut AppState, edit: impl Fn(&mut vs_core::Style)) {
+    if let Some(p) = crate::table_tool::picked(state) {
+        state.doc.restyle_table_cells(p.table, p.block, edit);
+        return;
+    }
     let ids = state.selection.clone();
     state.doc.restyle_objects(&ids, edit);
 }

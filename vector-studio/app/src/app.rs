@@ -151,6 +151,8 @@ pub struct AppState {
     pub effect: Option<crate::bitmap_menu::EffectDialog>,
     pub insert_qr: Option<crate::insert_codes::QrDialog>,
     pub print_merge: Option<crate::print_merge::PrintMergeDialog>,
+    /// Picked table cells, a cell being typed into, and the Table menu's windows.
+    pub table: crate::table_tool::TableState,
     pub glyphs: Option<crate::glyphs::GlyphsDialog>,
     pub insert_barcode: Option<crate::insert_codes::BarcodeDialog>,
     pub save_template: Option<crate::templates::SaveTemplateDialog>,
@@ -300,6 +302,7 @@ impl AppState {
             effect: None,
             insert_qr: None,
             print_merge: None,
+            table: Default::default(),
             glyphs: None,
             insert_barcode: None,
             save_template: None,
@@ -557,6 +560,11 @@ impl VectorStudioApp {
             Command::AddPerspective => (doc.can_add_perspective(&state.selection), None),
             Command::CopyPerspective => (crate::edit_tools::can_copy_perspective(state), None),
             Command::ClearEffect => (!doc.with_perspective(&state.selection).is_empty(), None),
+            Command::TextToTable => (crate::table_tool::can_text_to_table(state), None),
+            Command::TableToText => (crate::table_tool::selected_table(state).is_some(), None),
+            Command::TableRowAbove | Command::TableRowBelow | Command::TableColumnLeft | Command::TableColumnRight => (crate::table_tool::can_insert(state), None),
+            Command::TableMergeCells => (crate::table_tool::can_merge(state), None),
+            Command::TableSplitRows | Command::TableSplitColumns => (crate::table_tool::can_split(state), None),
             _ => (true, None),
         }
     }
@@ -609,6 +617,34 @@ impl VectorStudioApp {
             }
             Command::PrintMerge => {
                 crate::print_merge::open(s);
+                Ok(())
+            }
+            Command::TableCreate => {
+                crate::table_tool::open_create(s);
+                Ok(())
+            }
+            Command::TextToTable => {
+                crate::table_tool::open_convert(s, true);
+                Ok(())
+            }
+            Command::TableToText => {
+                crate::table_tool::open_convert(s, false);
+                Ok(())
+            }
+            Command::TableRowAbove | Command::TableRowBelow => {
+                crate::table_tool::insert(s, false, cmd == Command::TableRowBelow);
+                Ok(())
+            }
+            Command::TableColumnLeft | Command::TableColumnRight => {
+                crate::table_tool::insert(s, true, cmd == Command::TableColumnRight);
+                Ok(())
+            }
+            Command::TableMergeCells => {
+                crate::table_tool::merge(s);
+                Ok(())
+            }
+            Command::TableSplitRows | Command::TableSplitColumns => {
+                crate::table_tool::open_split(s, cmd == Command::TableSplitColumns);
                 Ok(())
             }
             Command::DocumentProperties => {
@@ -1450,6 +1486,7 @@ impl eframe::App for VectorStudioApp {
         files::document_properties_window(&ctx, &mut self.state);
         crate::printing::print_window(&ctx, &mut self.state);
         crate::print_merge::print_merge_window(&ctx, &mut self.state);
+        crate::table_tool::table_window(&ctx, &mut self.state);
         crate::text_tool::edit_text_window(&ctx, &mut self.state);
         crate::paste_special::paste_special_window(&ctx, &mut self.state);
         crate::page_dialogs::go_to_page_window(&ctx, &mut self.state);

@@ -31,6 +31,7 @@ pub mod printing;
 pub mod symbol_menu;
 pub mod templates;
 pub mod text_menu;
+pub mod table_tool;
 pub mod text_tool;
 pub mod theme;
 pub mod titlebar;

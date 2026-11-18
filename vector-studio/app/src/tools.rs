@@ -49,6 +49,9 @@ pub struct ToolSettings {
     /// Graph Paper: cells across and down.
     pub graph_columns: u32,
     pub graph_rows: u32,
+    /// Table: rows and columns of new tables.
+    pub table_rows: u32,
+    pub table_columns: u32,
     /// The outline the Common Shapes tool draws.
     pub common_shape: vs_core::construct::CommonShape,
     /// Smart Fill: the fill colour of new areas, and whether they get the default outline.
@@ -70,7 +73,7 @@ pub struct ToolSettings {
 
 impl Default for ToolSettings {
     fn default() -> Self {
-        Self { polygon_sides: 5, star_points: 5, star_inner_ratio: 0.5, text: vs_core::Text::new(""), eraser_size: DEFAULT_ERASER_SIZE, spiral_turns: 4, graph_columns: 4, graph_rows: 3, common_shape: Default::default(), smart_fill: vs_core::Rgba::rgb(0xC0, 0xC0, 0xC0), smart_fill_outline: false, brush_size: 20.0, smoothness: 50.0, spike_size: 3.0, brush_speed: 50.0, repel: false, twirl_clockwise: false }
+        Self { polygon_sides: 5, star_points: 5, star_inner_ratio: 0.5, text: vs_core::Text::new(""), eraser_size: DEFAULT_ERASER_SIZE, spiral_turns: 4, graph_columns: 4, graph_rows: 3, table_rows: crate::table_tool::DEFAULT_ROWS, table_columns: crate::table_tool::DEFAULT_COLUMNS, common_shape: Default::default(), smart_fill: vs_core::Rgba::rgb(0xC0, 0xC0, 0xC0), smart_fill_outline: false, brush_size: 20.0, smoothness: 50.0, spike_size: 3.0, brush_speed: 50.0, repel: false, twirl_clockwise: false }
     }
 }
 
@@ -133,6 +136,11 @@ enum Drag {
     Spiral { start: Point },
     /// Graph Paper tool: dragging out the grid's box.
     GraphPaper { start: Point },
+    /// Table tool: dragging out a new table's box.
+    Table { start: Point },
+    /// Table tool: picking cells. `again` while the press was on the one cell already
+    /// picked and the pick has not moved: releasing then types into it.
+    TableCells { again: bool },
 }
 
 /// A Bézier or Pen path being drawn, in document space.
@@ -227,7 +235,7 @@ pub fn is_implemented(tool: Tool) -> bool {
         || matches!(tool, Tool::InteractiveFill | Tool::SmartFill | Tool::Transparency | Tool::ColorEyedropper | Tool::AttributesEyedropper)
         || matches!(tool, Tool::Crop | Tool::Knife | Tool::VirtualSegmentDelete | Tool::Eraser)
         || is_brush(tool)
-        || matches!(tool, Tool::TwoPointLine | Tool::Polyline | Tool::BSpline | Tool::Spiral | Tool::GraphPaper)
+        || matches!(tool, Tool::TwoPointLine | Tool::Polyline | Tool::BSpline | Tool::Spiral | Tool::GraphPaper | Tool::Table)
         || is_three_point(tool)
 }
 
@@ -389,6 +397,15 @@ fn press(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers, dou
         Tool::TwoPointLine => state.tools.drag = Some(Drag::Line { start: p }),
         Tool::Spiral => state.tools.drag = Some(Drag::Spiral { start: p }),
         Tool::GraphPaper => state.tools.drag = Some(Drag::GraphPaper { start: p }),
+        // On a table: pick cells. Elsewhere: drag out a new table.
+        Tool::Table => {
+            state.tools.drag = Some(match crate::table_tool::press(state, p, mods.shift) {
+                Some(again) => Drag::TableCells { again },
+                None => Drag::Table { start: p },
+            });
+        }
+        // In a table cell: type into it.
+        Tool::Text if crate::table_tool::place_at(state, p).is_some() => crate::table_tool::type_at(state, p),
         // A click on a segment measures it; the next click places the dimension line.
         Tool::SegmentDimension if state.tools.first_edge.is_none() => {
             state.tools.first_edge = vs_core::dimension::segment_at(state.doc.active_page(), p, view.doc_len(HIT));
@@ -526,6 +543,12 @@ fn press_pick(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers
             state.tool = Tool::Text;
             state.toolbox.remember(Tool::Text);
             crate::text_tool::press(state, p, view.doc_len(HIT));
+        }
+        // Double-clicking a table picks the cell there with the Table tool.
+        Some(hit) if double && state.doc.is_table(hit) => {
+            state.tool = Tool::Table;
+            state.toolbox.remember(Tool::Table);
+            crate::table_tool::press(state, p, false);
         }
         // Double-clicking an object switches to the Shape tool on it.
         Some(hit) if double => {
@@ -1099,6 +1122,7 @@ fn drag_to(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers) {
             }
             Drag::Guide { index }
         }
+        Drag::TableCells { again } => Drag::TableCells { again: !crate::table_tool::drag_to(state, p) && again },
         other => other,
     };
     state.tools.drag = Some(drag);
@@ -1358,6 +1382,18 @@ fn release(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers) {
                 };
             }
         }
+        Drag::Table { start } => {
+            let rect = creation_rect(start, p, mods);
+            if rect.width() * view.zoom >= 2.0 && rect.height() * view.zoom >= 2.0 {
+                let s = &state.tools.settings;
+                let (rows, columns, font) = (s.table_rows as usize, s.table_columns as usize, s.text.clone());
+                let id = state.doc.create_table(rect, rows, columns, &font);
+                state.selection = vec![id];
+                state.marquee_selection = None;
+                state.table.cells = None;
+            }
+        }
+        Drag::TableCells { again } => crate::table_tool::release(state, again),
         Drag::TextFrame { start } => {
             let frame = kurbo::Rect::from_points(start, p);
             if frame.width() * view.zoom > DRAG_START && frame.height() * view.zoom > DRAG_START {
@@ -1554,6 +1590,7 @@ pub fn draw_overlay(painter: &egui::Painter, state: &AppState, canvas: Rect) {
     crate::text_tool::draw_frames(painter, state, |p| view.screen(p));
     crate::text_tool::draw_nonprinting(painter, state, |p| view.screen(p));
     crate::text_tool::draw_caret(painter, state, |p| view.screen(p));
+    crate::table_tool::draw_picked(painter, state, |p| view.screen(p));
     for line in &state.tools.guide_lines {
         let points = [view.screen(line.from), view.screen(line.to)];
         painter.extend(egui::Shape::dashed_line(&points, Stroke::new(1.0, GUIDE_LINE), 4.0, 3.0));
@@ -1703,6 +1740,15 @@ pub fn draw_overlay(painter: &egui::Painter, state: &AppState, canvas: Rect) {
                 let mods = painter.ctx().input(|i| i.modifiers);
                 let s = &state.tools.settings;
                 for cell in vs_core::construct::graph_paper(creation_rect(*start, p, mods), s.graph_columns, s.graph_rows) {
+                    painter.rect_stroke(Rect::from_two_pos(view.screen(cell.origin()), view.screen(Point::new(cell.x1, cell.y1))), 0.0, thin, egui::StrokeKind::Middle);
+                }
+            }
+        }
+        Some(Drag::Table { start }) => {
+            if let Some(p) = state.tools.pointer {
+                let mods = painter.ctx().input(|i| i.modifiers);
+                let s = &state.tools.settings;
+                for cell in vs_core::construct::graph_paper(creation_rect(*start, p, mods), s.table_columns, s.table_rows) {
                     painter.rect_stroke(Rect::from_two_pos(view.screen(cell.origin()), view.screen(Point::new(cell.x1, cell.y1))), 0.0, thin, egui::StrokeKind::Middle);
                 }
             }
@@ -1920,6 +1966,8 @@ pub fn hint(state: &AppState) -> String {
         Tool::Polyline => "Click to add straight segments · double-click, Enter or the first node finishes".into(),
         Tool::BSpline => "Click to place control points · double-click or Enter finishes; clicking the first point closes it".into(),
         Tool::Spiral => "Drag to draw a spiral · turns are on the property bar".into(),
+        Tool::Table if crate::table_tool::picked(state).is_some() => "Drag across cells or Shift+click to pick more · click the picked cell again to type in it · Table menu inserts, merges and splits".into(),
+        Tool::Table => "Drag to draw a table · rows and columns are on the property bar · click a table to pick a cell".into(),
         Tool::GraphPaper => "Drag to draw a grid of rectangles · columns and rows are on the property bar · Ctrl/Cmd keeps the grid square".into(),
         Tool::AngularDimension if state.tools.arm.is_some() => "Click where the arc goes; past the arms measures the angle outside them · Esc cancels".into(),
         Tool::AngularDimension if state.tools.first_edge.is_some() => "Click a point on the second arm · Esc cancels".into(),

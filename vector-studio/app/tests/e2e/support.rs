@@ -264,9 +264,12 @@ impl E2e {
         5.0 / self.state().viewport.zoom()
     }
 
-    /// Pick a tool from its toolbox flyout (right-click opens the flyout).
+    /// Pick a tool from its toolbox flyout (right-click opens the flyout). The toolbox
+    /// button is the toggle named `shown`, so a menu of the same name is never taken.
     pub fn flyout_tool(&mut self, shown: &str, tool: &str) {
-        self.right_click(shown);
+        let button = self.h.query_all_by_label(shown).find(|n| n.accesskit_node().toggled().is_some());
+        button.unwrap_or_else(|| panic!("no tool button {shown:?}")).click_secondary();
+        self.run();
         self.click_containing(tool);
     }
 
