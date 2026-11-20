@@ -328,11 +328,11 @@ pub fn finish_contents(state: &mut AppState) {
 // ---------------------------------------------------------------------------------------
 // Select All Nodes
 
-/// The one unlocked curve selected, whose nodes Select All Nodes picks.
+/// The curve the Shape tool edits (the one unlocked curve selected, or the curve picked in
+/// the selected group), whose nodes Select All Nodes picks.
 fn node_target(state: &AppState) -> Option<ObjectId> {
-    let [id] = state.selection.as_slice() else { return None };
     // A curve with a perspective shows its perspective corners, not its nodes.
-    state.doc.active_page().object(*id).filter(|o| !o.locked && o.perspective.is_none() && matches!(o.shape, Shape::Curve { .. })).map(|o| o.id)
+    crate::tools::shape_object(state).map(|(o, _)| o).filter(|o| o.perspective.is_none() && matches!(o.shape, Shape::Curve { .. })).map(|o| o.id)
 }
 
 pub fn can_select_all_nodes(state: &AppState) -> bool {
@@ -342,7 +342,7 @@ pub fn can_select_all_nodes(state: &AppState) -> bool {
 /// Select every node of the selected curve, with the Shape tool.
 pub fn select_all_nodes(state: &mut AppState) {
     let Some(id) = node_target(state) else { return };
-    let Some(Shape::Curve { path }) = state.doc.active_page().object(id).map(|o| &o.shape) else { return };
+    let Some(Shape::Curve { path }) = state.doc.active_page().find(id).map(|(o, _)| &o.shape) else { return };
     state.tools.nodes = vs_core::nodes::nodes(path).iter().map(|n| n.elem).collect();
     state.tool = Tool::Shape;
     state.toolbox.remember(Tool::Shape);

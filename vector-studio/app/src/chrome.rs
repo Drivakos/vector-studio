@@ -253,7 +253,7 @@ pub fn property_bar_ui(ui: &mut egui::Ui, state: &mut AppState, out: &mut Vec<Co
                 crate::paint_tools::property_bar(ui, state);
             }
             Tool::Shape if state.selection.len() == 1 => {
-                let curve = state.selected_objects().any(|o| matches!(o.shape, vs_core::Shape::Curve { .. }));
+                let curve = crate::tools::shape_object(state).is_some_and(|(o, _)| matches!(o.shape, vs_core::Shape::Curve { .. }));
                 if curve {
                     let n = state.tools.nodes.len();
                     ui.label(egui::RichText::new(format!("{n} node(s) selected")).color(theme::TEXT_DIM));

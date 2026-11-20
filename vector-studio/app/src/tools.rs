@@ -7,7 +7,7 @@ use egui::{Color32, Pos2, Rect, Stroke};
 use vs_core::kurbo::{self, Affine, BezPath, PathEl, Point, Shape as _, Vec2};
 use vs_core::controls::{self, Control};
 use vs_core::nodes::{self, HandleRef};
-use vs_core::{ObjectId, Shape, Style};
+use vs_core::{Object, ObjectId, Shape, Style};
 
 use crate::app::AppState;
 use crate::free_transform::FreeMode;
@@ -103,7 +103,8 @@ enum Drag {
     /// A corner of the Draw in Perspective plane.
     Plane { corner: usize },
     /// An ellipse, polygon or star node; `shape` and `transform` are as they were on press.
-    Control { object: ObjectId, control: Control, shape: Shape, transform: Affine },
+    /// `parent`: the transform of the groups the object is in; `transform`: its own.
+    Control { object: ObjectId, control: Control, shape: Shape, parent: Affine, transform: Affine },
     /// A guideline of the active page, by index.
     Guide { index: usize },
     /// Interactive Fill: dragging out a fountain fill on `object` from `start`.
@@ -162,6 +163,8 @@ pub struct ToolState {
     pub free_mode: crate::free_transform::FreeMode,
     /// Selected nodes (path element indices) of the object being shape-edited.
     pub nodes: Vec<usize>,
+    /// The object inside the selected group that the Shape tool edits, if not the group.
+    pub member: Option<ObjectId>,
     pub settings: ToolSettings,
     /// Text being typed into with the Text tool.
     pub text: Option<crate::text_tool::TextEdit>,
@@ -368,6 +371,11 @@ fn snapper(state: &AppState, view: &View, exclude: &[ObjectId]) -> vs_core::Snap
     vs_core::Snapper::new(state.doc.active_page(), &state.snap_options(), exclude, view.doc_len(SNAP))
 }
 
+/// What a Shape tool drag of `object` does not snap to: the object, and the group it is in.
+fn shape_exclude(state: &AppState, object: ObjectId) -> Vec<ObjectId> {
+    state.selection.iter().copied().chain([object]).collect()
+}
+
 /// Tools whose every click and drag position snaps.
 fn snaps_pointer(tool: Tool) -> bool {
     is_shape_tool(tool) || is_three_point(tool) || matches!(tool, Tool::Bezier | Tool::Pen | Tool::Text | Tool::TwoPointLine | Tool::Polyline | Tool::BSpline | Tool::Spiral | Tool::GraphPaper)
@@ -572,10 +580,9 @@ fn press_pick(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers
         }
         // Double-clicking an object switches to the Shape tool on it.
         Some(hit) if double => {
-            state.selection = vec![hit];
-            state.marquee_selection = None;
             state.tools.pick_mode = PickMode::Scale;
-            state.tools.nodes.clear();
+            state.selection.clear();
+            shape_pick(state, hit, p, view.doc_len(HIT));
             state.tool = Tool::Shape;
             state.toolbox.remember(Tool::Shape);
         }
@@ -585,6 +592,7 @@ fn press_pick(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers
                 state.selection = vec![hit];
                 state.marquee_selection = None;
                 state.tools.pick_mode = PickMode::Scale;
+                state.tools.member = None;
             }
             let originals = selection_originals(state);
             state.tools.drag = Some(Drag::Move { press: p, start: p, originals, moved: false, was_selected });
@@ -611,20 +619,39 @@ fn press_free(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers
     }
 }
 
-/// The object the Shape tool edits: the single selected object, if it is not locked.
+/// The object the Shape tool edits: the single selected object if it is not locked, or
+/// the object picked inside it when it is a group.
 fn shape_target(state: &AppState) -> Option<ObjectId> {
-    match state.selection.as_slice() {
-        [id] if state.doc.active_page().object(*id).is_some_and(|o| !o.locked) => Some(*id),
-        _ => None,
+    let [id] = state.selection.as_slice() else { return None };
+    let top = state.doc.active_page().object(*id).filter(|o| !o.locked)?;
+    // A member's own perspective is not drawn by the Shape tool's view of it: edit the group.
+    let member = state.tools.member.filter(|m| top.find(*m, Affine::IDENTITY).is_some_and(|(o, _)| !o.locked && o.perspective.is_none()));
+    Some(member.unwrap_or(*id))
+}
+
+/// The object the Shape tool edits and the transform of the groups it is in.
+pub fn shape_object(state: &AppState) -> Option<(&Object, Affine)> {
+    shape_target(state).and_then(|id| state.doc.active_page().find(id))
+}
+
+/// Select top-level object `hit` for the Shape tool, editing the object under `p` in it.
+fn shape_pick(state: &mut AppState, hit: ObjectId, p: Point, tol: f64) {
+    let page = state.doc.active_page();
+    let member = page.object(hit).and_then(|o| o.member_at(Affine::IDENTITY, p, tol)).filter(|m| *m != hit);
+    if state.selection != [hit] || state.tools.member != member {
+        state.selection = vec![hit];
+        state.marquee_selection = None;
+        state.tools.member = member;
+        state.tools.nodes.clear();
     }
 }
 
 fn press_shape(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers, double: bool) {
     let tol = view.doc_len(HIT);
     if let Some(id) = shape_target(state)
-        && let Some(obj) = state.doc.active_page().object(id)
+        && let Some((obj, parent)) = state.doc.active_page().find(id)
     {
-        let t = obj.transform;
+        let t = parent * obj.transform;
         if let Some(corners) = obj.perspective_corners() {
             // With a perspective the Shape tool moves its corners, not the nodes.
             if let Some(corner) = corners.iter().position(|c| view.screen_dist(*c, p) <= HIT) {
@@ -681,7 +708,7 @@ fn press_shape(state: &mut AppState, view: &View, p: Point, mods: egui::Modifier
                     }
                     return;
                 }
-                if obj.hit(p, tol) {
+                if obj.hit_in(parent, p, tol) {
                     return;
                 }
             }
@@ -694,7 +721,7 @@ fn press_shape(state: &mut AppState, view: &View, p: Point, mods: egui::Modifier
             }
             shape => {
                 if let Some((control, _)) = controls::controls(shape).into_iter().find(|(_, at)| view.screen_dist(t * *at, p) <= HIT) {
-                    state.tools.drag = Some(Drag::Control { object: id, control, shape: shape.clone(), transform: t });
+                    state.tools.drag = Some(Drag::Control { object: id, control, shape: shape.clone(), parent, transform: obj.transform });
                     return;
                 }
             }
@@ -702,15 +729,8 @@ fn press_shape(state: &mut AppState, view: &View, p: Point, mods: egui::Modifier
         }
     }
     match state.doc.active_page().hit_test(p, tol) {
-        Some(hit) => {
-            if state.selection != [hit] {
-                state.selection = vec![hit];
-                state.tools.nodes.clear();
-            }
-        }
-        None if shape_target(state).is_some_and(|id| {
-            state.doc.active_page().object(id).is_some_and(|o| o.perspective.is_none() && matches!(o.shape, Shape::Curve { .. }))
-        }) =>
+        Some(hit) => shape_pick(state, hit, p, tol),
+        None if shape_object(state).is_some_and(|(o, _)| o.perspective.is_none() && matches!(o.shape, Shape::Curve { .. })) =>
         {
             state.tools.drag = Some(Drag::NodeMarquee { start: p, add: mods.shift });
         }
@@ -722,7 +742,7 @@ fn press_shape(state: &mut AppState, view: &View, p: Point, mods: egui::Modifier
 }
 
 fn set_curve(state: &mut AppState, id: ObjectId, path: BezPath) {
-    if let Some(obj) = state.doc.active_page_mut().object_mut(id) {
+    if let Some(obj) = state.doc.active_page_mut().find_mut(id) {
         obj.shape = Shape::Curve { path };
     }
 }
@@ -1059,8 +1079,9 @@ fn drag_to(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers) {
             Drag::PenHandle { node }
         }
         Drag::Nodes { object, start, original } => {
-            if let Some(obj) = state.doc.active_page().object(object) {
-                let inv = obj.transform.inverse();
+            if let Some((obj, parent)) = state.doc.active_page().find(object) {
+                let t = parent * obj.transform;
+                let inv = t.inverse();
                 let mut delta = p - start;
                 if constrain(mods) {
                     delta = vs_core::geometry::constrain_to_axis(delta);
@@ -1068,8 +1089,8 @@ fn drag_to(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers) {
                     && let Some(node) = nodes::nodes(&original).into_iter().find(|n| n.elem == *first)
                 {
                     // The first selected node snaps; the others keep their distance to it.
-                    let at = obj.transform * node.point + delta;
-                    delta += snapper(state, view, &[object]).point(at) - at;
+                    let at = t * node.point + delta;
+                    delta += snapper(state, view, &shape_exclude(state, object)).point(at) - at;
                 }
                 let local = (inv * (start + delta)) - (inv * start);
                 let mut path = original.clone();
@@ -1081,9 +1102,10 @@ fn drag_to(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers) {
             Drag::Nodes { object, start, original }
         }
         Drag::Handle { object, handle } => {
-            let p = snapper(state, view, &[object]).point(p);
-            if let Some(obj) = state.doc.active_page_mut().object_mut(object) {
-                let local = obj.transform.inverse() * p;
+            let p = snapper(state, view, &shape_exclude(state, object)).point(p);
+            let parent = state.doc.active_page().find(object).map_or(Affine::IDENTITY, |(_, t)| t);
+            if let Some(obj) = state.doc.active_page_mut().find_mut(object) {
+                let local = (parent * obj.transform).inverse() * p;
                 if let Shape::Curve { path } = &mut obj.shape {
                     nodes::set_handle(path, handle, local);
                 }
@@ -1091,8 +1113,9 @@ fn drag_to(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers) {
             Drag::Handle { object, handle }
         }
         Drag::Corner { object, corner } => {
-            if let Some(obj) = state.doc.active_page_mut().object_mut(object) {
-                let local = obj.transform.inverse() * p;
+            let parent = state.doc.active_page().find(object).map_or(Affine::IDENTITY, |(_, t)| t);
+            if let Some(obj) = state.doc.active_page_mut().find_mut(object) {
+                let local = (parent * obj.transform).inverse() * p;
                 if let Shape::Rectangle { rect, corner_radius } = &mut obj.shape {
                     let sx = if corner.x == rect.x0 { 1.0 } else { -1.0 };
                     let sy = if corner.y == rect.y0 { 1.0 } else { -1.0 };
@@ -1108,15 +1131,15 @@ fn drag_to(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers) {
             state.doc.set_perspective_corner(object, corner, p);
             Drag::Perspective { object, corner }
         }
-        Drag::Control { object, control, shape, transform } => {
-            let local = transform.inverse() * snapper(state, view, &[object]).point(p);
+        Drag::Control { object, control, shape, parent, transform } => {
+            let local = (parent * transform).inverse() * snapper(state, view, &shape_exclude(state, object)).point(p);
             if let Some((edited, turn)) = controls::drag(&shape, control, local, constrain(mods))
-                && let Some(obj) = state.doc.active_page_mut().object_mut(object)
+                && let Some(obj) = state.doc.active_page_mut().find_mut(object)
             {
                 obj.shape = edited;
                 obj.transform = transform * turn;
             }
-            Drag::Control { object, control, shape, transform }
+            Drag::Control { object, control, shape, parent, transform }
         }
         Drag::FillVector { object, start } => {
             if view.screen_dist(start, p) > DRAG_START {
@@ -1301,12 +1324,12 @@ fn release(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers) {
             if !add {
                 state.tools.nodes.clear();
             }
-            if let Some(id) = shape_target(state)
-                && let Some(obj) = state.doc.active_page().object(id)
+            if let Some((obj, parent)) = shape_object(state)
                 && let Shape::Curve { path } = &obj.shape
             {
+                let t = parent * obj.transform;
                 for n in nodes::nodes(path) {
-                    if rect.contains(obj.transform * n.point) && !state.tools.nodes.contains(&n.elem) {
+                    if rect.contains(t * n.point) && !state.tools.nodes.contains(&n.elem) {
                         state.tools.nodes.push(n.elem);
                     }
                 }
@@ -1513,7 +1536,7 @@ pub fn delete_selected_nodes(state: &mut AppState) -> bool {
         return false;
     }
     let Some(id) = shape_target(state) else { return false };
-    let Some(Shape::Curve { path }) = state.doc.active_page().object(id).map(|o| o.shape.clone()) else {
+    let Some(Shape::Curve { path }) = state.doc.active_page().find(id).map(|(o, _)| o.shape.clone()) else {
         return false;
     };
     let mut path = path;
@@ -1640,9 +1663,11 @@ pub fn draw_overlay(painter: &egui::Painter, state: &AppState, canvas: Rect) {
     }
 
     if state.tool == Tool::Shape {
-        if let Some(obj) = shape_target(state).and_then(|id| page.object(id)) {
-            path_to_screen(painter, &obj.world_path(), &view, thin);
-            let t = obj.transform;
+        if let Some((obj, parent)) = shape_object(state) {
+            let mut outline = obj.world_path();
+            outline.apply_affine(parent);
+            path_to_screen(painter, &outline, &view, thin);
+            let t = parent * obj.transform;
             if let Some(corners) = obj.perspective_corners() {
                 perspective_grid(painter, obj, &corners, &view);
             } else {
@@ -1966,7 +1991,7 @@ pub fn hint(state: &AppState) -> String {
             format!("{selected} · {what}")
         }
         Tool::FreeTransform => "Click an object to transform it, or drag a box around objects".into(),
-        Tool::Shape => match shape_target(state).and_then(|id| state.doc.active_page().object(id)) {
+        Tool::Shape => match shape_object(state).map(|(o, _)| o) {
             Some(o) if o.perspective.is_some() => "Drag a corner to change the perspective · Object > Clear Effect removes it".into(),
             Some(o) if matches!(o.shape, Shape::Curve { .. }) => {
                 "Drag nodes or handles · double-click a line to add a node, a node to delete it".into()
@@ -1981,6 +2006,7 @@ pub fn hint(state: &AppState) -> String {
             Some(o) if matches!(o.shape, Shape::Polygon { .. }) => {
                 "Drag a node to resize and turn all sides · Cmd keeps the angle · Cmd+Q converts to curves".into()
             }
+            Some(o) if matches!(o.shape, Shape::Image(_)) => "A bitmap has no nodes · Bitmaps > Trace Bitmap turns it into curves".into(),
             Some(_) => "Ungroup to edit the nodes of each object".into(),
             None => "Click an object to edit its nodes".into(),
         },

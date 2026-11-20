@@ -265,7 +265,14 @@ impl Object {
     /// Whether `point` (page space) hits the fill or comes within `tolerance` of the outline
     /// of this object or, for a group, of any object in it.
     pub fn hit(&self, point: Point, tolerance: f64) -> bool {
-        self.leaves().iter().filter(|leaf| leaf.shows_at(point)).any(|leaf| {
+        self.hit_in(Affine::IDENTITY, point, tolerance)
+    }
+
+    /// [`Self::hit`] for an object placed by `parent` (its groups' transforms).
+    pub fn hit_in(&self, parent: Affine, point: Point, tolerance: f64) -> bool {
+        let mut leaves = Vec::new();
+        self.collect_leaves(parent, &[], &mut leaves);
+        leaves.iter().filter(|leaf| leaf.shows_at(point)).any(|leaf| {
             let half = leaf.style.outline.as_ref().map_or(0.0, |o| o.page_width(leaf.transform) / 2.0);
             let reach = tolerance + half;
             // Text is picked anywhere in its line boxes, not just on the glyphs; bitmaps
@@ -305,6 +312,54 @@ pub struct PaintHit {
     pub outline: bool,
 }
 
+impl Object {
+    /// A group whose members can be edited one by one in place: not a table, symbol,
+    /// clone, symmetry group or a group drawn through a perspective, whose members are
+    /// laid out or drawn by something else.
+    fn opens(&self) -> bool {
+        matches!(self.shape, Shape::Group { .. })
+            && self.table.is_none()
+            && self.symbol.is_none()
+            && self.clone_of.is_none()
+            && self.symmetry.is_none()
+            && self.perspective.is_none()
+    }
+
+    /// Object `id`: this one or one in it (see [`Self::opens`]), with the transform that
+    /// places it, its groups' transforms put together; `parent` places this object.
+    pub fn find(&self, id: ObjectId, parent: Affine) -> Option<(&Object, Affine)> {
+        if self.id == id {
+            return Some((self, parent));
+        }
+        match &self.shape {
+            Shape::Group { children } if self.opens() => children.iter().find_map(|c| c.find(id, parent * self.transform)),
+            _ => None,
+        }
+    }
+
+    pub fn find_mut(&mut self, id: ObjectId) -> Option<&mut Object> {
+        if self.id == id {
+            return Some(self);
+        }
+        let opens = self.opens();
+        match &mut self.shape {
+            Shape::Group { children } if opens => children.iter_mut().find_map(|c| c.find_mut(id)),
+            _ => None,
+        }
+    }
+
+    /// The topmost object under `point` that is not a group this one opens into: this
+    /// object, or one in it. `parent` places this object.
+    pub fn member_at(&self, parent: Affine, point: Point, tolerance: f64) -> Option<ObjectId> {
+        match &self.shape {
+            Shape::Group { children } if self.opens() => {
+                children.iter().rev().find_map(|c| c.member_at(parent * self.transform, point, tolerance))
+            }
+            _ => self.hit_in(parent, point, tolerance).then_some(self.id),
+        }
+    }
+}
+
 impl Page {
     /// The topmost fill or outline colour at `point`, within `tolerance` of outlines.
     pub fn paint_at(&self, point: Point, tolerance: f64) -> Option<PaintHit> {
@@ -333,6 +388,15 @@ impl Page {
 
     pub fn object_mut(&mut self, id: ObjectId) -> Option<&mut Object> {
         self.objects.iter_mut().find(|o| o.id == id)
+    }
+
+    /// Object `id`, at the top or inside groups, with the transform of the groups it is in.
+    pub fn find(&self, id: ObjectId) -> Option<(&Object, Affine)> {
+        self.objects.iter().find_map(|o| o.find(id, Affine::IDENTITY))
+    }
+
+    pub fn find_mut(&mut self, id: ObjectId) -> Option<&mut Object> {
+        self.objects.iter_mut().find_map(|o| o.find_mut(id))
     }
 
     /// Topmost object under `point`.
@@ -413,6 +477,40 @@ mod tests {
 
     fn filled() -> Style {
         Style::filled(Rgba::BLACK)
+    }
+
+    #[test]
+    fn objects_inside_groups_are_found_and_picked_with_their_groups_placement() {
+        let square = |id, x| {
+            let mut o = Object::new(ObjectId(id), Shape::Rectangle { rect: Rect::new(0.0, 0.0, 10.0, 10.0), corner_radius: 0.0 }, filled());
+            o.transform = Affine::translate((x, 0.0));
+            o
+        };
+        let mut inner = Object::new(ObjectId(2), Shape::Group { children: vec![square(3, 0.0), square(4, 20.0)] }, Style::default());
+        inner.transform = Affine::translate((0.0, 100.0));
+        let mut outer = Object::new(ObjectId(1), Shape::Group { children: vec![inner, square(5, 40.0)] }, Style::default());
+        outer.transform = Affine::translate((1000.0, 0.0));
+        let mut doc = Document::default();
+        doc.active_page_mut().objects.push(outer);
+        let page = doc.active_page();
+
+        let (found, parent) = page.find(ObjectId(4)).unwrap();
+        assert_eq!(found.id, ObjectId(4));
+        assert_eq!(parent * found.transform * Point::ZERO, Point::new(1020.0, 100.0), "both groups' moves");
+        assert!(page.find(ObjectId(9)).is_none());
+
+        let outer = page.object(ObjectId(1)).unwrap();
+        assert_eq!(outer.member_at(Affine::IDENTITY, Point::new(1025.0, 105.0), 0.5), Some(ObjectId(4)));
+        assert_eq!(outer.member_at(Affine::IDENTITY, Point::new(1045.0, 5.0), 0.5), Some(ObjectId(5)));
+        assert_eq!(outer.member_at(Affine::IDENTITY, Point::new(25.0, 105.0), 0.5), None, "not where it would be unmoved");
+    }
+
+    #[test]
+    fn symmetry_groups_are_not_opened() {
+        let mut group = Object::new(ObjectId(1), Shape::Group { children: vec![Object::new(ObjectId(2), Shape::Rectangle { rect: Rect::new(0.0, 0.0, 10.0, 10.0), corner_radius: 0.0 }, filled())] }, Style::default());
+        group.symmetry = Some(crate::symmetry::Symmetry { lines: 2, center: Point::ZERO });
+        assert!(group.find(ObjectId(2), Affine::IDENTITY).is_none());
+        assert_eq!(group.member_at(Affine::IDENTITY, Point::new(5.0, 5.0), 0.5), Some(ObjectId(1)), "the group itself");
     }
 
     #[test]

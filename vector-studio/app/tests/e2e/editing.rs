@@ -3,6 +3,7 @@
 use egui::{Key, Modifiers};
 use vector_studio::toolbox::Tool;
 use vs_core::Shape;
+use vs_core::kurbo::Shape as _;
 
 use crate::support::{E2e, close, rect_close};
 
@@ -133,6 +134,62 @@ fn double_clicking_an_object_with_the_pick_tool_shows_its_nodes() {
 
     app.drag_doc((200.0, 200.0), (240.0, 230.0));
     assert!(rect_close(app.bounds(0), 100.0, 100.0, 240.0, 230.0), "the node can be dragged: {:?}", app.bounds(0));
+}
+
+/// Member `i` of the group that is the page's only object: its bounds on the page, and its
+/// node count.
+fn member(app: &E2e, i: usize) -> (vs_core::kurbo::Rect, usize) {
+    let group = &app.objects()[0];
+    let Shape::Group { children } = &group.shape else { panic!("a group: {:?}", group.shape) };
+    let mut path = children[i].world_path();
+    path.apply_affine(group.transform);
+    let Shape::Curve { path: own } = &children[i].shape else { panic!("a curve: {:?}", children[i].shape) };
+    (path.bounding_box(), vs_core::nodes::nodes(own).len())
+}
+
+#[test]
+fn double_clicking_an_object_in_a_group_edits_its_nodes_and_keeps_the_group() {
+    let mut app = E2e::new();
+    for x in [100.0, 300.0] {
+        app.draw_rect(x, 100.0, x + 100.0, 200.0);
+        app.click("Swatch Red");
+        app.click("Convert to Curves (property bar)");
+    }
+    app.pick_tool();
+    app.shortcut(Modifiers::COMMAND, Key::A);
+    app.shortcut(Modifiers::COMMAND, Key::G);
+    assert_eq!(app.objects().len(), 1, "grouped");
+    let group = app.objects()[0].id;
+    // Moved, so the group has a transform of its own that its members are drawn through.
+    app.drag_doc((150.0, 200.0), (170.0, 220.0));
+    assert!(rect_close(member(&app, 1).0, 320.0, 120.0, 420.0, 220.0), "{:?}", member(&app, 1).0);
+    app.click_doc(600.0, 700.0);
+
+    // 2 screen points in from a corner: inside the red fill, under the node's square.
+    let off = 2.0 / app.state().viewport.zoom();
+    let corner = |app: &mut E2e, x: f64, y: f64| app.pixel(x + off, y + off)[..3] == [255, 255, 255];
+    app.double_click_doc(320.0, 170.0);
+    assert_eq!(app.state().tool, Tool::Shape);
+    assert_eq!(app.selection(), vec![group], "the group stays selected");
+    assert!(corner(&mut app, 320.0, 120.0), "the clicked member's nodes are shown");
+    assert!(!corner(&mut app, 120.0, 120.0), "the other member's are not");
+
+    app.drag_doc((420.0, 220.0), (460.0, 250.0));
+    assert!(rect_close(member(&app, 1).0, 320.0, 120.0, 460.0, 250.0), "the node moved: {:?}", member(&app, 1).0);
+    assert!(rect_close(member(&app, 0).0, 120.0, 120.0, 220.0, 220.0), "the other member stays: {:?}", member(&app, 0).0);
+    assert_eq!(app.objects().len(), 1, "still one group");
+
+    // With the Shape tool, clicking another member edits that one.
+    app.click_doc(120.0, 170.0);
+    assert_eq!(app.selection(), vec![group]);
+    assert!(corner(&mut app, 120.0, 120.0), "now the first member's nodes are shown");
+    app.click_doc(120.0, 120.0);
+    app.key(Key::Delete);
+    assert_eq!(member(&app, 0).1, 3, "Delete removes the member's selected node");
+    assert_eq!(member(&app, 1).1, 4);
+    assert_eq!(app.objects().len(), 1, "and not the group");
+    app.shortcut(Modifiers::COMMAND, Key::Z);
+    assert_eq!(member(&app, 0).1, 4, "Undo puts the node back");
 }
 
 #[test]
