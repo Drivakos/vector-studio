@@ -187,8 +187,9 @@ pub fn export(doc: &Document, path: &Path, options: &ExportOptions) -> Result<Ex
 
 /// One `<path>` per drawable object; groups become `<g>` around their members.
 fn write_svg_object(out: &mut String, obj: &Object, parent: vs_core::kurbo::Affine, depth: usize) {
-    if obj.is_warped() {
-        // SVG has no projective transform or envelope: write the reshaped curves.
+    if obj.is_warped() || obj.effects.media.is_some() {
+        // SVG has no projective transform, envelope or Artistic Media: write the curves
+        // as drawn.
         let mut baked = obj.clone();
         baked.bake_warps();
         return write_svg_object(out, &baked, parent, depth);

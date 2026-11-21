@@ -21,6 +21,7 @@ pub mod glyphs;
 pub mod find_ui;
 pub mod guides;
 pub mod insert_codes;
+pub mod media_tool;
 #[cfg(target_os = "macos")]
 pub mod native_menu;
 pub mod outline;

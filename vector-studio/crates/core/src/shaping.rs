@@ -170,13 +170,16 @@ impl Document {
         Some(target)
     }
 
-    /// Whether Break Apart would change anything: an unlocked curve with several subpaths.
+    /// Whether Break Apart would change anything: an unlocked curve with several subpaths,
+    /// or an Artistic Media stroke.
     pub fn can_break_apart(&self, ids: &[ObjectId]) -> bool {
-        self.unlocked(ids).any(|o| matches!(&o.shape, Shape::Curve { path } if subpaths(path).len() > 1))
+        self.unlocked(ids).any(|o| o.media_outline().is_some() || matches!(&o.shape, Shape::Curve { path } if subpaths(path).len() > 1))
     }
 
     /// Split each unlocked curve among `ids` into one object per subpath, in place. The
-    /// first piece keeps the object's id. Returns the pieces and the other ids, to select.
+    /// first piece keeps the object's id. An Artistic Media stroke is broken into the
+    /// stroke as a curve (keeping the id) and its control curve on top. Returns the
+    /// pieces and the other ids, to select.
     pub fn break_apart(&mut self, ids: &[ObjectId]) -> Vec<ObjectId> {
         let mut out = Vec::new();
         let mut i = 0;
@@ -184,6 +187,16 @@ impl Document {
             let obj = &self.active_page().objects[i];
             i += 1;
             if !ids.contains(&obj.id) {
+                continue;
+            }
+            if let Some((mut control, stroke)) = obj.split_media().filter(|_| !obj.locked) {
+                control.id = self.alloc_object_id();
+                control.name = None;
+                out.extend([stroke.id, control.id]);
+                let objects = &mut self.active_page_mut().objects;
+                objects[i - 1] = stroke;
+                objects.insert(i, control);
+                i += 1;
                 continue;
             }
             let pieces = match &obj.shape {

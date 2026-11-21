@@ -218,11 +218,15 @@ impl Object {
                 }
             }
             shape => {
-                let mut path = shape.to_path();
+                // An Artistic Media stroke is drawn in place of its control curve.
+                let (mut path, closed) = match self.media_outline() {
+                    Some(stroke) => (stroke, true),
+                    None => (shape.to_path(), shape.is_closed()),
+                };
                 path.apply_affine(transform);
-                let leaf = |style: Cow<'a, Style>, path: BezPath| Leaf { path, shape, style, closed: shape.is_closed(), transform, clips: clips.to_vec(), projected: false, shadow: false, effect: false };
+                let leaf = |style: Cow<'a, Style>, path: BezPath| Leaf { path, shape, style, closed, transform, clips: clips.to_vec(), projected: false, shadow: false, effect: false };
                 // A mesh fill is drawn as a bitmap inside the outline, in place of the fill.
-                let mesh = self.effects.mesh.as_ref().and_then(|m| m.shape()).filter(|_| shape.is_closed() && !self.is_warped());
+                let mesh = self.effects.mesh.as_ref().and_then(|m| m.shape()).filter(|_| shape.is_closed() && !self.is_warped() && self.effects.media.is_none());
                 if let (Some(image @ Shape::Image(b)), true) = (mesh, self.contents.is_empty()) {
                     let mut area = b.rect.to_path(PATH_TOLERANCE);
                     area.apply_affine(transform);
@@ -295,7 +299,7 @@ impl Object {
                 .unwrap_or_default(),
             Shape::Text(text) => transform.transform_rect_bbox(text.layout().bounds()),
             shape => {
-                let mut path = shape.to_path();
+                let mut path = self.media_outline().unwrap_or_else(|| shape.to_path());
                 path.apply_affine(transform);
                 path.bounding_box()
             }

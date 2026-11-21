@@ -41,3 +41,4 @@ mod corel;
 mod shadows;
 mod effects;
 mod patterns;
+mod media;

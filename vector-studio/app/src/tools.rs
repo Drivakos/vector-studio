@@ -181,6 +181,8 @@ pub struct ToolState {
     pub eyedropper: crate::paint_tools::Eyedropper,
     /// Contour, Blend, Distort, Envelope, Extrude, Block Shadow and Mesh Fill.
     pub effect: crate::effect_tools::EffectState,
+    /// Artistic Media: the stroke new lines get.
+    pub media: crate::media_tool::MediaSettings,
     drag: Option<Drag>,
     pen: Option<PenPath>,
     /// 3-point tools: the first edge, waiting for the click that sets the third point.
@@ -259,7 +261,7 @@ fn is_shape_tool(tool: Tool) -> bool {
 
 pub fn is_implemented(tool: Tool) -> bool {
     is_shape_tool(tool)
-        || matches!(tool, Tool::Pick | Tool::FreehandPick | Tool::FreeTransform | Tool::Shape | Tool::Zoom | Tool::Pan | Tool::Freehand | Tool::Bezier | Tool::Pen | Tool::Text)
+        || matches!(tool, Tool::Pick | Tool::FreehandPick | Tool::FreeTransform | Tool::Shape | Tool::Zoom | Tool::Pan | Tool::Freehand | Tool::Bezier | Tool::Pen | Tool::Text | Tool::ArtisticMedia)
         || matches!(tool, Tool::InteractiveFill | Tool::SmartFill | Tool::Transparency | Tool::ColorEyedropper | Tool::AttributesEyedropper)
         || matches!(tool, Tool::Crop | Tool::Knife | Tool::VirtualSegmentDelete | Tool::Eraser)
         || tool == Tool::DropShadow
@@ -425,7 +427,7 @@ fn press(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers, dou
         }
         Tool::FreeTransform => press_free(state, view, p, mods),
         Tool::Shape => press_shape(state, view, p, mods, double),
-        Tool::Freehand => state.tools.drag = Some(Drag::Freehand { points: vec![p] }),
+        Tool::Freehand | Tool::ArtisticMedia => state.tools.drag = Some(Drag::Freehand { points: vec![p] }),
         Tool::Bezier | Tool::Pen => press_pen(state, view, p),
         // Clicks only: no curve handles.
         Tool::Polyline | Tool::BSpline => {
@@ -1432,6 +1434,10 @@ fn release(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers) {
                 for q in &points[1..] {
                     line.line_to(*q);
                 }
+                if state.tool == Tool::ArtisticMedia {
+                    crate::media_tool::finish(state, line, closed, view.doc_len(1.0));
+                    return;
+                }
                 let options = kurbo::simplify::SimplifyOptions::default();
                 let mut path = kurbo::simplify::simplify_bezpath(line, view.doc_len(1.0), &options);
                 if closed {
@@ -1830,7 +1836,9 @@ pub fn draw_overlay(painter: &egui::Painter, state: &AppState, canvas: Rect) {
         }
         Some(Drag::Freehand { points }) => {
             let pts: Vec<Pos2> = points.iter().map(|p| draw.screen(*p)).collect();
-            painter.add(egui::Shape::line(pts, Stroke::new(1.0, Color32::BLACK)));
+            // Artistic Media shows the stroke's full width as it is drawn.
+            let width = if state.tool == Tool::ArtisticMedia { (state.tools.media.media.width * draw.zoom) as f32 } else { 1.0 };
+            painter.add(egui::Shape::line(pts, Stroke::new(width.max(1.0), Color32::from_black_alpha(if width > 1.0 { 140 } else { 255 }))));
         }
         Some(Drag::Free { anchor, .. }) => {
             let a = draw.screen(*anchor);
@@ -2086,6 +2094,7 @@ pub fn hint(state: &AppState) -> String {
             "Drag to draw · Cmd constrains to equal sides · Shift draws from the centre".into()
         }
         Tool::Freehand => "Drag to draw · end on the start point to close".into(),
+        Tool::ArtisticMedia => crate::media_tool::hint(state),
         Tool::Bezier | Tool::Pen => {
             "Click for corners, drag for curves · click the first node to close · Enter or click the last node to finish".into()
         }

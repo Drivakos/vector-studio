@@ -1039,6 +1039,14 @@ impl VectorStudioApp {
                 s.copy_perspective = crate::edit_tools::can_copy_perspective(s);
                 Ok(())
             }
+            Command::ArtisticMedia => {
+                crate::media_tool::start(s);
+                Ok(())
+            }
+            Command::UseTool(tool) => {
+                s.tool = tool;
+                Ok(())
+            }
             Command::ClearEffect => {
                 s.doc.clear_effects(&s.selection);
                 s.tools.effect.mesh_node = None;

@@ -247,6 +247,7 @@ pub fn property_bar_ui(ui: &mut egui::Ui, state: &mut AppState, out: &mut Vec<Co
                 ui.label(egui::RichText::new(crate::tools::hint(state)).color(theme::TEXT_DIM));
             }
             Tool::DropShadow => crate::shadow_tool::property_bar(ui, state),
+            Tool::ArtisticMedia => crate::media_tool::property_bar(ui, state),
             t if crate::effect_tools::is_effect_tool(t) => crate::effect_tools::property_bar(ui, state),
             Tool::Knife => {
                 ui.label(egui::RichText::new(crate::tools::hint(state)).color(theme::TEXT_DIM));

@@ -36,6 +36,8 @@ pub struct Effects {
     pub distortion: Option<Distortion>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mesh: Option<MeshFill>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media: Option<crate::media::ArtisticMedia>,
 }
 
 impl Effects {
@@ -252,6 +254,7 @@ impl Object {
         !self.locked
             && self.contents.is_empty()
             && !self.is_warped()
+            && self.effects.media.is_none()
             && self.shape.is_closed()
             && !matches!(self.shape, Shape::Text(_) | Shape::Group { .. } | Shape::Image(_))
     }
@@ -266,6 +269,7 @@ impl Object {
             children.iter_mut().for_each(Object::sync_effects);
         }
         self.contents.iter_mut().for_each(Object::sync_effects);
+        self.sync_media();
         if let Some(mut mesh) = self.effects.mesh.take() {
             mesh.sync();
             self.effects.mesh = Some(mesh);

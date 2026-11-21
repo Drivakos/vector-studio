@@ -441,6 +441,7 @@ impl Object {
     pub fn can_convert_to_curves(&self) -> bool {
         !self.locked
             && (self.is_warped()
+                || self.effects.media.is_some()
                 || match &self.shape {
                     Shape::Curve { .. } | Shape::Image(_) => false,
                     Shape::Group { children } => children.iter().any(Object::can_convert_to_curves),

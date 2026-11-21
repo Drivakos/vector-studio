@@ -83,6 +83,8 @@ impl Object {
     /// Make every reshaping effect part of the geometry: shapes and text become curves,
     /// and a group passes them on to its members. Bitmaps keep their shape.
     pub fn bake_warps(&mut self) {
+        // The stroke is drawn before the reshaping, so it is baked first.
+        self.bake_media();
         if let Some(w) = self.warp().and_then(Warp::shape_only) {
             self.effects.envelope = None;
             self.effects.distortion = None;
