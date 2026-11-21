@@ -29,8 +29,8 @@ pub struct CdrPage {
     pub objects: Vec<Object>,
 }
 
-/// Read a Corel file's pages. Shapes, groups, solid and fountain fills, outlines and
-/// bitmaps come through as the SVG import keeps them; text and pattern fills do not.
+/// Read a Corel file's pages. Shapes, groups, solid, fountain and pattern fills, outlines
+/// and bitmaps come through as the SVG import keeps them; text comes as curves.
 pub fn read_cdr(data: &[u8]) -> Result<Vec<CdrPage>, IoError> {
     let pages = svg_pages(data)?;
     if pages.is_empty() {
@@ -340,3 +340,4 @@ mod tests {
         assert_eq!(bmp_to_png("<svg/>"), Cow::Borrowed("<svg/>"));
     }
 }
+

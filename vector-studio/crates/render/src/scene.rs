@@ -2,8 +2,8 @@
 
 use kurbo::{Affine, Rect, Shape as _, Stroke};
 use vello::Scene;
-use vello::peniko::{BlendMode, Brush, Color, Fill, Gradient, Mix};
-use vs_core::{GradientKind, Page, Rgba, Shape};
+use vello::peniko::{BlendMode, Brush, Color, Extend, Fill, Gradient, ImageBrush, ImageQuality, Mix};
+use vs_core::{GradientKind, Page, PatternKind, Rgba, Shape};
 
 use crate::proof::Proof;
 use crate::viewport::Viewport;
@@ -126,24 +126,39 @@ pub fn to_color(c: Rgba) -> Color {
     Color::from_rgba8(c.r, c.g, c.b, c.a)
 }
 
-/// The brush for `fill` at `opacity`, in the fill's (object-local) space.
-pub fn to_brush(fill: &vs_core::Fill, opacity: f64) -> Brush {
-    to_brush_with(fill, opacity, &|c| c)
+/// The brush for `fill` at `opacity`, and the transform from the brush's own space to the
+/// fill's (object-local) space: identity but for patterns, whose brush is one tile's image.
+pub fn to_brush(fill: &vs_core::Fill, opacity: f64) -> Option<(Brush, Affine)> {
+    to_brush_with(fill, opacity, &Look::default())
 }
 
-/// [`to_brush`] with every colour passed through `tint`.
-fn to_brush_with(fill: &vs_core::Fill, opacity: f64, tint: &dyn Fn(Rgba) -> Rgba) -> Brush {
-    match fill {
-        vs_core::Fill::Solid(c) => Brush::Solid(to_color(tint(*c).faded(opacity))),
+/// [`to_brush`] with every colour and bitmap as `look` shows it. `None` when a bitmap
+/// pattern's bitmap can't be decoded.
+fn to_brush_with(fill: &vs_core::Fill, opacity: f64, look: &Look<'_>) -> Option<(Brush, Affine)> {
+    let tint = |c: Rgba| look.color(c);
+    Some(match fill {
+        vs_core::Fill::Solid(c) => (Brush::Solid(to_color(tint(*c).faded(opacity))), Affine::IDENTITY),
         vs_core::Fill::Gradient(g) => {
             let gradient = match g.kind {
                 GradientKind::Linear => Gradient::new_linear(g.start, g.end),
                 GradientKind::Radial => Gradient::new_radial(g.start, (g.end - g.start).hypot() as f32),
             };
             let stops: Vec<(f32, Color)> = g.stops.iter().map(|s| (s.offset as f32, to_color(tint(s.color).faded(opacity)))).collect();
-            Brush::Gradient(gradient.with_stops(stops.as_slice()))
+            (Brush::Gradient(gradient.with_stops(stops.as_slice())), Affine::IDENTITY)
         }
-    }
+        vs_core::Fill::Pattern(p) => {
+            let image = match &p.kind {
+                PatternKind::TwoColor { cells, fore, back } => crate::bitmaps::two_color(*cells, tint(*fore), tint(*back)),
+                PatternKind::Bitmap { bitmap, .. } => match look.proof {
+                    Some(proof) => proof.bitmap(bitmap)?,
+                    None => crate::bitmaps::decoded(bitmap)?,
+                },
+            };
+            let to_unit = Affine::scale_non_uniform(1.0 / f64::from(image.width), 1.0 / f64::from(image.height));
+            let brush = ImageBrush::new(image).with_extend(Extend::Repeat).with_quality(ImageQuality::Medium).with_alpha(opacity as f32);
+            (Brush::Image(brush), p.transform * to_unit)
+        }
+    })
 }
 
 /// Append `page` to `scene`.
@@ -193,7 +208,7 @@ pub fn build_page_scene<'a>(
     for object in page.shown_objects() {
         for leaf in object.drawn_leaves() {
             let opacity = leaf.style.opacity();
-            let fill = leaf.fill().map(|f| to_brush_with(f, opacity, &tint));
+            let fill = leaf.fill().and_then(|f| to_brush_with(f, opacity, &look));
             let outline = leaf.style.outline.as_ref().map(|o| {
                 let width = if o.width > 0.0 { o.page_width(leaf.transform) } else { hairline };
                 (o.stroke(width), to_color(tint(o.color).faded(opacity)), o.behind_fill)
@@ -213,10 +228,11 @@ pub fn build_page_scene<'a>(
                     }
                     return;
                 }
-                if let Some(brush) = &fill {
+                if let Some((brush, place)) = &fill {
                     // Even-odd: overlaps in a combined curve are holes.
-                    // Fountain fills are in local space; the path is already on the page.
-                    scene.fill(Fill::EvenOdd, doc, brush, Some(leaf.transform), &leaf.path);
+                    // Fountain and pattern fills are in local space; the path is already
+                    // on the page.
+                    scene.fill(Fill::EvenOdd, doc, brush, Some(leaf.transform * *place), &leaf.path);
                 }
             };
             // PowerClip contents show only inside their containers.

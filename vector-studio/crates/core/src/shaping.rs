@@ -248,10 +248,10 @@ pub(crate) fn page_style(obj: &Object) -> Style {
     if let Some(o) = style.outline.as_mut().filter(|o| o.scale_with_object && o.width > 0.0) {
         o.width = o.page_width(transform);
     }
-    // Fountain fills are in local space; the result has none, so move them to the page.
-    if let Some(crate::Fill::Gradient(g)) = style.fill.as_mut() {
-        g.start = transform * g.start;
-        g.end = transform * g.end;
+    // Fountain and pattern fills are in local space; the result has none, so move them
+    // to the page.
+    if let Some(fill) = style.fill.as_mut() {
+        fill.transform(transform);
     }
     style
 }

@@ -7,7 +7,7 @@ mod import;
 
 pub use bitmaps::{apply_effect, bitmap_from_pixels, bitmap_pixels, drawn_bounds, glyph_image, objects_to_bitmap, rasterize, resample, shrink, trim_transparent};
 pub use cdr::{CAN_READ_CDR, CDR_EXTENSIONS, CdrPage, cdr_document, is_cdr_path, open_cdr, read_cdr, testing as cdr_testing};
-pub use import::{import_bitmap, import_svg};
+pub use import::{bitmap_pattern, import_bitmap, import_svg};
 
 use std::fmt::Write as _;
 use std::path::Path;
@@ -15,7 +15,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use vs_core::kurbo::{BezPath, PathEl};
 use vs_core::geometry::Leaf;
-use vs_core::{Document, Fill, Gradient, GradientKind, LineCap, LineJoin, Object, Outline, Page, Rgba, Shape};
+use vs_core::{Document, Fill, Gradient, GradientKind, LineCap, LineJoin, Object, Outline, Page, Pattern, PatternKind, Rgba, Shape};
 
 /// Extension of the native format (JSON).
 pub const FILE_EXTENSION: &str = "vstudio";
@@ -261,8 +261,10 @@ fn write_svg_shape(out: &mut String, obj: &Object, parent: vs_core::kurbo::Affin
     }
     let opacity = obj.style.opacity();
     let fill = obj.style.fill.as_ref().filter(|_| obj.shape.is_closed() && !matches!(obj.shape, Shape::Image(_)));
-    if let Some(Fill::Gradient(g)) = fill {
-        write_svg_gradient(out, &indent, obj.id.0, g, transform, opacity);
+    match fill {
+        Some(Fill::Gradient(g)) => write_svg_gradient(out, &indent, obj.id.0, g, transform, opacity),
+        Some(Fill::Pattern(p)) => write_svg_pattern(out, &indent, obj.id.0, p, transform),
+        _ => {}
     }
     let _ = write!(out, r#"{indent}<path d="{}""#, path.to_svg());
     match fill {
@@ -275,6 +277,12 @@ fn write_svg_shape(out: &mut String, obj: &Object, parent: vs_core::kurbo::Affin
         }
         Some(Fill::Gradient(_)) => {
             let _ = write!(out, r#" fill="url(#fill{})" fill-rule="evenodd""#, obj.id.0);
+        }
+        Some(Fill::Pattern(_)) => {
+            let _ = write!(out, r#" fill="url(#fill{})" fill-rule="evenodd""#, obj.id.0);
+            if opacity < 1.0 {
+                let _ = write!(out, r#" fill-opacity="{}""#, num(opacity));
+            }
         }
         None => out.push_str(r#" fill="none""#),
     }
@@ -360,6 +368,59 @@ fn write_svg_gradient(out: &mut String, indent: &str, id: u64, g: &Gradient, tra
     }
     let tag = if g.kind == GradientKind::Linear { "linearGradient" } else { "radialGradient" };
     let _ = writeln!(out, "{indent}</{tag}>");
+}
+
+/// The size of one pattern tile in its own units: 8 × 8 cells, or the bitmap's pixels.
+fn pattern_units(p: &Pattern) -> (u32, u32) {
+    match &p.kind {
+        PatternKind::TwoColor { .. } => (8, 8),
+        PatternKind::Bitmap { bitmap, .. } => (bitmap.width.max(1), bitmap.height.max(1)),
+    }
+}
+
+/// The set cells of a two-color pattern as one path in cell units, a rectangle per run of
+/// set cells in a row.
+fn pattern_cells(cells: [u8; 8]) -> BezPath {
+    let mut path = BezPath::new();
+    for (y, row) in cells.iter().enumerate() {
+        let mut x = 0;
+        while x < 8 {
+            if row & (0x80 >> x) == 0 {
+                x += 1;
+                continue;
+            }
+            let start = x;
+            while x < 8 && row & (0x80 >> x) != 0 {
+                x += 1;
+            }
+            let r = vs_core::kurbo::Rect::new(start as f64, y as f64, x as f64, y as f64 + 1.0);
+            path.extend(vs_core::kurbo::Shape::path_elements(&r, 0.0));
+        }
+    }
+    path
+}
+
+/// A `<pattern>` with id `fill{id}`: one tile in its own units (see [`pattern_units`]),
+/// placed by `patternTransform`. Opacity is set where it is used.
+fn write_svg_pattern(out: &mut String, indent: &str, id: u64, p: &Pattern, transform: vs_core::kurbo::Affine) {
+    let (w, h) = pattern_units(p);
+    let place = transform * p.transform * vs_core::kurbo::Affine::scale_non_uniform(1.0 / f64::from(w), 1.0 / f64::from(h));
+    let matrix = place.as_coeffs().map(num).join(" ");
+    let _ = writeln!(out, r#"{indent}<pattern id="fill{id}" patternUnits="userSpaceOnUse" width="{w}" height="{h}" patternTransform="matrix({matrix})">"#);
+    let paint = |c: Rgba| {
+        let a = f64::from(c.a) / 255.0;
+        if a < 1.0 { format!(r#"fill="{}" fill-opacity="{}""#, hex(c), num(a)) } else { format!(r#"fill="{}""#, hex(c)) }
+    };
+    match &p.kind {
+        PatternKind::TwoColor { cells, fore, back } => {
+            let _ = writeln!(out, r#"{indent}  <rect width="8" height="8" {}/>"#, paint(*back));
+            let _ = writeln!(out, r#"{indent}  <path d="{}" {}/>"#, pattern_cells(*cells).to_svg(), paint(*fore));
+        }
+        PatternKind::Bitmap { bitmap, .. } => {
+            let _ = writeln!(out, r#"{indent}  <image width="{w}" height="{h}" preserveAspectRatio="none" href="data:{};base64,{}"/>"#, bitmap.format.mime(), bitmap.base64());
+        }
+    }
+    let _ = writeln!(out, "{indent}</pattern>");
 }
 
 fn write_svg_stroke(out: &mut String, o: &Outline, width: f64, opacity: f64) {
@@ -584,6 +645,38 @@ fn pdf_gradient(g: &Gradient, transform: vs_core::kurbo::Affine, alpha: f64, col
         }
         .into(),
     }
+}
+
+/// A tiling pattern for `p`; `transform` is its object's local → page transform. A
+/// bitmap that can't be read leaves the tile empty.
+fn pdf_pattern(surface: &mut krilla::surface::Surface<'_>, p: &Pattern, transform: vs_core::kurbo::Affine, colors: &PdfColors<'_>) -> krilla::paint::Paint {
+    use krilla::num::NormalizedF32;
+    use krilla::paint::{Fill, FillRule};
+    let (w, h) = pattern_units(p);
+    let mut builder = surface.stream_builder();
+    let mut tile = builder.surface();
+    match &p.kind {
+        PatternKind::TwoColor { cells, fore, back } => {
+            let opacity = |c: &Rgba| NormalizedF32::new(f32::from(c.a) / 255.0).unwrap_or(NormalizedF32::ONE);
+            let square = vs_core::kurbo::Rect::new(0.0, 0.0, 8.0, 8.0);
+            for (path, color) in [(vs_core::kurbo::Shape::to_path(&square, 0.0), back), (pattern_cells(*cells), fore)] {
+                if let Some(path) = pdf_path(&path) {
+                    tile.set_fill(Some(Fill { paint: colors.color(*color).into(), opacity: opacity(color), rule: FillRule::NonZero }));
+                    tile.set_stroke(None);
+                    tile.draw_path(&path);
+                }
+            }
+        }
+        PatternKind::Bitmap { bitmap, .. } => {
+            let b = vs_core::Bitmap { rect: vs_core::kurbo::Rect::new(0.0, 0.0, f64::from(w), f64::from(h)), ..bitmap.clone() };
+            let _ = pdf_image(&mut tile, &b, vs_core::kurbo::Affine::IDENTITY, 1.0);
+        }
+    }
+    tile.finish();
+    let stream = builder.finish();
+    let place = transform * p.transform * vs_core::kurbo::Affine::scale_non_uniform(1.0 / f64::from(w), 1.0 / f64::from(h));
+    let [a, b, c, d, e, f] = place.as_coeffs().map(|v| v as f32);
+    krilla::paint::Pattern { stream, transform: krilla::geom::Transform::from_row(a, b, c, d, e, f), width: w as f32, height: h as f32 }.into()
 }
 
 /// A page-space path as a PDF path.
@@ -846,6 +939,11 @@ fn pdf_leaf(surface: &mut krilla::surface::Surface<'_>, leaf: &Leaf<'_>, colors:
             rule: FillRule::EvenOdd,
         },
         vs_core::Fill::Gradient(g) => Fill { paint: pdf_gradient(g, leaf.transform, alpha, colors), opacity: NormalizedF32::ONE, rule: FillRule::EvenOdd },
+        vs_core::Fill::Pattern(p) => Fill {
+            paint: pdf_pattern(surface, p, leaf.transform, colors),
+            opacity: NormalizedF32::new(alpha as f32).unwrap_or(NormalizedF32::ONE),
+            rule: FillRule::EvenOdd,
+        },
     });
     let outline = leaf.style.outline.as_ref();
     let stroke = outline.map(|o| {
@@ -1180,6 +1278,39 @@ mod tests {
         assert!(tied.contains("/ICCBased") && tied.contains("/N 4"), "the CMYK profile is embedded");
         let rgb = String::from_utf8_lossy(&pages_to_print_pdf(&doc, &[0], &marks, PdfColors::Rgb).unwrap()).into_owned();
         assert!(!rgb.contains("/N 4"), "an RGB PDF has no CMYK profile");
+    }
+
+    #[test]
+    fn pattern_fills_export_to_svg_png_and_pdf() {
+        use vs_core::kurbo::{Point, Size};
+        let red = Rgba::rgb(255, 0, 0);
+        let checker = Pattern::new(PatternKind::TwoColor { cells: vs_core::TWO_COLOR_PATTERNS[0].1, fore: red, back: Rgba::WHITE }, Point::ZERO, Size::new(16.0, 16.0));
+        let blue = Pattern::new(bitmap_pattern(&crate::import::tests::png(2, 2, [0, 0, 255])).unwrap(), Point::new(100.0, 0.0), Size::new(10.0, 10.0));
+        let mut doc = Document::new("Tiles");
+        for (x, p) in [(0.0, checker), (100.0, blue)] {
+            doc.add_object(Shape::Rectangle { rect: Rect::new(x, 0.0, x + 64.0, 64.0), corner_radius: 0.0 }, Style { fill: Some(Fill::Pattern(p)), ..Style::default() });
+        }
+        let reopened = document_from_str(&document_to_string(&doc).unwrap()).unwrap();
+        assert_eq!(reopened.active_page().objects, doc.active_page().objects, "saved and opened");
+
+        let svg = page_to_svg(doc.active_page());
+        assert_eq!(svg.matches("<pattern ").count(), 2, "{svg}");
+        let png = page_to_png(doc.active_page(), &ExportOptions { dpi: 72.0, background: Some(Rgba::WHITE) }).unwrap();
+        let img = image::load_from_memory(&png).unwrap().into_rgba8();
+        // Checkerboard: the top-left quarter of every 16 pt tile is red.
+        for (x, y, c) in [(4, 4, red), (12, 4, Rgba::WHITE), (4, 12, Rgba::WHITE), (12, 12, red), (20, 4, red), (36, 52, red), (130, 30, Rgba::rgb(0, 0, 255))] {
+            assert_eq!(img.get_pixel(x, y).0, [c.r, c.g, c.b, 255], "({x}, {y})");
+        }
+
+        let pdf = String::from_utf8_lossy(&document_to_pdf(&doc).unwrap()).into_owned();
+        assert_eq!(pdf.matches("/PatternType 1").count(), 2, "tiling patterns");
+        let seen = std::cell::RefCell::new(Vec::new());
+        let convert = |c: Rgba| {
+            seen.borrow_mut().push(c);
+            [0, 0, 0, 0]
+        };
+        pages_to_print_pdf(&doc, &[0], &PrintMarks::default(), PdfColors::Cmyk { convert: &convert, profile: None }).unwrap();
+        assert!(seen.borrow().contains(&red) && seen.borrow().contains(&Rgba::WHITE), "two-color patterns print in inks: {:?}", seen.borrow());
     }
 
     #[test]

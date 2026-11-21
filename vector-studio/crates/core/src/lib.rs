@@ -51,7 +51,7 @@ pub use document::{
 pub use bitmap::{Bitmap, BitmapFormat};
 pub use color_settings::{ColorSettings, ProofSettings, RenderingIntent};
 pub use find::TextMatch;
-pub use fill::{Fill, Gradient, GradientKind, GradientStop};
+pub use fill::{Fill, Gradient, GradientKind, GradientStop, Pattern, PatternKind, TWO_COLOR_PATTERNS};
 pub use history::History;
 pub use merge::MergeData;
 pub use layers::{Layer, LayerError, LayerId};

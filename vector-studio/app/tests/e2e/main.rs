@@ -40,3 +40,4 @@ mod tracing;
 mod corel;
 mod shadows;
 mod effects;
+mod patterns;

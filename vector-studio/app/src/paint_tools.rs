@@ -2,7 +2,7 @@
 
 use egui_material_icons::icons::*;
 use vs_core::kurbo::{Point, Rect};
-use vs_core::{Fill, Gradient, GradientKind, GradientStop, ObjectId, Rgba, Shape, Style};
+use vs_core::{Fill, Gradient, GradientKind, GradientStop, ObjectId, Pattern, Rgba, Shape, Style};
 
 use crate::app::AppState;
 use crate::chrome::segmented;
@@ -70,6 +70,52 @@ pub fn move_fountain_handle(state: &mut AppState, id: ObjectId, end: bool, p: Po
     }
 }
 
+/// A handle of a pattern fill's first tile (Interactive Fill tool).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TileHandle {
+    /// The corner the tiles start from: moves them.
+    Origin,
+    /// The far end of the tile's top side: its width and turn.
+    Across,
+    /// The far end of the tile's left side: its height and slant.
+    Down,
+}
+
+/// The pattern fill of the single selected object, with its transform.
+pub fn selected_pattern(state: &AppState) -> Option<(ObjectId, Pattern, vs_core::kurbo::Affine)> {
+    let [id] = state.selection.as_slice() else { return None };
+    let obj = state.doc.active_page().object(*id)?;
+    match &obj.style.fill {
+        Some(Fill::Pattern(p)) if !obj.locked && !matches!(obj.shape, Shape::Group { .. }) => Some((*id, p.clone(), obj.transform)),
+        _ => None,
+    }
+}
+
+/// Where the handles of `p`'s first tile are on the page; `t` is its object's transform.
+pub fn tile_handles(p: &Pattern, t: vs_core::kurbo::Affine) -> [(TileHandle, Point); 3] {
+    let place = t * p.transform;
+    [(TileHandle::Origin, place * Point::ZERO), (TileHandle::Across, place * Point::new(1.0, 0.0)), (TileHandle::Down, place * Point::new(0.0, 1.0))]
+}
+
+/// Move a handle of `id`'s pattern tile to `at` (page space). A tile would fold flat is
+/// left as it is.
+pub fn move_tile_handle(state: &mut AppState, id: ObjectId, handle: TileHandle, at: Point) {
+    let Some(obj) = state.doc.active_page_mut().object_mut(id) else { return };
+    let local = obj.transform.inverse() * at;
+    let Some(Fill::Pattern(p)) = &mut obj.style.fill else { return };
+    let [a, b, c, d, e, f] = p.transform.as_coeffs();
+    let origin = Point::new(e, f);
+    let side = local - origin;
+    let moved = match handle {
+        TileHandle::Origin => vs_core::kurbo::Affine::new([a, b, c, d, local.x, local.y]),
+        TileHandle::Across => vs_core::kurbo::Affine::new([side.x, side.y, c, d, e, f]),
+        TileHandle::Down => vs_core::kurbo::Affine::new([a, b, side.x, side.y, e, f]),
+    };
+    if moved.determinant().abs() > 1e-6 {
+        p.transform = moved;
+    }
+}
+
 /// Select the object under `p` (Interactive Fill and Transparency tools); a click on
 /// nothing clears the selection. Returns the object.
 pub fn select_at(state: &mut AppState, p: Point, tolerance: f64) -> Option<ObjectId> {
@@ -117,15 +163,10 @@ pub fn press_eyedropper(state: &mut AppState, p: Point, tolerance: f64) {
     }
 }
 
-/// `style` for an object with local frame `frame`: a fountain fill is placed across it.
+/// `style` for an object with local frame `frame`: a fountain fill is placed across it,
+/// a pattern starts from its corner.
 fn placed(style: &Style, frame: Rect) -> Style {
-    let mut s = style.clone();
-    if let Some(Fill::Gradient(g)) = &mut s.fill {
-        let fresh = Gradient::across(g.kind, frame, Rgba::BLACK, Rgba::WHITE);
-        g.start = fresh.start;
-        g.end = fresh.end;
-    }
-    s
+    Style { fill: style.fill.as_ref().map(|f| f.placed_on(frame)), ..style.clone() }
 }
 
 /// Property bar for the paint tools.

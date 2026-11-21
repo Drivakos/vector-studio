@@ -117,6 +117,8 @@ enum Drag {
     FillVector { object: ObjectId, start: Point },
     /// Interactive Fill: a fountain fill's start or end handle.
     FillHandle { object: ObjectId, end: bool },
+    /// Interactive Fill: a handle of a pattern fill's first tile.
+    TileHandle { object: ObjectId, handle: crate::paint_tools::TileHandle },
     /// Crop tool: dragging out the area to keep.
     Crop { start: Point },
     /// Knife tool: dragging the cutting line.
@@ -512,9 +514,18 @@ fn press(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers, dou
     }
 }
 
-/// Interactive Fill: grab a fountain handle of the selected object, or select the object
-/// under the pointer and drag out a new fountain on it.
+/// Interactive Fill: grab a fountain or pattern tile handle of the selected object, or
+/// select the object under the pointer and drag out a new fountain on it.
 fn press_fill(state: &mut AppState, view: &View, p: Point) {
+    if let Some((object, pattern, t)) = crate::paint_tools::selected_pattern(state) {
+        // The far handles first: on a tiny tile they sit on top of the origin.
+        for (handle, at) in crate::paint_tools::tile_handles(&pattern, t).into_iter().rev() {
+            if view.screen_dist(at, p) <= HIT {
+                state.tools.drag = Some(Drag::TileHandle { object, handle });
+                return;
+            }
+        }
+    }
     if let Some((object, g, t)) = crate::paint_tools::selected_gradient(state) {
         for (end, at) in [(true, g.end), (false, g.start)] {
             if view.screen_dist(t * at, p) <= HIT {
@@ -1188,6 +1199,11 @@ fn drag_to(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers) {
             crate::paint_tools::move_fountain_handle(state, object, end, at);
             Drag::FillHandle { object, end }
         }
+        Drag::TileHandle { object, handle } => {
+            let at = snapper(state, view, &[]).point(p);
+            crate::paint_tools::move_tile_handle(state, object, handle, at);
+            Drag::TileHandle { object, handle }
+        }
         Drag::Guide { index } => {
             let mut options = state.snap_options();
             options.guides = false;
@@ -1702,6 +1718,19 @@ pub fn draw_overlay(painter: &egui::Painter, state: &AppState, canvas: Rect) {
         square(painter, a, false);
         square(painter, b, true);
     }
+    if state.tool == Tool::InteractiveFill
+        && let Some((_, pattern, t)) = crate::paint_tools::selected_pattern(state)
+    {
+        // The first tile's outline, with a handle at its corner and at the ends of its sides.
+        let [(_, o), (_, a), (_, d)] = crate::paint_tools::tile_handles(&pattern, t);
+        let corners = [o, a, a + (d - o), d].map(|q| view.screen(q));
+        for i in 0..4 {
+            painter.line_segment([corners[i], corners[(i + 1) % 4]], Stroke::new(1.0, ACCENT));
+        }
+        square(painter, corners[0], false);
+        square(painter, corners[1], true);
+        square(painter, corners[3], true);
+    }
 
     if state.tool == Tool::Shape {
         if let Some((obj, parent)) = shape_object(state) {
@@ -2089,7 +2118,7 @@ pub fn hint(state: &AppState) -> String {
         Tool::Callout => "Drag from the point to the bend of the leader, click where the text goes, then type".into(),
         Tool::Text if state.tools.text.is_some() => "Type the text · Enter starts a new line · Esc or another tool finishes".into(),
         Tool::Text => "Click to add artistic text, drag a frame for paragraph text, or click text to edit it".into(),
-        Tool::InteractiveFill => "Click an object, then drag across it for a fountain fill · drag the ends to move it".into(),
+        Tool::InteractiveFill => "Click an object, then drag across it for a fountain fill · drag the ends to move it · drag a pattern tile's handles to move, size or turn the tiles".into(),
         Tool::Transparency => "Click an object, then set its transparency in the property bar".into(),
         Tool::ColorEyedropper if state.tools.eyedropper.applying => {
             "Click an object's fill or outline to apply the color · Select color picks another".into()

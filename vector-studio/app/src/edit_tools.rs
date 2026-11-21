@@ -2,7 +2,7 @@
 //! PowerClip placing and editing (Object > PowerClip).
 
 use vs_core::kurbo::{Point, Vec2};
-use vs_core::{Fill, Gradient, ObjectId, Rgba, Shape};
+use vs_core::{ObjectId, Shape};
 
 use crate::app::AppState;
 use crate::toolbox::Tool;
@@ -200,14 +200,8 @@ pub fn copy_properties(state: &mut AppState, targets: &[ObjectId], source: &vs_c
     let from = source.shown_style().clone();
     state.doc.restyle_objects_framed(targets, |s, frame| {
         if what.fill {
-            s.fill = from.fill.clone().map(|f| match f {
-                // A fountain is laid across the new object, as the eyedropper does.
-                Fill::Gradient(g) => {
-                    let fresh = Gradient::across(g.kind, frame, Rgba::BLACK, Rgba::WHITE);
-                    Fill::Gradient(Gradient { start: fresh.start, end: fresh.end, ..g })
-                }
-                solid => solid,
-            });
+            // A fountain or pattern is placed on the new object, as the eyedropper does.
+            s.fill = from.fill.as_ref().map(|f| f.placed_on(frame));
         }
         match (&mut s.outline, &from.outline) {
             (Some(o), Some(src)) => {

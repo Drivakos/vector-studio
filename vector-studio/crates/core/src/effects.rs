@@ -123,9 +123,8 @@ impl Source {
                     o.width = o.page_width(leaf.transform);
                     o.scale_with_object = false;
                 }
-                if let Some(crate::Fill::Gradient(g)) = style.fill.as_mut() {
-                    g.start = leaf.transform * g.start;
-                    g.end = leaf.transform * g.end;
+                if let Some(fill) = style.fill.as_mut() {
+                    fill.transform(leaf.transform);
                 }
                 let closed = leaf.fill().is_some() || (leaf.closed && !matches!(leaf.shape, Shape::Image(_)));
                 Part { path: leaf.path, closed, style }

@@ -1,8 +1,9 @@
-//! Fills: uniform colour or a fountain (gradient) fill.
+//! Fills: uniform colour, a fountain (gradient) fill or a pattern fill.
 
-use kurbo::{Point, Rect};
+use kurbo::{Affine, Point, Rect, Size};
 use serde::{Deserialize, Serialize};
 
+use crate::bitmap::Bitmap;
 use crate::document::Rgba;
 
 /// How the colours of a fountain fill spread.
@@ -96,6 +97,101 @@ pub enum Fill {
     Solid(Rgba),
     /// Fountain fill.
     Gradient(Gradient),
+    /// Two-color or bitmap pattern fill.
+    Pattern(Pattern),
+}
+
+/// The two-color patterns offered, by name. This app's own set.
+pub const TWO_COLOR_PATTERNS: &[(&str, [u8; 8])] = &[
+    ("Checkerboard", [0xF0, 0xF0, 0xF0, 0xF0, 0x0F, 0x0F, 0x0F, 0x0F]),
+    ("Fine checkerboard", [0xAA, 0x55, 0xAA, 0x55, 0xAA, 0x55, 0xAA, 0x55]),
+    ("Horizontal stripes", [0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00]),
+    ("Vertical stripes", [0xF0; 8]),
+    ("Diagonal stripes", [0xC0, 0x60, 0x30, 0x18, 0x0C, 0x06, 0x03, 0x81]),
+    ("Reverse diagonal stripes", [0x03, 0x06, 0x0C, 0x18, 0x30, 0x60, 0xC0, 0x81]),
+    ("Grid", [0xFF, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80]),
+    ("Cross-hatch", [0x81, 0x42, 0x24, 0x18, 0x18, 0x24, 0x42, 0x81]),
+    ("Dots", [0x00, 0x00, 0x18, 0x3C, 0x3C, 0x18, 0x00, 0x00]),
+    ("Bricks", [0xFF, 0x80, 0x80, 0x80, 0xFF, 0x08, 0x08, 0x08]),
+    ("Diamonds", [0x10, 0x38, 0x7C, 0xFE, 0x7C, 0x38, 0x10, 0x00]),
+    ("Zigzag", [0x00, 0x81, 0x42, 0x24, 0x18, 0x00, 0x00, 0x00]),
+];
+
+/// What a pattern tile holds.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum PatternKind {
+    /// 8 × 8 cells: a byte per row from the top, its highest bit leftmost. A set bit shows
+    /// `fore`, a clear one `back`.
+    TwoColor { cells: [u8; 8], fore: Rgba, back: Rgba },
+    /// A bitmap stretched over the tile; `average` stands for it where one colour is
+    /// needed (blends, contours, the eyedropper).
+    Bitmap { bitmap: Bitmap, average: Rgba },
+}
+
+/// A pattern fill: one tile repeated across and down the object.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Pattern {
+    pub kind: PatternKind,
+    /// Takes the unit square (one tile) to the object's local space, so the pattern
+    /// moves, scales and turns with the object.
+    pub transform: Affine,
+}
+
+impl Pattern {
+    /// Tile size of a new pattern fill, in points (this app's choice).
+    pub const DEFAULT_TILE: f64 = 18.0;
+
+    /// Tiles of `size` with one corner at `origin`, square to the page.
+    pub fn new(kind: PatternKind, origin: Point, size: Size) -> Self {
+        Self { kind, transform: Affine::translate(origin.to_vec2()) * Affine::scale_non_uniform(size.width, size.height) }
+    }
+
+    /// The size of one tile in the object's local space.
+    pub fn tile_size(&self) -> Size {
+        let [a, b, c, d, ..] = self.transform.as_coeffs();
+        Size::new(a.hypot(b), c.hypot(d))
+    }
+
+    /// Make the tiles `size`, keeping where they start and how they are turned.
+    pub fn set_tile_size(&mut self, size: Size) {
+        let now = self.tile_size();
+        if now.width < 1e-12 || now.height < 1e-12 || size.width <= 0.0 || size.height <= 0.0 {
+            return;
+        }
+        let [a, b, c, d, e, f] = self.transform.as_coeffs();
+        let (kx, ky) = (size.width / now.width, size.height / now.height);
+        self.transform = Affine::new([a * kx, b * kx, c * ky, d * ky, e, f]);
+    }
+
+    /// The same tiles started from the top-left corner of `frame` (another object's
+    /// local bounds).
+    pub fn placed_on(&self, frame: Rect) -> Self {
+        Self { kind: self.kind.clone(), transform: self.transform.with_translation(frame.origin().to_vec2()) }
+    }
+
+    /// One colour standing for the pattern.
+    pub fn color(&self) -> Rgba {
+        match &self.kind {
+            PatternKind::TwoColor { fore, .. } => *fore,
+            PatternKind::Bitmap { average, .. } => *average,
+        }
+    }
+
+    /// The colour shown at `p` (local space). A bitmap pattern gives its average.
+    pub fn color_at(&self, p: Point) -> Rgba {
+        match &self.kind {
+            PatternKind::TwoColor { cells, fore, back } => {
+                if self.transform.determinant().abs() < 1e-18 {
+                    return *back;
+                }
+                let q = self.transform.inverse() * p;
+                let cell = |v: f64| ((v - v.floor()) * 8.0).floor().clamp(0.0, 7.0) as usize;
+                let (col, row) = (cell(q.x), cell(q.y));
+                if cells[row] & (0x80 >> col) != 0 { *fore } else { *back }
+            }
+            PatternKind::Bitmap { average, .. } => *average,
+        }
+    }
 }
 
 impl From<Rgba> for Fill {
@@ -109,15 +205,17 @@ impl Fill {
     pub fn solid(&self) -> Option<Rgba> {
         match self {
             Fill::Solid(c) => Some(*c),
-            Fill::Gradient(_) => None,
+            Fill::Gradient(_) | Fill::Pattern(_) => None,
         }
     }
 
-    /// One colour standing for the fill: the uniform colour or the first stop.
+    /// One colour standing for the fill: the uniform colour, the first stop, or the
+    /// pattern's foreground (a bitmap's average).
     pub fn color(&self) -> Rgba {
         match self {
             Fill::Solid(c) => *c,
             Fill::Gradient(g) => g.stops.first().map_or(Rgba::BLACK, |s| s.color),
+            Fill::Pattern(p) => p.color(),
         }
     }
 
@@ -126,6 +224,33 @@ impl Fill {
         match self {
             Fill::Solid(c) => *c,
             Fill::Gradient(g) => g.color_at(p),
+            Fill::Pattern(pattern) => pattern.color_at(p),
+        }
+    }
+
+    /// The fill for another object whose local bounds are `frame`: a fountain is laid
+    /// across it and a pattern starts from its top-left corner; colours and tiles stay.
+    pub fn placed_on(&self, frame: Rect) -> Fill {
+        match self {
+            Fill::Solid(c) => Fill::Solid(*c),
+            Fill::Gradient(g) => {
+                let fresh = Gradient::across(g.kind, frame, Rgba::BLACK, Rgba::WHITE);
+                Fill::Gradient(Gradient { start: fresh.start, end: fresh.end, ..g.clone() })
+            }
+            Fill::Pattern(p) => Fill::Pattern(p.placed_on(frame)),
+        }
+    }
+
+    /// Move the fill's placement by `t`: for an object whose local space changes by `t`
+    /// (a transform baked into its curves).
+    pub fn transform(&mut self, t: Affine) {
+        match self {
+            Fill::Solid(_) => {}
+            Fill::Gradient(g) => {
+                g.start = t * g.start;
+                g.end = t * g.end;
+            }
+            Fill::Pattern(p) => p.transform = t * p.transform,
         }
     }
 }
@@ -142,6 +267,7 @@ enum FillFile {
 enum FillTagged {
     Solid(Rgba),
     Gradient(Gradient),
+    Pattern(Pattern),
 }
 
 impl From<FillFile> for Fill {
@@ -149,6 +275,7 @@ impl From<FillFile> for Fill {
         match f {
             FillFile::Color(c) | FillFile::Tagged(FillTagged::Solid(c)) => Fill::Solid(c),
             FillFile::Tagged(FillTagged::Gradient(g)) => Fill::Gradient(g),
+            FillFile::Tagged(FillTagged::Pattern(p)) => Fill::Pattern(p),
         }
     }
 }
@@ -181,5 +308,30 @@ mod tests {
         assert_eq!(back, g);
         let solid: Fill = serde_json::from_str(&serde_json::to_string(&Fill::Solid(RED)).unwrap()).unwrap();
         assert_eq!(solid, Fill::Solid(RED));
+        let p = Fill::Pattern(Pattern::new(PatternKind::TwoColor { cells: TWO_COLOR_PATTERNS[0].1, fore: RED, back: BLUE }, Point::new(5.0, 5.0), Size::new(16.0, 16.0)));
+        let back: Fill = serde_json::from_str(&serde_json::to_string(&p).unwrap()).unwrap();
+        assert_eq!(back, p);
+    }
+
+    #[test]
+    fn two_color_patterns_repeat_their_cells_and_follow_their_placement() {
+        // Checkerboard: the top-left quarter of each tile is the foreground.
+        let mut p = Pattern::new(PatternKind::TwoColor { cells: TWO_COLOR_PATTERNS[0].1, fore: RED, back: BLUE }, Point::new(10.0, 0.0), Size::new(16.0, 16.0));
+        assert_eq!(p.color_at(Point::new(11.0, 1.0)), RED);
+        assert_eq!(p.color_at(Point::new(19.0, 1.0)), BLUE, "right half of the top");
+        assert_eq!(p.color_at(Point::new(27.0, 17.0)), RED, "the next tile down and across");
+        assert_eq!(p.color_at(Point::new(9.0, 1.0)), BLUE, "the tile before the origin");
+        assert_eq!(p.color(), RED);
+
+        p.set_tile_size(Size::new(32.0, 8.0));
+        assert_eq!(p.tile_size(), Size::new(32.0, 8.0));
+        assert_eq!(p.transform.translation(), kurbo::Vec2::new(10.0, 0.0), "starts where it did");
+        assert_eq!(p.color_at(Point::new(35.0, 1.0)), BLUE);
+
+        let mut f = Fill::Pattern(p.clone());
+        f.transform(Affine::translate((100.0, 0.0)));
+        assert_eq!(f.color_at(Point::new(111.0, 1.0)), RED, "baked moves take the tiles along");
+        let placed = p.placed_on(Rect::new(-4.0, -4.0, 40.0, 40.0));
+        assert_eq!((placed.transform.translation(), placed.tile_size()), (kurbo::Vec2::new(-4.0, -4.0), p.tile_size()));
     }
 }

@@ -4,7 +4,7 @@ use resvg::usvg;
 use std::sync::Arc;
 
 use vs_core::kurbo::{Affine, BezPath, Point, Rect, Size};
-use vs_core::{Bitmap, BitmapFormat, Fill, Gradient, GradientKind, GradientStop, LineCap, LineJoin, LineStyle, Object, ObjectId, Outline, Rgba, Shape, Style};
+use vs_core::{Bitmap, BitmapFormat, Fill, Gradient, GradientKind, GradientStop, LineCap, LineJoin, LineStyle, Object, ObjectId, Outline, Pattern, PatternKind, Rgba, Shape, Style};
 
 use crate::IoError;
 
@@ -13,9 +13,9 @@ const PX_TO_PT: f64 = 72.0 / 96.0;
 
 /// Read an SVG file as objects in page space (points), with the drawing's top-left corner
 /// at the origin. Several top-level shapes come back as one group. Shapes, groups,
-/// solid and fountain fills, outlines, opacity and PNG and JPEG images are kept, and text
-/// comes in as curves drawn with the system's fonts; patterns, clipping, masks and
-/// filters are not.
+/// solid, fountain and pattern fills, outlines, opacity and PNG and JPEG images are kept,
+/// and text comes in as curves drawn with the system's fonts; clipping, masks and filters
+/// are not.
 pub fn import_svg(data: &[u8]) -> Result<Vec<Object>, IoError> {
     let (_, mut objects) = svg_drawing(data)?;
     if objects.len() > 1 {
@@ -133,11 +133,7 @@ fn path_object(p: &usvg::Path, opacity: f64) -> Option<Object> {
         paint(f.paint(), f64::from(f.opacity().get()), to_page)
     });
     let outline = p.stroke().map(|s| {
-        let color = match paint(s.paint(), f64::from(s.opacity().get()), to_page) {
-            Some(Fill::Solid(c)) => c,
-            Some(Fill::Gradient(g)) => g.stops.first().map_or(Rgba::BLACK, |s| s.color),
-            None => Rgba::BLACK,
-        };
+        let color = paint(s.paint(), f64::from(s.opacity().get()), to_page).map_or(Rgba::BLACK, |f| f.color());
         let scale = to_page.determinant().abs().sqrt();
         Outline {
             color,
@@ -185,7 +181,8 @@ fn color(c: usvg::Color, alpha: f64) -> Rgba {
     Rgba::new(c.red, c.green, c.blue, (alpha.clamp(0.0, 1.0) * 255.0).round() as u8)
 }
 
-/// A fill for `paint` with the path's `to_page` transform. Patterns are not supported.
+/// A fill for `paint` with the path's `to_page` transform. A pattern's own fill opacity
+/// is not kept.
 fn paint(paint: &usvg::Paint, opacity: f64, to_page: Affine) -> Option<Fill> {
     let gradient = |base: &usvg::BaseGradient, kind, start: Point, end: Point| {
         let t = to_page * affine(base.transform());
@@ -206,8 +203,74 @@ fn paint(paint: &usvg::Paint, opacity: f64, to_page: Affine) -> Option<Fill> {
             let c = Point::new(g.cx().into(), g.cy().into());
             Some(gradient(g, GradientKind::Radial, c, c + (f64::from(g.r().get()), 0.0)))
         }
-        usvg::Paint::Pattern(_) => None,
+        usvg::Paint::Pattern(p) => pattern(p, to_page),
     }
+}
+
+/// An SVG pattern as a bitmap pattern fill: a tile that is one PNG or JPEG image keeps
+/// the image's own bytes; any other tile is drawn into a bitmap of 300 pixels per inch
+/// (at most 1024 pixels a side).
+fn pattern(p: &usvg::Pattern, to_page: Affine) -> Option<Fill> {
+    let rect = p.rect();
+    let (w, h) = (f64::from(rect.width()), f64::from(rect.height()));
+    let place = to_page * affine(p.transform()) * Affine::translate((f64::from(rect.x()), f64::from(rect.y()))) * Affine::scale_non_uniform(w, h);
+    let kind = whole_tile_image(p.root(), w, h).and_then(|data| bitmap_pattern(data).ok()).or_else(|| {
+        let [a, b, c, d, ..] = place.as_coeffs();
+        let px = |side: f64| (side * 300.0 / 72.0).ceil().clamp(1.0, 1024.0) as u32;
+        let (pw, ph) = (px(a.hypot(b)), px(c.hypot(d)));
+        let mut pixmap = resvg::tiny_skia::Pixmap::new(pw, ph)?;
+        let node = usvg::Node::Group(Box::new(p.root().clone()));
+        let scale = usvg::Transform::from_scale(pw as f32 / rect.width(), ph as f32 / rect.height());
+        // `render_node` starts from the node's own bounds; start from the tile's corner.
+        let bounds = node.abs_layer_bounding_box()?;
+        resvg::render_node(&node, scale.pre_translate(bounds.x(), bounds.y()), &mut pixmap.as_mut())?;
+        bitmap_pattern(&pixmap.encode_png().ok()?).ok()
+    })?;
+    Some(Fill::Pattern(Pattern { kind, transform: place }))
+}
+
+/// The bytes of the PNG or JPEG image that alone covers the tile `w` × `h`, if that is
+/// what the tile holds.
+fn whole_tile_image(root: &usvg::Group, w: f64, h: f64) -> Option<&[u8]> {
+    let mut group = root;
+    let image = loop {
+        match group.children() {
+            [usvg::Node::Group(g)] => group = g,
+            [usvg::Node::Image(i)] => break i,
+            _ => return None,
+        }
+    };
+    let data = match image.kind() {
+        usvg::ImageKind::PNG(d) | usvg::ImageKind::JPEG(d) => d,
+        _ => return None,
+    };
+    let size = image.size();
+    let covers = affine(image.abs_transform()).transform_rect_bbox(Rect::new(0.0, 0.0, f64::from(size.width()), f64::from(size.height())));
+    let near = |a: f64, b: f64| (a - b).abs() < 1e-3;
+    (near(covers.x0, 0.0) && near(covers.y0, 0.0) && near(covers.x1, w) && near(covers.y1, h)).then_some(data.as_slice())
+}
+
+/// A PNG or JPEG file as the tile of a bitmap pattern fill.
+pub fn bitmap_pattern(data: &[u8]) -> Result<PatternKind, IoError> {
+    let format = match image::guess_format(data) {
+        Ok(image::ImageFormat::Png) => BitmapFormat::Png,
+        Ok(image::ImageFormat::Jpeg) => BitmapFormat::Jpeg,
+        _ => return Err(IoError::Image("only PNG and JPEG files can be pattern tiles".into())),
+    };
+    let rgba = image::load_from_memory(data).map_err(|e| IoError::Image(e.to_string()))?.into_rgba8();
+    let (width, height) = rgba.dimensions();
+    // The average colour, each pixel counted by how opaque it is.
+    let (mut sum, mut alpha) = ([0u64; 3], 0u64);
+    for px in rgba.pixels() {
+        let a = u64::from(px[3]);
+        (0..3).for_each(|i| sum[i] += u64::from(px[i]) * a);
+        alpha += a;
+    }
+    let pixels = u64::from(width) * u64::from(height);
+    let channel = |i: usize| sum[i].checked_div(alpha).unwrap_or(0) as u8;
+    let average = Rgba::new(channel(0), channel(1), channel(2), alpha.checked_div(pixels).unwrap_or(0) as u8);
+    let bitmap = Bitmap { format, width, height, rect: Rect::new(0.0, 0.0, 1.0, 1.0), data: Arc::new(data.to_vec()) };
+    Ok(PatternKind::Bitmap { bitmap, average })
 }
 
 #[cfg(test)]
@@ -296,6 +359,52 @@ pub(crate) mod tests {
     }
 
     /// A `w`×`h` PNG, all `rgb`.
+    #[test]
+    fn svg_patterns_come_in_as_bitmap_pattern_fills() {
+        use base64::Engine as _;
+        let tile = png(2, 2, [0, 255, 0]);
+        let uri = base64::engine::general_purpose::STANDARD.encode(&tile);
+        let svg = format!(
+            r##"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="200" height="100">
+                <defs>
+                  <pattern id="img" patternUnits="userSpaceOnUse" width="20" height="20"><image width="20" height="20" xlink:href="data:image/png;base64,{uri}"/></pattern>
+                  <pattern id="vec" patternUnits="userSpaceOnUse" x="4" width="20" height="20"><rect width="10" height="10" fill="#ff0000"/></pattern>
+                </defs>
+                <rect width="80" height="40" fill="url(#img)"/>
+                <rect x="100" width="80" height="40" fill="url(#vec)"/>
+            </svg>"##
+        );
+        let (_, objs) = svg_drawing(svg.as_bytes()).unwrap();
+        let pattern = |i: usize| match &objs[i].style.fill {
+            Some(Fill::Pattern(p)) => p.clone(),
+            other => panic!("pattern fill: {other:?}"),
+        };
+
+        let image = pattern(0);
+        let PatternKind::Bitmap { bitmap, average } = &image.kind else { panic!("bitmap pattern") };
+        assert_eq!(bitmap.data.as_slice(), tile.as_slice(), "a tile that is one image keeps its bytes");
+        assert_eq!(*average, Rgba::rgb(0, 255, 0));
+        assert_eq!(image.tile_size(), Size::new(15.0, 15.0), "20 px in points");
+
+        let drawn = pattern(1);
+        let PatternKind::Bitmap { bitmap, average } = &drawn.kind else { panic!("bitmap pattern") };
+        assert_eq!((bitmap.width, bitmap.height), (63, 63), "15 pt at 300 dpi");
+        assert!(average.r == 255 && average.g == 0 && average.a.abs_diff(64) <= 2, "a quarter of the tile is red: {average:?}");
+        assert_eq!(drawn.transform.translation(), vs_core::kurbo::Vec2::new(3.0, 0.0), "the tile starts at x = 4 px");
+
+        // Drawn as the SVG draws it: red in the top-left quarter of each tile.
+        let mut doc = vs_core::Document::new("Patterns");
+        doc.active_page_mut().size = Size::new(150.0, 75.0);
+        doc.paste_objects(&objs, vs_core::kurbo::Vec2::ZERO);
+        let png = crate::page_to_png(doc.active_page(), &crate::ExportOptions { dpi: 72.0, background: Some(Rgba::WHITE) }).unwrap();
+        let img = image::load_from_memory(&png).unwrap().into_rgba8();
+        assert_eq!(img.get_pixel(10, 10).0, [0, 255, 0, 255]);
+        for (x, y, red) in [(80, 3, true), (80, 12, false), (88, 3, false), (95, 3, true), (95, 18, true)] {
+            let px = img.get_pixel(x, y).0;
+            assert_eq!(px == [255, 0, 0, 255], red, "({x}, {y}): {px:?}");
+        }
+    }
+
     pub(crate) fn png(w: u32, h: u32, rgb: [u8; 3]) -> Vec<u8> {
         let img = image::RgbaImage::from_pixel(w, h, image::Rgba([rgb[0], rgb[1], rgb[2], 255]));
         let mut out = std::io::Cursor::new(Vec::new());
