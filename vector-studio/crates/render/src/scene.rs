@@ -191,7 +191,7 @@ pub fn build_page_scene<'a>(
         return;
     }
     for object in page.shown_objects() {
-        for leaf in object.leaves() {
+        for leaf in object.drawn_leaves() {
             let opacity = leaf.style.opacity();
             let fill = leaf.fill().map(|f| to_brush_with(f, opacity, &tint));
             let outline = leaf.style.outline.as_ref().map(|o| {

@@ -53,7 +53,7 @@ pub fn current(fill: Option<&Fill>) -> FillEdit {
     }
 }
 
-fn color_button(ui: &mut egui::Ui, color: &mut Rgba, name: &str) -> bool {
+pub(crate) fn color_button(ui: &mut egui::Ui, color: &mut Rgba, name: &str) -> bool {
     let mut c = [color.r, color.g, color.b, color.a];
     let resp = ui.color_edit_button_srgba_unmultiplied(&mut c);
     crate::a11y::name(&resp, name);

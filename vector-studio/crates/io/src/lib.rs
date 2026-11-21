@@ -194,6 +194,9 @@ fn write_svg_object(out: &mut String, obj: &Object, parent: vs_core::kurbo::Affi
         return write_svg_object(out, &baked, parent, depth);
     }
     let indent = "  ".repeat(depth);
+    if let Some(Shape::Image(shadow)) = obj.shadow.as_ref().and_then(|s| s.shape()) {
+        write_svg_image(out, &indent, shadow, parent, 1.0);
+    }
     if let Shape::Image(b) = &obj.shape {
         write_svg_image(out, &indent, b, parent * obj.transform, obj.style.opacity());
         if obj.style.outline.is_none() {
@@ -681,7 +684,7 @@ pub fn pages_to_print_pdf(doc: &Document, indices: &[usize], marks: &PrintMarks)
                 surface.draw_path(&path);
             }
         }
-        for leaf in page.shown_objects().flat_map(Object::leaves) {
+        for leaf in page.shown_objects().flat_map(Object::drawn_leaves) {
             for clip in leaf.clips.iter().filter_map(pdf_path) {
                 surface.push_clip_path(&clip, &FillRule::EvenOdd);
             }

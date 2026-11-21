@@ -133,6 +133,8 @@ pub struct Leaf<'a> {
     /// Drawn through a perspective: `path` and `clips` are projected, `transform` only
     /// places fills and outline widths roughly.
     pub projected: bool,
+    /// A drop shadow's bitmap: drawn, but not hit, measured or shaped.
+    pub shadow: bool,
 }
 
 impl Leaf<'_> {
@@ -153,10 +155,24 @@ impl Object {
     pub fn leaves(&self) -> Vec<Leaf<'_>> {
         let mut out = Vec::new();
         self.collect_leaves(Affine::IDENTITY, &[], &mut out);
+        out.retain(|l| !l.shadow);
+        out
+    }
+
+    /// [`Self::leaves`] with drop shadows, each under the object that casts it.
+    pub fn drawn_leaves(&self) -> Vec<Leaf<'_>> {
+        let mut out = Vec::new();
+        self.collect_leaves(Affine::IDENTITY, &[], &mut out);
         out
     }
 
     fn collect_leaves<'a>(&'a self, parent: Affine, clips: &[BezPath], out: &mut Vec<Leaf<'a>>) {
+        if let Some(shape @ Shape::Image(b)) = self.shadow.as_ref().and_then(|s| s.shape()) {
+            let mut path = b.rect.to_path(PATH_TOLERANCE);
+            path.apply_affine(parent);
+            let style = std::borrow::Cow::Owned(Style { fill: None, outline: None, ..Style::default() });
+            out.push(Leaf { path, shape, style, closed: true, transform: parent, clips: clips.to_vec(), projected: false, shadow: true });
+        }
         let transform = parent * self.transform;
         let Some(h) = self.perspective else {
             self.collect_plain(transform, clips, out);
@@ -192,7 +208,7 @@ impl Object {
             shape => {
                 let mut path = shape.to_path();
                 path.apply_affine(transform);
-                let leaf = |style: Cow<'a, Style>, path: BezPath| Leaf { path, shape, style, closed: shape.is_closed(), transform, clips: clips.to_vec(), projected: false };
+                let leaf = |style: Cow<'a, Style>, path: BezPath| Leaf { path, shape, style, closed: shape.is_closed(), transform, clips: clips.to_vec(), projected: false, shadow: false };
                 if self.contents.is_empty() {
                     out.push(leaf(Cow::Borrowed(&self.style), path));
                     return;
@@ -272,7 +288,7 @@ impl Object {
     pub fn hit_in(&self, parent: Affine, point: Point, tolerance: f64) -> bool {
         let mut leaves = Vec::new();
         self.collect_leaves(parent, &[], &mut leaves);
-        leaves.iter().filter(|leaf| leaf.shows_at(point)).any(|leaf| {
+        leaves.iter().filter(|leaf| !leaf.shadow && leaf.shows_at(point)).any(|leaf| {
             let half = leaf.style.outline.as_ref().map_or(0.0, |o| o.page_width(leaf.transform) / 2.0);
             let reach = tolerance + half;
             // Text is picked anywhere in its line boxes, not just on the glyphs; bitmaps

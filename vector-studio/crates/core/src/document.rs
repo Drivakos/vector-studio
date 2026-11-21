@@ -378,12 +378,15 @@ pub struct Object {
     /// A table: this group's members are its cells (see [`crate::table`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub table: Option<crate::table::Table>,
+    /// A drop shadow drawn under the object (see [`crate::shadow`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shadow: Option<crate::shadow::DropShadow>,
 }
 
 impl Object {
     /// A plain, unlocked object on no particular layer, placed by `shape` alone.
     pub fn new(id: ObjectId, shape: Shape, style: Style) -> Self {
-        Self { id, name: None, shape, style, transform: Affine::IDENTITY, locked: false, layer: LayerId::default(), contents: Vec::new(), clone_of: None, frame: false, symbol: None, symmetry: None, perspective: None, table: None }
+        Self { id, name: None, shape, style, transform: Affine::IDENTITY, locked: false, layer: LayerId::default(), contents: Vec::new(), clone_of: None, frame: false, symbol: None, symmetry: None, perspective: None, table: None, shadow: None }
     }
 
     /// Turn this object, or every member of this group, into curves. Locked objects
@@ -810,7 +813,7 @@ impl Document {
         let id = ObjectId(self.alloc_id());
         let page = self.active_page_mut();
         let layer = page.active_layer;
-        page.objects.push(Object { id, name: None, shape, style, transform: Affine::IDENTITY, locked: false, layer, contents: Vec::new(), clone_of: None, frame: false, symbol: None, symmetry: None, perspective: None, table: None });
+        page.objects.push(Object { id, name: None, shape, style, transform: Affine::IDENTITY, locked: false, layer, contents: Vec::new(), clone_of: None, frame: false, symbol: None, symmetry: None, perspective: None, table: None, shadow: None });
         page.settle_layers();
         id
     }

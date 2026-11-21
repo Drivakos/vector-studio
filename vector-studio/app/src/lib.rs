@@ -29,6 +29,7 @@ pub mod panels;
 pub mod paste_special;
 pub mod print_merge;
 pub mod printing;
+pub mod shadow_tool;
 pub mod symbol_menu;
 pub mod templates;
 pub mod text_menu;

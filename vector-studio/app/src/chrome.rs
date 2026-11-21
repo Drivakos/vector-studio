@@ -246,6 +246,7 @@ pub fn property_bar_ui(ui: &mut egui::Ui, state: &mut AppState, out: &mut Vec<Co
                 theme::vsep(ui);
                 ui.label(egui::RichText::new(crate::tools::hint(state)).color(theme::TEXT_DIM));
             }
+            Tool::DropShadow => crate::shadow_tool::property_bar(ui, state),
             Tool::Knife => {
                 ui.label(egui::RichText::new(crate::tools::hint(state)).color(theme::TEXT_DIM));
             }
@@ -607,7 +608,7 @@ pub(crate) fn segmented(ui: &mut egui::Ui, id: &str, segments: &[(MaterialIcon, 
 }
 
 /// Square icon button that only shows a background on hover.
-fn icon_button(ui: &mut egui::Ui, icon: MaterialIcon, tip: &str, enabled: bool) -> egui::Response {
+pub(crate) fn icon_button(ui: &mut egui::Ui, icon: MaterialIcon, tip: &str, enabled: bool) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(28.0), if enabled { Sense::click() } else { Sense::hover() });
     crate::a11y::button(&resp, enabled, &format!("{tip} (property bar)"));
     if enabled && resp.hovered() {

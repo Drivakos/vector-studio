@@ -37,3 +37,4 @@ mod pages;
 mod view;
 mod tracing;
 mod corel;
+mod shadows;

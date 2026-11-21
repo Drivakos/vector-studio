@@ -69,11 +69,13 @@ pub struct ToolSettings {
     pub repel: bool,
     /// Twirl: whether it turns clockwise instead of counterclockwise.
     pub twirl_clockwise: bool,
+    /// Drop Shadow: the settings a new shadow takes (its offset comes from the drag).
+    pub shadow: vs_core::DropShadow,
 }
 
 impl Default for ToolSettings {
     fn default() -> Self {
-        Self { polygon_sides: 5, star_points: 5, star_inner_ratio: 0.5, text: vs_core::Text::new(""), eraser_size: DEFAULT_ERASER_SIZE, spiral_turns: 4, graph_columns: 4, graph_rows: 3, table_rows: crate::table_tool::DEFAULT_ROWS, table_columns: crate::table_tool::DEFAULT_COLUMNS, common_shape: Default::default(), smart_fill: vs_core::Rgba::rgb(0xC0, 0xC0, 0xC0), smart_fill_outline: false, brush_size: 20.0, smoothness: 50.0, spike_size: 3.0, brush_speed: 50.0, repel: false, twirl_clockwise: false }
+        Self { polygon_sides: 5, star_points: 5, star_inner_ratio: 0.5, text: vs_core::Text::new(""), eraser_size: DEFAULT_ERASER_SIZE, spiral_turns: 4, graph_columns: 4, graph_rows: 3, table_rows: crate::table_tool::DEFAULT_ROWS, table_columns: crate::table_tool::DEFAULT_COLUMNS, common_shape: Default::default(), smart_fill: vs_core::Rgba::rgb(0xC0, 0xC0, 0xC0), smart_fill_outline: false, brush_size: 20.0, smoothness: 50.0, spike_size: 3.0, brush_speed: 50.0, repel: false, twirl_clockwise: false, shadow: vs_core::DropShadow::new(Vec2::ZERO) }
     }
 }
 
@@ -81,6 +83,8 @@ type Originals = Vec<(ObjectId, Affine)>;
 
 enum Drag {
     Marquee { start: Point, add: bool },
+    /// Drop Shadow: from where the pointer took the object.
+    Shadow { object: ObjectId, start: Point },
     /// Freehand Pick: the loop drawn so far.
     Lasso { points: Vec<Point>, add: bool },
     NodeMarquee { start: Point, add: bool },
@@ -252,6 +256,7 @@ pub fn is_implemented(tool: Tool) -> bool {
         || matches!(tool, Tool::Pick | Tool::FreehandPick | Tool::FreeTransform | Tool::Shape | Tool::Zoom | Tool::Pan | Tool::Freehand | Tool::Bezier | Tool::Pen | Tool::Text)
         || matches!(tool, Tool::InteractiveFill | Tool::SmartFill | Tool::Transparency | Tool::ColorEyedropper | Tool::AttributesEyedropper)
         || matches!(tool, Tool::Crop | Tool::Knife | Tool::VirtualSegmentDelete | Tool::Eraser)
+        || tool == Tool::DropShadow
         || is_brush(tool)
         || matches!(tool, Tool::TwoPointLine | Tool::Polyline | Tool::BSpline | Tool::Spiral | Tool::GraphPaper | Tool::Table)
         || is_three_point(tool)
@@ -475,6 +480,11 @@ fn press(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers, dou
             }
         }
         Tool::Eraser => state.tools.drag = Some(Drag::Erase { points: vec![p] }),
+        Tool::DropShadow => {
+            if let Some(object) = crate::shadow_tool::press(state, p, view.doc_len(HIT)) {
+                state.tools.drag = Some(Drag::Shadow { object, start: p });
+            }
+        }
         t if is_brush(t) => press_brush(state, view, p),
         Tool::SmartFill => {
             let s = &state.tools.settings;
@@ -1140,6 +1150,12 @@ fn drag_to(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers) {
                 obj.transform = transform * turn;
             }
             Drag::Control { object, control, shape, parent, transform }
+        }
+        Drag::Shadow { object, start } => {
+            if view.screen_dist(start, p) > DRAG_START {
+                crate::shadow_tool::cast(state, object, p - start);
+            }
+            Drag::Shadow { object, start }
         }
         Drag::FillVector { object, start } => {
             if view.screen_dist(start, p) > DRAG_START {
@@ -2060,6 +2076,7 @@ pub fn hint(state: &AppState) -> String {
         Tool::Crop if state.has_selection() => "Drag the area to keep; the selected objects are cropped".into(),
         Tool::Crop => "Drag the area to keep; everything on the page is cropped".into(),
         Tool::Knife => "Drag a line across objects to cut them in two".into(),
+        Tool::DropShadow => "Drag from an object to cast its shadow there · Object > Clear Effect removes it".into(),
         Tool::VirtualSegmentDelete => "Click a line to delete it up to where other lines cross it".into(),
         Tool::Eraser if state.has_selection() => "Drag over the selected objects to erase · size in the property bar".into(),
         Tool::Eraser => "Drag over objects to erase · size in the property bar".into(),
