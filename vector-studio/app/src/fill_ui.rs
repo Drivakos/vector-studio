@@ -59,7 +59,7 @@ pub(crate) fn color_button(ui: &mut egui::Ui, color: &mut Rgba, name: &str) -> b
     crate::a11y::name(&resp, name);
     let changed = resp.on_hover_text(name).changed();
     if changed {
-        *color = Rgba { r: c[0], g: c[1], b: c[2], a: c[3] };
+        *color = Rgba::new(c[0], c[1], c[2], c[3]);
     }
     changed
 }

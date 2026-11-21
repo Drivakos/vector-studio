@@ -16,12 +16,16 @@ pub struct ObjectId(pub u64);
 pub struct PageId(pub u64);
 
 /// Straight (non-premultiplied) sRGB colour.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Rgba {
     pub r: u8,
     pub g: u8,
     pub b: u8,
     pub a: u8,
+    /// The CMYK inks (0–255 each) the colour was given as, written as they are to CMYK
+    /// output; `r`, `g` and `b` are how they look on screen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cmyk: Option<[u8; 4]>,
 }
 
 impl Rgba {
@@ -29,7 +33,16 @@ impl Rgba {
     pub const WHITE: Rgba = Rgba::rgb(255, 255, 255);
 
     pub const fn rgb(r: u8, g: u8, b: u8) -> Self {
-        Self { r, g, b, a: 255 }
+        Self::new(r, g, b, 255)
+    }
+
+    pub const fn new(r: u8, g: u8, b: u8, a: u8) -> Self {
+        Self { r, g, b, a, cmyk: None }
+    }
+
+    /// This colour as the inks `cmyk`, looking like `self` on screen.
+    pub const fn with_cmyk(self, cmyk: [u8; 4]) -> Self {
+        Self { cmyk: Some(cmyk), ..self }
     }
 
     /// `#rrggbb` (alpha is left out).
@@ -51,7 +64,12 @@ impl Rgba {
     pub fn mix(self, other: Rgba, k: f64) -> Rgba {
         let k = k.clamp(0.0, 1.0);
         let l = |x: u8, y: u8| (f64::from(x) + (f64::from(y) - f64::from(x)) * k).round() as u8;
-        Rgba { r: l(self.r, other.r), g: l(self.g, other.g), b: l(self.b, other.b), a: l(self.a, other.a) }
+        // Between two ink colours, the inks mix too.
+        let cmyk = match (self.cmyk, other.cmyk) {
+            (Some(p), Some(q)) => Some([0, 1, 2, 3].map(|i| l(p[i], q[i]))),
+            _ => None,
+        };
+        Rgba { r: l(self.r, other.r), g: l(self.g, other.g), b: l(self.b, other.b), a: l(self.a, other.a), cmyk }
     }
 
     /// This colour with its alpha multiplied by `opacity` (0..=1).
@@ -648,6 +666,9 @@ pub struct Document {
     /// Print Merge data: the fields text can hold, and the records merged into them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub merge: Option<crate::merge::MergeData>,
+    /// The CMYK profile and rendering intent for CMYK values and output.
+    #[serde(default, skip_serializing_if = "crate::ColorSettings::is_default")]
+    pub color: crate::ColorSettings,
     /// What each clone last took from its master (see [`Document::sync_clones`]).
     #[serde(skip)]
     pub(crate) clone_sync: crate::clones::CloneSync,
@@ -672,6 +693,7 @@ impl Document {
             properties: DocumentProperties::default(),
             symbols: Vec::new(),
             merge: None,
+            color: Default::default(),
             clone_sync: Default::default(),
         };
         let size = PAGE_PRESETS[1].size(Orientation::Portrait);

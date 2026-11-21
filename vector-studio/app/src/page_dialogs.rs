@@ -117,6 +117,8 @@ pub struct DocumentOptionsDialog {
     grid: f64,
     nudge: f64,
     duplicate: [f64; 2],
+    /// The document's CMYK profile and rendering intent.
+    color: vs_core::ColorSettings,
 }
 
 impl DocumentOptionsDialog {
@@ -143,6 +145,7 @@ pub fn open_document_options(state: &mut AppState) {
         grid: unit.from_points(p.grid_spacing),
         nudge: unit.from_points(p.nudge),
         duplicate: p.duplicate_offset.map(|v| unit.from_points(v)),
+        color: state.doc.color.clone(),
     });
 }
 
@@ -162,10 +165,13 @@ fn apply_document_options(state: &mut AppState, d: &DocumentOptionsDialog) {
     state.prefs.grid_spacing = pt(d.grid);
     state.prefs.nudge = pt(d.nudge);
     state.prefs.duplicate_offset = d.duplicate.map(pt);
+    if state.doc.color != d.color {
+        state.doc.color = d.color.clone();
+    }
 }
 
-/// Layout > Document Options: units, page size, grid spacing, nudge and duplicate
-/// distance in one window. OK applies them, Cancel leaves everything as it was.
+/// Layout > Document Options: units, page size, grid spacing, nudge, duplicate distance
+/// and the CMYK profile and rendering intent in one window. OK applies them, Cancel leaves everything as it was.
 pub fn document_options_window(ctx: &egui::Context, state: &mut AppState) {
     let Some(mut d) = state.document_options.take() else { return };
     let mut open = true;
@@ -215,6 +221,12 @@ pub fn document_options_window(ctx: &egui::Context, state: &mut AppState) {
                     field(ui, &mut d.duplicate[0], f64::MIN, "Duplicate offset x (document options)");
                     field(ui, &mut d.duplicate[1], f64::MIN, "Duplicate offset y (document options)");
                 });
+                ui.end_row();
+                ui.label("CMYK profile:");
+                crate::color_ui::profile_combo(ui, state.dialogs.as_mut(), "CMYK profile (document options)", &mut d.color.cmyk_profile, None, 200.0);
+                ui.end_row();
+                ui.label("Rendering intent:");
+                crate::color_ui::intent_combo(ui, "Rendering intent (document options)", &mut d.color.intent, 200.0);
                 ui.end_row();
             });
             ui.add_space(8.0);

@@ -18,10 +18,12 @@ pub enum DockerKind {
     AlignDistribute,
     StepRepeat,
     FindReplace,
+    Color,
+    ColorProof,
 }
 
 impl DockerKind {
-    pub const ALL: [DockerKind; 7] = [
+    pub const ALL: [DockerKind; 9] = [
         DockerKind::Properties,
         DockerKind::Objects,
         DockerKind::Pages,
@@ -29,6 +31,8 @@ impl DockerKind {
         DockerKind::AlignDistribute,
         DockerKind::StepRepeat,
         DockerKind::FindReplace,
+        DockerKind::Color,
+        DockerKind::ColorProof,
     ];
     /// Open in a new workspace.
     pub const DEFAULT_OPEN: [DockerKind; 5] = [
@@ -48,6 +52,8 @@ impl DockerKind {
             DockerKind::AlignDistribute => ICON_ALIGN_HORIZONTAL_LEFT,
             DockerKind::StepRepeat => ICON_LIBRARY_ADD,
             DockerKind::FindReplace => ICON_FIND_REPLACE,
+            DockerKind::Color => ICON_PALETTE,
+            DockerKind::ColorProof => ICON_PRINT,
         }
     }
 
@@ -60,6 +66,8 @@ impl DockerKind {
             DockerKind::AlignDistribute => "Align and Distribute",
             DockerKind::StepRepeat => "Step and Repeat",
             DockerKind::FindReplace => "Find and Replace",
+            DockerKind::Color => "Color",
+            DockerKind::ColorProof => "Color Proof Settings",
         }
     }
 }
@@ -242,6 +250,8 @@ pub fn docker_ui(ui: &mut egui::Ui, state: &mut AppState, commands: &mut Vec<Com
             DockerKind::AlignDistribute => needs_selection_ui(ui, "align and order"),
             DockerKind::StepRepeat => crate::edit_tools::step_repeat_ui(ui, state),
             DockerKind::FindReplace => crate::find_ui::find_replace_ui(ui, state),
+            DockerKind::Color => crate::color_ui::color_docker_ui(ui, state),
+            DockerKind::ColorProof => crate::color_ui::proof_settings_ui(ui, state),
         });
     });
 }

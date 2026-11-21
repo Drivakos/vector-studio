@@ -1,10 +1,10 @@
 //! File > Export For: Web (a PNG at screen resolution, or SVG) and Print-Ready PDF (every
-//! page with bleed and crop marks).
+//! page with bleed and crop marks, in CMYK or RGB).
 
 use std::path::PathBuf;
 
 use vs_core::{Rgba, Unit};
-use vs_io::{ExportFormat, ExportOptions, PrintMarks};
+use vs_io::{ExportFormat, ExportOptions, PdfColors, PrintMarks};
 
 use crate::app::AppState;
 
@@ -12,7 +12,8 @@ use crate::app::AppState;
 #[derive(Clone, Debug, PartialEq)]
 pub enum ExportFor {
     Web { format: ExportFormat, dpi: f64, white_background: bool },
-    PrintPdf { bleed_mm: f64, crop_marks: bool },
+    /// `cmyk`: colours as inks through the document's CMYK profile, else sRGB.
+    PrintPdf { bleed_mm: f64, crop_marks: bool, cmyk: bool },
 }
 
 impl ExportFor {
@@ -22,7 +23,8 @@ impl ExportFor {
     }
 
     pub fn print_pdf() -> Self {
-        ExportFor::PrintPdf { bleed_mm: 3.0, crop_marks: true }
+        // CMYK to start, as a print shop expects (this app's choice).
+        ExportFor::PrintPdf { bleed_mm: 3.0, crop_marks: true, cmyk: true }
     }
 
     fn title(&self) -> &'static str {
@@ -53,11 +55,17 @@ fn export(state: &mut AppState, settings: &ExportFor) -> bool {
             let result = vs_io::export(&state.doc, &path, &options).map(|_| ());
             (path, result)
         }
-        ExportFor::PrintPdf { bleed_mm, crop_marks } => {
+        ExportFor::PrintPdf { bleed_mm, crop_marks, cmyk } => {
             let Some(path) = ask_path(state, title, ExportFormat::Pdf) else { return false };
             let marks = PrintMarks { bleed: Unit::Millimeters.to_points(bleed_mm), crop_marks };
             let pages: Vec<usize> = (0..state.doc.page_count()).collect();
-            let result = vs_io::pages_to_print_pdf(&state.doc, &pages, &marks).and_then(|pdf| std::fs::write(&path, pdf).map_err(Into::into));
+            let converter = cmyk.then(|| vs_render::Cmyk::for_document(&state.doc.color)).flatten();
+            let convert = |c: Rgba| converter.as_ref().map_or([0, 0, 0, 255], |k| k.cmyk(c));
+            let colors = match &converter {
+                Some(k) => PdfColors::Cmyk { convert: &convert, profile: Some(k.icc()) },
+                None => PdfColors::Rgb,
+            };
+            let result = vs_io::pages_to_print_pdf(&state.doc, &pages, &marks, colors).and_then(|pdf| std::fs::write(&path, pdf).map_err(Into::into));
             (path, result)
         }
     };
@@ -114,13 +122,28 @@ pub fn export_for_window(ctx: &egui::Context, state: &mut AppState) {
                     ui.label("the current page");
                     ui.end_row();
                 }
-                ExportFor::PrintPdf { bleed_mm, crop_marks } => {
+                ExportFor::PrintPdf { bleed_mm, crop_marks, cmyk } => {
                     ui.label("Bleed:");
                     crate::a11y::add(ui, egui::DragValue::new(bleed_mm).range(0.0..=25.0).speed(0.1).suffix(" mm"), "Bleed");
                     ui.end_row();
                     ui.label("Marks:");
                     crate::a11y::add(ui, egui::Checkbox::new(crop_marks, "Crop marks"), "Crop marks");
                     ui.end_row();
+                    ui.label("Colors:");
+                    ui.horizontal(|ui| {
+                        if crate::a11y::add(ui, egui::RadioButton::new(*cmyk, "CMYK"), "CMYK colors (Print-Ready PDF)").clicked() {
+                            *cmyk = true;
+                        }
+                        if crate::a11y::add(ui, egui::RadioButton::new(!*cmyk, "RGB"), "RGB colors (Print-Ready PDF)").clicked() {
+                            *cmyk = false;
+                        }
+                    });
+                    ui.end_row();
+                    if *cmyk {
+                        ui.label("");
+                        ui.label(egui::RichText::new(format!("through {}", crate::color_ui::profile_label(state.doc.color.cmyk_profile.as_deref()))).weak());
+                        ui.end_row();
+                    }
                     ui.label("Exports:");
                     ui.label(format!("all {pages} page(s)"));
                     ui.end_row();

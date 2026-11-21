@@ -6,6 +6,7 @@ pub mod app;
 pub mod bitmap_menu;
 pub mod canvas;
 pub mod chrome;
+pub mod color_ui;
 pub mod commands;
 pub mod dimensions;
 pub mod draw_perspective;

@@ -551,8 +551,7 @@ pub fn page_thumbnail(page: &Page, paper: Rgba, longest: u32) -> Result<(u32, u3
 }
 
 /// A PDF gradient paint for `g`, whose points are in the space `transform` maps to the page.
-fn pdf_gradient(g: &Gradient, transform: vs_core::kurbo::Affine, alpha: f64) -> krilla::paint::Paint {
-    use krilla::color::rgb;
+fn pdf_gradient(g: &Gradient, transform: vs_core::kurbo::Affine, alpha: f64, colors: &PdfColors<'_>) -> krilla::paint::Paint {
     use krilla::num::NormalizedF32;
     use krilla::paint::{LinearGradient, RadialGradient, SpreadMethod, Stop};
     let [a, b, c, d, e, f] = transform.as_coeffs().map(|v| v as f32);
@@ -562,7 +561,7 @@ fn pdf_gradient(g: &Gradient, transform: vs_core::kurbo::Affine, alpha: f64) -> 
         .iter()
         .map(|s| Stop {
             offset: NormalizedF32::new(s.offset as f32).unwrap_or(NormalizedF32::ZERO),
-            color: rgb::Color::new(s.color.r, s.color.g, s.color.b).into(),
+            color: colors.color(s.color),
             opacity: NormalizedF32::new(f32::from(s.color.faded(alpha).a) / 255.0).unwrap_or(NormalizedF32::ONE),
         })
         .collect();
@@ -648,7 +647,50 @@ pub fn document_to_pdf(doc: &Document) -> Result<Vec<u8>, IoError> {
 /// The pages at `indices` (0-based, in that order) as a PDF. Indices past the last page
 /// are skipped.
 pub fn pages_to_pdf(doc: &Document, indices: &[usize]) -> Result<Vec<u8>, IoError> {
-    pages_to_print_pdf(doc, indices, &PrintMarks::default())
+    pages_to_print_pdf(doc, indices, &PrintMarks::default(), PdfColors::Rgb)
+}
+
+/// How a PDF writes its colours.
+#[derive(Clone, Copy, Default)]
+pub enum PdfColors<'a> {
+    /// As the drawing's own sRGB colours.
+    #[default]
+    Rgb,
+    /// Every fill, outline and fountain colour as CMYK inks (0–255 each): its own inks if
+    /// it was given as CMYK, else from `convert`.
+    /// With `profile` (a CMYK ICC profile's bytes) the inks are tied to that profile;
+    /// without, they are plain device CMYK. Bitmaps stay RGB.
+    Cmyk { convert: &'a dyn Fn(Rgba) -> [u8; 4], profile: Option<&'a [u8]> },
+}
+
+impl std::fmt::Debug for PdfColors<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            PdfColors::Rgb => "Rgb",
+            PdfColors::Cmyk { .. } => "Cmyk",
+        })
+    }
+}
+
+impl PdfColors<'_> {
+    fn color(&self, c: Rgba) -> krilla::color::Color {
+        match self {
+            PdfColors::Rgb => krilla::color::rgb::Color::new(c.r, c.g, c.b).into(),
+            PdfColors::Cmyk { convert, .. } => {
+                // A colour given as inks keeps them.
+                let [cy, m, y, k] = c.cmyk.unwrap_or_else(|| convert(c));
+                krilla::color::cmyk::Color::new(cy, m, y, k).into()
+            }
+        }
+    }
+
+    /// Crop marks print on every plate.
+    fn registration(&self) -> krilla::color::Color {
+        match self {
+            PdfColors::Rgb => krilla::color::rgb::Color::new(0, 0, 0).into(),
+            PdfColors::Cmyk { .. } => krilla::color::cmyk::Color::new(255, 255, 255, 255).into(),
+        }
+    }
 }
 
 /// What a print-ready PDF adds around each page.
@@ -674,15 +716,22 @@ impl PrintMarks {
 
 /// Like [`pages_to_pdf`], with each sheet grown by `marks`: the artwork runs `bleed` past
 /// the page edge (the bleed box), the page itself is the trim box, and crop marks sit
-/// outside the bleed at the corners.
-pub fn pages_to_print_pdf(doc: &Document, indices: &[usize], marks: &PrintMarks) -> Result<Vec<u8>, IoError> {
+/// outside the bleed at the corners. Colours are written as `colors` says.
+pub fn pages_to_print_pdf(doc: &Document, indices: &[usize], marks: &PrintMarks, colors: PdfColors<'_>) -> Result<Vec<u8>, IoError> {
     use krilla::page::PageSettings;
     use krilla::paint::FillRule;
     use vs_core::kurbo::{Affine, Rect, Shape as _};
 
     let bleed = marks.bleed.max(0.0);
     let m = marks.margin();
-    let mut pdf = krilla::Document::new();
+    let cmyk_profile = match colors {
+        PdfColors::Cmyk { profile: Some(bytes), .. } => krilla::icc::ICCProfile::<4>::new(bytes),
+        _ => None,
+    };
+    let mut pdf = match cmyk_profile {
+        Some(profile) => krilla::Document::new_with(krilla::SerializeSettings { no_device_cs: true, cmyk_profile: Some(profile), ..Default::default() }),
+        None => krilla::Document::new(),
+    };
     pdf.set_metadata(pdf_metadata(&doc.properties));
     for page in indices.iter().filter_map(|&i| doc.pages().get(i)) {
         let (w, h) = (page.size.width, page.size.height);
@@ -697,7 +746,7 @@ pub fn pages_to_print_pdf(doc: &Document, indices: &[usize], marks: &PrintMarks)
         let mut pdf_page = pdf.start_page_with(settings);
         let mut surface = pdf_page.surface();
         if marks.crop_marks {
-            draw_crop_marks(&mut surface, w, h, m, bleed);
+            draw_crop_marks(&mut surface, w, h, m, bleed, colors.registration());
         }
         let [a, b, c, d, e, f] = Affine::translate((m, m)).as_coeffs().map(|v| v as f32);
         surface.push_transform(&krilla::geom::Transform::from_row(a, b, c, d, e, f));
@@ -710,7 +759,7 @@ pub fn pages_to_print_pdf(doc: &Document, indices: &[usize], marks: &PrintMarks)
         if let Some(bg) = doc.exported_background() {
             let paper = sheet.clone();
             if let Some(path) = pdf_path(&paper) {
-                surface.set_fill(Some(krilla::paint::Fill { paint: krilla::color::rgb::Color::new(bg.r, bg.g, bg.b).into(), ..Default::default() }));
+                surface.set_fill(Some(krilla::paint::Fill { paint: colors.color(bg).into(), ..Default::default() }));
                 surface.set_stroke(None);
                 surface.draw_path(&path);
             }
@@ -719,7 +768,7 @@ pub fn pages_to_print_pdf(doc: &Document, indices: &[usize], marks: &PrintMarks)
             for clip in leaf.clips.iter().filter_map(pdf_path) {
                 surface.push_clip_path(&clip, &FillRule::EvenOdd);
             }
-            pdf_leaf(&mut surface, &leaf)?;
+            pdf_leaf(&mut surface, &leaf, &colors)?;
             for _ in leaf.clips.iter().filter_map(pdf_path) {
                 surface.pop();
             }
@@ -736,7 +785,7 @@ pub fn pages_to_print_pdf(doc: &Document, indices: &[usize], marks: &PrintMarks)
 
 /// Crop marks for a `w` × `h` page placed `m` in from the sheet's edges: two short lines
 /// at each corner, in line with the page edges, starting outside the bleed.
-fn draw_crop_marks(surface: &mut krilla::surface::Surface<'_>, w: f64, h: f64, m: f64, bleed: f64) {
+fn draw_crop_marks(surface: &mut krilla::surface::Surface<'_>, w: f64, h: f64, m: f64, bleed: f64, ink: krilla::color::Color) {
     use vs_core::kurbo::{BezPath, Point};
     let start = bleed + PrintMarks::MARK_GAP;
     let end = start + PrintMarks::MARK_LENGTH;
@@ -752,7 +801,7 @@ fn draw_crop_marks(surface: &mut krilla::surface::Surface<'_>, w: f64, h: f64, m
     let Some(path) = pdf_path(&path) else { return };
     surface.set_fill(None);
     surface.set_stroke(Some(krilla::paint::Stroke {
-        paint: krilla::color::rgb::Color::new(0, 0, 0).into(),
+        paint: ink.into(),
         width: 0.25,
         ..Default::default()
     }));
@@ -780,8 +829,7 @@ fn pdf_metadata(p: &vs_core::DocumentProperties) -> krilla::metadata::Metadata {
 }
 
 /// Draw one leaf on a PDF page.
-fn pdf_leaf(surface: &mut krilla::surface::Surface<'_>, leaf: &Leaf<'_>) -> Result<(), IoError> {
-    use krilla::color::rgb;
+fn pdf_leaf(surface: &mut krilla::surface::Surface<'_>, leaf: &Leaf<'_>, colors: &PdfColors<'_>) -> Result<(), IoError> {
     use krilla::num::NormalizedF32;
     use krilla::paint::{Fill, FillRule, Stroke, StrokeDash};
 
@@ -793,18 +841,18 @@ fn pdf_leaf(surface: &mut krilla::surface::Surface<'_>, leaf: &Leaf<'_>) -> Resu
     let alpha = leaf.style.opacity();
     let fill = leaf.fill().map(|f| match f {
         vs_core::Fill::Solid(c) => Fill {
-            paint: rgb::Color::new(c.r, c.g, c.b).into(),
+            paint: colors.color(*c).into(),
             opacity: opacity(c.faded(alpha).a),
             rule: FillRule::EvenOdd,
         },
-        vs_core::Fill::Gradient(g) => Fill { paint: pdf_gradient(g, leaf.transform, alpha), opacity: NormalizedF32::ONE, rule: FillRule::EvenOdd },
+        vs_core::Fill::Gradient(g) => Fill { paint: pdf_gradient(g, leaf.transform, alpha, colors), opacity: NormalizedF32::ONE, rule: FillRule::EvenOdd },
     });
     let outline = leaf.style.outline.as_ref();
     let stroke = outline.map(|o| {
         let width = o.page_width(leaf.transform);
         let dashes = o.dashes(width);
         Stroke {
-            paint: rgb::Color::new(o.color.r, o.color.g, o.color.b).into(),
+            paint: colors.color(o.color).into(),
             width: width as f32,
             miter_limit: Outline::MITER_LIMIT as f32,
             line_cap: match o.cap {
@@ -1108,6 +1156,33 @@ mod tests {
     }
 
     #[test]
+    fn cmyk_pdfs_write_every_colour_as_inks_tied_to_the_profile() {
+        let mut doc = sample();
+        doc.background = Some(vs_core::Background { color: Rgba::rgb(250, 240, 200), print_and_export: true });
+        let ink = Rgba::rgb(35, 31, 32).with_cmyk([0, 0, 0, 255]);
+        doc.add_object(Shape::Rectangle { rect: Rect::new(0.0, 0.0, 10.0, 10.0), corner_radius: 0.0 }, Style { fill: Some(ink.into()), ..Style::default() });
+        let seen = std::cell::RefCell::new(Vec::new());
+        let convert = |c: Rgba| {
+            seen.borrow_mut().push(c);
+            [0, 255, 255, 0]
+        };
+        let marks = PrintMarks { bleed: 9.0, crop_marks: true };
+        let device = String::from_utf8_lossy(&pages_to_print_pdf(&doc, &[0], &marks, PdfColors::Cmyk { convert: &convert, profile: None }).unwrap()).into_owned();
+        let colours = seen.borrow().clone();
+        for c in [Rgba::rgb(255, 0, 0), Rgba::BLACK, Rgba::rgb(250, 240, 200)] {
+            assert!(colours.contains(&c), "{c:?} went through the conversion: {colours:?}");
+        }
+        assert!(!colours.contains(&ink), "a colour given as inks is written as them, not converted");
+        assert!(!device.contains("/ICCBased"), "device CMYK without a profile");
+
+        let icc = std::fs::read("/System/Library/ColorSync/Profiles/Generic CMYK Profile.icc").expect("part of macOS");
+        let tied = String::from_utf8_lossy(&pages_to_print_pdf(&doc, &[0], &marks, PdfColors::Cmyk { convert: &convert, profile: Some(&icc) }).unwrap()).into_owned();
+        assert!(tied.contains("/ICCBased") && tied.contains("/N 4"), "the CMYK profile is embedded");
+        let rgb = String::from_utf8_lossy(&pages_to_print_pdf(&doc, &[0], &marks, PdfColors::Rgb).unwrap()).into_owned();
+        assert!(!rgb.contains("/N 4"), "an RGB PDF has no CMYK profile");
+    }
+
+    #[test]
     fn properties_become_svg_and_pdf_metadata_and_survive_save() {
         let mut doc = sample();
         assert!(!svg_of_page(doc.active_page(), None, Some(&doc.properties)).contains("<metadata"), "nothing to say");
@@ -1144,11 +1219,11 @@ mod tests {
         assert!(!plain.contains("/TrimBox"), "a plain PDF has no print boxes");
         let marks = PrintMarks { bleed: 9.0, crop_marks: true };
         assert_eq!(marks.margin(), 33.0);
-        let pdf = String::from_utf8_lossy(&pages_to_print_pdf(&doc, &[0], &marks).unwrap()).into_owned();
+        let pdf = String::from_utf8_lossy(&pages_to_print_pdf(&doc, &[0], &marks, PdfColors::Rgb).unwrap()).into_owned();
         assert!(pdf.contains("/MediaBox[0 0 661.2756 907.8898]"), "the sheet grows by the margin on every side");
         assert!(pdf.contains("/TrimBox[33 33 628.2756 874.8898]"), "the page is the trim box");
         assert!(pdf.contains("/BleedBox[24 24 637.2756 883.8898]"), "the bleed box");
-        let bleed_only = String::from_utf8_lossy(&pages_to_print_pdf(&doc, &[0], &PrintMarks { bleed: 9.0, crop_marks: false }).unwrap()).into_owned();
+        let bleed_only = String::from_utf8_lossy(&pages_to_print_pdf(&doc, &[0], &PrintMarks { bleed: 9.0, crop_marks: false }, PdfColors::Rgb).unwrap()).into_owned();
         assert!(bleed_only.contains("/MediaBox[0 0 613.2756 859.8898]"));
     }
 

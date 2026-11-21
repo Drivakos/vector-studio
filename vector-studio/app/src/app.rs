@@ -44,6 +44,8 @@ pub struct Prefs {
     /// Text > Show Nonprinting Characters.
     pub show_nonprinting: bool,
     pub dynamic_guides: bool,
+    /// The Color Proof Settings docker.
+    pub proof: vs_core::ProofSettings,
 }
 
 impl Default for Prefs {
@@ -66,6 +68,7 @@ impl Default for Prefs {
             alignment_guides: false,
             show_nonprinting: false,
             dynamic_guides: false,
+            proof: vs_core::ProofSettings::default(),
         }
     }
 }
@@ -166,6 +169,7 @@ pub struct AppState {
     pub interaction: CanvasInteraction,
     pub export: ExportDialog,
     pub step_repeat: crate::edit_tools::StepRepeat,
+    pub color_docker: crate::color_ui::ColorDocker,
     pub copy_properties: crate::edit_tools::CopyProperties,
     pub powerclip: crate::edit_tools::PowerClipState,
     /// Copy Effect > Perspective From is waiting for the click on the source.
@@ -322,6 +326,7 @@ impl AppState {
             interaction: CanvasInteraction::default(),
             export: ExportDialog::default(),
             step_repeat: Default::default(),
+            color_docker: Default::default(),
             copy_properties: Default::default(),
             powerclip: Default::default(),
             copy_perspective: false,

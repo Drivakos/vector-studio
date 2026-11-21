@@ -31,7 +31,7 @@ pub struct GpuCanvas {
 /// the view or the canvas size changes.
 struct NormalView {
     page: vs_io::AliasedPage,
-    key: ([f64; 6], [u32; 2], bool),
+    key: ([f64; 6], [u32; 2], Option<u64>),
     image: Option<ImageData>,
 }
 
@@ -163,21 +163,51 @@ impl GpuCanvas {
     }
 }
 
+/// What a proof is made from: the profile file, intent and warning colour with how much
+/// of the proofed colour shows through it.
+type ProofKey = (std::path::PathBuf, vs_core::RenderingIntent, Option<(vs_core::Rgba, u8)>);
+
 thread_local! {
-    /// View > Proof Colors' soft proof, loaded once.
-    static PROOF: Option<vs_render::Proof> = vs_render::Proof::system();
+    /// View > Proof Colors' soft proof, made again when its settings change.
+    static PROOF: std::cell::RefCell<Option<(ProofKey, std::rc::Rc<vs_render::Proof>)>> = std::cell::RefCell::default();
+    /// Whether the generic CMYK profile, the fallback for every other, can be read.
+    static CAN_PROOF: bool = vs_render::Proof::system().is_some();
 }
 
 /// Whether View > Proof Colors can be used: the system's CMYK profile loaded.
 pub fn can_proof() -> bool {
-    PROOF.with(Option::is_some)
+    CAN_PROOF.with(|c| *c)
+}
+
+/// The profile Proof Colors simulates: the one chosen in Color Proof Settings, else the
+/// document's; the generic one when that can't be read.
+pub fn proof_profile(state: &AppState) -> std::path::PathBuf {
+    vs_render::resolve_profile(state.prefs.proof.profile.as_deref().or(state.doc.color.cmyk_profile.as_deref()))
+}
+
+/// The soft proof for the current Color Proof Settings.
+pub fn proof(state: &AppState) -> Option<std::rc::Rc<vs_render::Proof>> {
+    let p = &state.prefs.proof;
+    let key: ProofKey = (proof_profile(state), p.intent, p.gamut_warning.then_some((p.warning_color, p.warning_transparency.min(100))));
+    PROOF.with(|cell| {
+        let mut cell = cell.borrow_mut();
+        if let Some((k, proof)) = cell.as_ref()
+            && *k == key
+        {
+            return Some(proof.clone());
+        }
+        let warning = key.2.map(|(c, t)| (c, f64::from(t) / 100.0));
+        let proof = std::rc::Rc::new(vs_render::Proof::new(&key.0, key.1, warning)?);
+        *cell = Some((key, proof.clone()));
+        Some(proof)
+    })
 }
 
 impl GpuCanvas {
     /// Normal view's picture of `page`'s objects: `size` pixels, `transform` mapping
     /// page points to them.
     fn normal_objects(&mut self, page: &vs_core::Page, transform: kurbo::Affine, size: [u32; 2], proof: Option<&vs_render::Proof>) -> Option<ImageData> {
-        let key = (transform.as_coeffs(), size, proof.is_some());
+        let key = (transform.as_coeffs(), size, proof.map(vs_render::Proof::id));
         if self.normal.as_ref().is_none_or(|n| !n.page.shows(page)) {
             let page = vs_io::AliasedPage::new(page).inspect_err(|e| log::error!("Normal view: {e}")).ok()?;
             self.normal = Some(NormalView { page, key, image: None });
@@ -249,14 +279,9 @@ pub fn canvas_pane_ui(
         (canvas_rect.height() * ppp).round().max(0.0) as u32,
     ];
     let painter = ui.painter_at(canvas_rect);
-    let rendered = PROOF.with(|proof| {
-        let look = vs_render::Look {
-            mode: state.view_mode,
-            overprints: state.simulate_overprints,
-            proof: proof.as_ref().filter(|_| state.proof_colors),
-        };
-        gpu.render(state, &View { viewport: state.viewport, look, pasteboard: None }, size_px, ppp as f64)
-    });
+    let proof = if state.proof_colors { proof(state) } else { None };
+    let look = vs_render::Look { mode: state.view_mode, overprints: state.simulate_overprints, proof: proof.as_deref() };
+    let rendered = gpu.render(state, &View { viewport: state.viewport, look, pasteboard: None }, size_px, ppp as f64);
     match rendered {
         Some((tex, place)) => {
             let place = place.translate(canvas_rect.min.to_vec2());

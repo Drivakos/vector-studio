@@ -767,17 +767,29 @@ pub fn palette_ui(ui: &mut egui::Ui, state: &mut AppState) {
         }
         let resp = resp.on_hover_text(format!("{name}\nClick: fill · Right-click: outline"));
         let color = vs_core::Rgba::rgb(*r, *g, *b);
-        // With the Mesh Fill tool, a click colours the selected mesh node.
-        if resp.clicked() && !crate::effect_tools::color_mesh_node(state, color) {
-            set_style(state, |s| s.fill = Some(color.into()));
+        if resp.clicked() {
+            apply_fill_color(state, color);
         }
         if resp.secondary_clicked() {
-            set_style(state, |s| match &mut s.outline {
-                Some(o) => o.color = color,
-                None => s.outline = Some(vs_core::Outline::new(color, crate::outline::DEFAULT_WIDTH)),
-            });
+            apply_outline_color(state, color);
         }
     }
+}
+
+/// A palette click: fill the selection with `color` (with the Mesh Fill tool, colour the
+/// selected mesh node instead).
+pub fn apply_fill_color(state: &mut AppState, color: vs_core::Rgba) {
+    if !crate::effect_tools::color_mesh_node(state, color) {
+        set_style(state, |s| s.fill = Some(color.into()));
+    }
+}
+
+/// A palette right-click: outline the selection in `color`, adding an outline if needed.
+pub fn apply_outline_color(state: &mut AppState, color: vs_core::Rgba) {
+    set_style(state, |s| match &mut s.outline {
+        Some(o) => o.color = color,
+        None => s.outline = Some(vs_core::Outline::new(color, crate::outline::DEFAULT_WIDTH)),
+    });
 }
 
 /// Restyle the selection, or only the picked cells of a table.

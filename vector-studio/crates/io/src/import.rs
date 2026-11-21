@@ -182,7 +182,7 @@ fn image_object(image: &usvg::Image, opacity: f64) -> Option<Object> {
 }
 
 fn color(c: usvg::Color, alpha: f64) -> Rgba {
-    Rgba { r: c.red, g: c.green, b: c.blue, a: (alpha.clamp(0.0, 1.0) * 255.0).round() as u8 }
+    Rgba::new(c.red, c.green, c.blue, (alpha.clamp(0.0, 1.0) * 255.0).round() as u8)
 }
 
 /// A fill for `paint` with the path's `to_page` transform. Patterns are not supported.

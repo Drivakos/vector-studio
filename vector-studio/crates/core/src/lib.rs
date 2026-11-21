@@ -6,6 +6,7 @@ pub mod block_shadow;
 pub mod brush;
 pub mod clones;
 pub mod codes;
+pub mod color_settings;
 pub mod construct;
 pub mod contour;
 pub mod controls;
@@ -48,6 +49,7 @@ pub use document::{
     PAGE_PRESETS, Page, PageId, PagePreset, Rgba, Shape, Style,
 };
 pub use bitmap::{Bitmap, BitmapFormat};
+pub use color_settings::{ColorSettings, ProofSettings, RenderingIntent};
 pub use find::TextMatch;
 pub use fill::{Fill, Gradient, GradientKind, GradientStop};
 pub use history::History;

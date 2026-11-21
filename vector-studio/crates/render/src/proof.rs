@@ -6,21 +6,31 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Weak};
 
-use lcms2::{Flags, Intent, PixelFormat, Profile, Transform};
+use lcms2::{Flags, Intent, PixelFormat, Profile, ThreadContext, Transform};
 use vello::peniko::{Blob, ImageData};
-use vs_core::{Bitmap, Rgba};
+use vs_core::{Bitmap, RenderingIntent, Rgba};
 
-/// The printing profile proofed against: macOS's Generic CMYK profile.
-pub const CMYK_PROFILE: &str = "/System/Library/ColorSync/Profiles/Generic CMYK Profile.icc";
+use crate::color::{GENERIC_CMYK, lcms_intent};
+
+/// The printing profile proofed against when none is chosen.
+pub const CMYK_PROFILE: &str = GENERIC_CMYK;
 
 /// sRGB → printing CMYK → sRGB, so colours the inks can't print show as the nearest ones
-/// they can.
+/// they can; optionally with those colours marked in a warning colour.
 pub struct Proof {
-    transform: Transform<[u8; 4], [u8; 4]>,
+    transform: ProofTransform,
+    /// The same proof with lcms's gamut check: out-of-gamut colours come out as the
+    /// warning colour.
+    gamut: Option<(ProofTransform, Rgba, f64)>,
     colors: RefCell<HashMap<[u8; 3], [u8; 3]>>,
     /// Proofed bitmaps, by the bytes they came from (as in [`crate::bitmaps::decoded`]).
     bitmaps: RefCell<BitmapCache>,
+    id: u64,
+    // Dropped after the transforms made in it.
+    _context: ThreadContext,
 }
+
+type ProofTransform = Transform<[u8; 4], [u8; 4], ThreadContext>;
 
 type BitmapCache = HashMap<usize, (Weak<Vec<u8>>, Option<ImageData>)>;
 
@@ -31,22 +41,47 @@ impl std::fmt::Debug for Proof {
 }
 
 impl Proof {
-    /// A proof against the CMYK profile at `path`, or `None` if it can't be read.
+    /// A proof against the CMYK profile at `path` with relative colorimetric intent, or
+    /// `None` if it can't be read.
     pub fn from_profile(path: &Path) -> Option<Self> {
-        let printer = Profile::new_file(path).ok()?;
-        let srgb = Profile::new_srgb();
-        let transform = Transform::new_proofing(
-            &srgb,
-            PixelFormat::RGBA_8,
-            &srgb,
-            PixelFormat::RGBA_8,
-            &printer,
-            Intent::RelativeColorimetric,
-            Intent::RelativeColorimetric,
-            Flags::SOFT_PROOFING,
-        )
-        .ok()?;
-        Some(Self { transform, colors: RefCell::default(), bitmaps: RefCell::default() })
+        Self::new(path, RenderingIntent::RelativeColorimetric, None)
+    }
+
+    /// A proof against the CMYK profile at `path` with `intent`. With `warning` (a colour
+    /// and how much of the proofed colour shows through it, 0 to 1), colours the profile
+    /// can't print are shown in that colour.
+    pub fn new(path: &Path, intent: RenderingIntent, warning: Option<(Rgba, f64)>) -> Option<Self> {
+        let mut context = ThreadContext::new();
+        if let Some((c, _)) = warning {
+            let mut codes = [0u16; 16];
+            for (code, v) in codes.iter_mut().zip([c.r, c.g, c.b]) {
+                *code = u16::from(v) * 257;
+            }
+            context.set_alarm_codes(codes);
+        }
+        let printer = Profile::new_file_context(&context, path).ok()?;
+        if printer.color_space() != lcms2::ColorSpaceSignature::CmykData {
+            return None;
+        }
+        let srgb = Profile::new_srgb_context(&context);
+        // Absolute colorimetric also simulates the paper's white.
+        let proofing = if intent == RenderingIntent::AbsoluteColorimetric { Intent::AbsoluteColorimetric } else { Intent::RelativeColorimetric };
+        let make = |flags: Flags| {
+            Transform::new_proofing_context(&context, &srgb, PixelFormat::RGBA_8, &srgb, PixelFormat::RGBA_8, &printer, lcms_intent(intent), proofing, flags).ok()
+        };
+        let transform = make(Flags::SOFT_PROOFING)?;
+        let gamut = match warning {
+            Some((c, show)) => Some((make(Flags::SOFT_PROOFING | Flags::GAMUT_CHECK)?, c, show.clamp(0.0, 1.0))),
+            None => None,
+        };
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Some(Self { transform, gamut, colors: RefCell::default(), bitmaps: RefCell::default(), id, _context: context })
+    }
+
+    /// Different for every proof made, so pictures proofed with one can be told apart.
+    pub fn id(&self) -> u64 {
+        self.id
     }
 
     /// A proof against [`CMYK_PROFILE`].
@@ -54,15 +89,32 @@ impl Proof {
         Self::from_profile(Path::new(CMYK_PROFILE))
     }
 
+    /// `pixels` proofed in place, out-of-gamut ones marked if asked for.
+    fn proof(&self, pixels: &mut [[u8; 4]]) {
+        let Some((gamut, warning, show)) = &self.gamut else {
+            self.transform.transform_in_place(pixels);
+            return;
+        };
+        let mut marked = pixels.to_vec();
+        gamut.transform_in_place(&mut marked);
+        self.transform.transform_in_place(pixels);
+        for (px, m) in pixels.iter_mut().zip(&marked) {
+            if px[..3] != m[..3] {
+                let c = warning.mix(Rgba::rgb(px[0], px[1], px[2]), *show);
+                px[..3].copy_from_slice(&[c.r, c.g, c.b]);
+            }
+        }
+    }
+
     /// `c` as it would print; alpha is kept.
     pub fn color(&self, c: Rgba) -> Rgba {
         let rgb = [c.r, c.g, c.b];
         let out = *self.colors.borrow_mut().entry(rgb).or_insert_with(|| {
             let mut px = [[c.r, c.g, c.b, 255]];
-            self.transform.transform_in_place(&mut px);
+            self.proof(&mut px);
             [px[0][0], px[0][1], px[0][2]]
         });
-        Rgba { r: out[0], g: out[1], b: out[2], a: c.a }
+        Rgba::new(out[0], out[1], out[2], c.a)
     }
 
     /// `bitmap` decoded and proofed, once while any object holds its bytes.
@@ -83,7 +135,7 @@ impl Proof {
     /// `image` (straight-alpha RGBA) as it would print.
     pub fn image(&self, image: &ImageData) -> ImageData {
         let mut pixels: Vec<[u8; 4]> = image.data.data().as_chunks::<4>().0.to_vec();
-        self.transform.transform_in_place(&mut pixels);
+        self.proof(&mut pixels);
         ImageData { data: Blob::new(Arc::new(pixels.concat())), ..image.clone() }
     }
 }
@@ -103,5 +155,32 @@ mod tests {
         assert!([grey.r, grey.g, grey.b].iter().all(|v| v.abs_diff(128) < 20), "a grey stays grey: {grey:?}");
         let white = proof.color(Rgba { a: 100, ..Rgba::WHITE });
         assert_eq!((white.r, white.g, white.b, white.a), (255, 255, 255, 100), "paper white, alpha kept");
+    }
+
+    #[test]
+    fn out_of_gamut_colours_show_in_the_warning_colour() {
+        let magenta = Rgba::rgb(255, 0, 255);
+        let path = Path::new(CMYK_PROFILE);
+        let warn = Proof::new(path, RenderingIntent::RelativeColorimetric, Some((magenta, 0.0))).unwrap();
+        assert_eq!(warn.color(Rgba::rgb(0, 0, 255)), magenta, "screen blue can't be printed");
+        assert_eq!(warn.color(Rgba::rgb(0, 255, 0)), magenta, "nor screen green");
+        let grey = warn.color(Rgba::rgb(128, 128, 128));
+        assert_ne!(grey, magenta, "a grey can");
+        let plain = Proof::system().unwrap();
+        assert_eq!(grey, plain.color(Rgba::rgb(128, 128, 128)), "and looks as without the warning");
+
+        let half = Proof::new(path, RenderingIntent::RelativeColorimetric, Some((magenta, 0.5))).unwrap();
+        let shown = plain.color(Rgba::rgb(0, 0, 255));
+        assert_eq!(half.color(Rgba::rgb(0, 0, 255)), magenta.mix(shown, 0.5), "half the proofed colour shows through");
+    }
+
+    #[test]
+    fn intents_change_the_proof() {
+        let path = Path::new(CMYK_PROFILE);
+        let blue = Rgba::rgb(0, 0, 255);
+        let shown: Vec<Rgba> = RenderingIntent::ALL.iter().map(|&i| Proof::new(path, i, None).unwrap().color(blue)).collect();
+        // The generic profile maps perceptual and saturation as relative colorimetric.
+        assert_ne!(shown[3], shown[1], "absolute colorimetric simulates the paper: {shown:?}");
+        assert!(Proof::new(Path::new("/System/Library/ColorSync/Profiles/sRGB Profile.icc"), RenderingIntent::Perceptual, None).is_none(), "only CMYK profiles proof");
     }
 }

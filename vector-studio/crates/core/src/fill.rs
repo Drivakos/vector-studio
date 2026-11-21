@@ -81,16 +81,11 @@ impl Gradient {
             let (a, b) = (pair[0], pair[1]);
             if t <= b.offset {
                 let k = if b.offset - a.offset < 1e-12 { 1.0 } else { (t - a.offset) / (b.offset - a.offset) };
-                return mix(a.color, b.color, k);
+                return a.color.mix(b.color, k);
             }
         }
         last.color
     }
-}
-
-fn mix(a: Rgba, b: Rgba, k: f64) -> Rgba {
-    let l = |x: u8, y: u8| (f64::from(x) + (f64::from(y) - f64::from(x)) * k).round() as u8;
-    Rgba { r: l(a.r, b.r), g: l(a.g, b.g), b: l(a.b, b.b), a: l(a.a, b.a) }
 }
 
 /// What fills a closed object.

@@ -311,7 +311,9 @@
           { "cmd": "window.docker.transform", "label": "Transform", "checkable": true },
           { "cmd": "window.docker.align", "label": "Align and Distribute", "checkable": true },
           { "cmd": "window.docker.step_repeat", "label": "Step and Repeat", "checkable": true },
-          { "cmd": "window.docker.find_replace", "label": "Find and Replace", "checkable": true }
+          { "cmd": "window.docker.find_replace", "label": "Find and Replace", "checkable": true },
+          { "cmd": "window.docker.color", "label": "Color", "checkable": true },
+          { "cmd": "window.docker.color_proof", "label": "Color Proof Settings", "checkable": true }
         ] },
         { "cmd": "window.show_dockers", "label": "Show Dockers", "checkable": true },
         "-",

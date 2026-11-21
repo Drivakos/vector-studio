@@ -5,6 +5,7 @@ mod support;
 mod bitmaps;
 mod brushes;
 mod codes;
+mod color;
 mod dimensions;
 
 mod drawing;

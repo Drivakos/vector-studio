@@ -170,7 +170,7 @@ pub fn outline_editor(ui: &mut egui::Ui, style: &mut Style) {
         ui.label("Color");
         let mut c = to_color32(o.color);
         if ui.color_edit_button_srgba_unmultiplied(&mut c).changed() {
-            o.color = Rgba { r: c[0], g: c[1], b: c[2], a: c[3] };
+            o.color = Rgba::new(c[0], c[1], c[2], c[3]);
         }
         ui.end_row();
 
