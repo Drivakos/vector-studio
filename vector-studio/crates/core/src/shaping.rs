@@ -135,6 +135,7 @@ impl Document {
                     perspective: None,
                     table: None,
                     shadow: None,
+                    effects: Default::default(),
                 };
                 // On top of the selection, so the new object shows.
                 self.active_page_mut().objects.insert(picked[last] + 1, obj);
@@ -228,7 +229,11 @@ pub(crate) fn make_curve(obj: &mut Object, path: BezPath) {
     obj.style = page_style(obj);
     obj.shape = Shape::Curve { path };
     obj.transform = Affine::IDENTITY;
+    // The path is as drawn: reshaping effects are in it, and a mesh no longer fits.
     obj.perspective = None;
+    obj.effects.envelope = None;
+    obj.effects.distortion = None;
+    obj.effects.mesh = None;
 }
 
 /// The object's style (its first member's, for a group) with any outline that scales with

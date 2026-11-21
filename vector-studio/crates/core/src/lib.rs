@@ -1,14 +1,21 @@
 //! Document model for Vector Studio. No UI or GPU dependencies.
 
 pub mod bitmap;
+pub mod blend;
+pub mod block_shadow;
 pub mod brush;
 pub mod clones;
 pub mod codes;
 pub mod construct;
+pub mod contour;
 pub mod controls;
 pub mod curves;
 pub mod cutting;
 pub mod dimension;
+pub mod distort;
+pub mod effects;
+pub mod envelope;
+pub mod extrude;
 pub mod document;
 pub mod fill;
 pub mod find;
@@ -16,6 +23,7 @@ pub mod geometry;
 pub mod history;
 pub mod layers;
 pub mod merge;
+pub mod mesh;
 pub mod nodes;
 pub mod ops;
 pub mod page_numbers;
@@ -33,6 +41,7 @@ pub mod text;
 pub mod text_tools;
 pub mod trace;
 pub mod units;
+pub mod warp;
 
 pub use document::{
     ArcKind, Background, Document, DocumentProperties, DocumentError, EllipseArc, LineCap, LineJoin, LineStyle, Object, ObjectId, Orientation, Outline, OverprintPart,
@@ -48,6 +57,14 @@ pub use kurbo;
 pub use ops::{Align, Distribute, Order};
 pub use perspective::Perspective;
 pub use shadow::DropShadow;
+pub use blend::Blend;
+pub use block_shadow::BlockShadow;
+pub use contour::{Contour, ContourDirection};
+pub use distort::{Distortion, DistortionKind};
+pub use effects::Effects;
+pub use envelope::{Envelope, EnvelopeMode};
+pub use extrude::{Extrude, ExtrudeShading};
+pub use mesh::MeshFill;
 pub use shaping::Shaping;
 pub use snap::{Guide, GuideAxis, SnapOptions, Snapper};
 pub use symbols::{Symbol, SymbolId};

@@ -11,6 +11,7 @@ pub mod dimensions;
 pub mod draw_perspective;
 pub mod dockers;
 pub mod edit_tools;
+pub mod effect_tools;
 pub mod export_for;
 pub mod files;
 pub mod fill_ui;

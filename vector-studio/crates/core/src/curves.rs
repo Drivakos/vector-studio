@@ -110,7 +110,7 @@ impl Document {
             let style = Style { fill: Some(Fill::Solid(outline.color)), transparency: obj.style.transparency, overprint_fill: obj.style.overprint_outline, ..Style::default() };
             let layer = obj.layer;
             let id = self.alloc_object_id();
-            let curve = Object { id, name: None, shape: Shape::Curve { path }, style, transform: Affine::IDENTITY, locked: false, layer, contents: Vec::new(), clone_of: None, frame: false, symbol: None, symmetry: None, perspective: None, table: None, shadow: None };
+            let curve = Object { id, name: None, shape: Shape::Curve { path }, style, transform: Affine::IDENTITY, locked: false, layer, contents: Vec::new(), clone_of: None, frame: false, symbol: None, symmetry: None, perspective: None, table: None, shadow: None, effects: Default::default() };
             let at = i - 1;
             let objects = &mut self.active_page_mut().objects;
             if !shows_fill {

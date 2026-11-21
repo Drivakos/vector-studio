@@ -67,7 +67,8 @@ impl Object {
     /// The object without the shadow and the objects in it without theirs, to measure.
     fn silhouette(&self) -> Vec<(BezPath, bool)> {
         let mut out = Vec::new();
-        for leaf in self.leaves() {
+        // What other effects draw casts a shadow too.
+        for leaf in self.drawn_leaves().into_iter().filter(|l| !l.shadow) {
             // PowerClip contents show only inside their frame: the frame stands for them.
             if let Some(clip) = leaf.clips.last() {
                 out.push((clip.clone(), true));

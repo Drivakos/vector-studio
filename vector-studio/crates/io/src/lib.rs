@@ -187,16 +187,29 @@ pub fn export(doc: &Document, path: &Path, options: &ExportOptions) -> Result<Ex
 
 /// One `<path>` per drawable object; groups become `<g>` around their members.
 fn write_svg_object(out: &mut String, obj: &Object, parent: vs_core::kurbo::Affine, depth: usize) {
-    if obj.perspective.is_some() {
-        // SVG has no projective transform: write the projected curves.
+    if obj.is_warped() {
+        // SVG has no projective transform or envelope: write the reshaped curves.
         let mut baked = obj.clone();
-        baked.bake_perspective();
+        baked.bake_warps();
         return write_svg_object(out, &baked, parent, depth);
     }
     let indent = "  ".repeat(depth);
     if let Some(Shape::Image(shadow)) = obj.shadow.as_ref().and_then(|s| s.shape()) {
         write_svg_image(out, &indent, shadow, parent, 1.0);
     }
+    // What effects draw under and over the object is in the space it is placed in.
+    for o in obj.effects_under() {
+        write_svg_object(out, o, parent, depth);
+    }
+    write_svg_shape(out, obj, parent, depth);
+    for o in obj.effects_over() {
+        write_svg_object(out, o, parent, depth);
+    }
+}
+
+/// [`write_svg_object`] without the effects drawn around the object.
+fn write_svg_shape(out: &mut String, obj: &Object, parent: vs_core::kurbo::Affine, depth: usize) {
+    let indent = "  ".repeat(depth);
     if let Shape::Image(b) = &obj.shape {
         write_svg_image(out, &indent, b, parent * obj.transform, obj.style.opacity());
         if obj.style.outline.is_none() {
@@ -206,7 +219,7 @@ fn write_svg_object(out: &mut String, obj: &Object, parent: vs_core::kurbo::Affi
     if let Shape::Group { children } = &obj.shape {
         let _ = writeln!(out, "{indent}<g>");
         for (copy, at) in obj.member_placements(parent * obj.transform).into_iter().enumerate() {
-            for child in children {
+            for (i, child) in children.iter().enumerate() {
                 if copy == 0 {
                     write_svg_object(out, child, at, depth + 1);
                 } else {
@@ -214,6 +227,10 @@ fn write_svg_object(out: &mut String, obj: &Object, parent: vs_core::kurbo::Affi
                     let mut child = child.clone();
                     tag_ids(&mut child, copy as u64);
                     write_svg_object(out, &child, at, depth + 1);
+                }
+                // A blend's steps go between its two ends.
+                if i == 0 {
+                    obj.blend_steps().iter().for_each(|step| write_svg_object(out, step, at, depth + 1));
                 }
             }
         }
@@ -228,6 +245,20 @@ fn write_svg_object(out: &mut String, obj: &Object, parent: vs_core::kurbo::Affi
     let transform = parent * obj.transform;
     path.apply_affine(transform);
     round_path(&mut path);
+    if let Some(Shape::Image(mesh)) = obj.effects.mesh.as_ref().and_then(|m| m.shape()).filter(|_| obj.shape.is_closed()) {
+        // A mesh fill: its bitmap inside the outline, then the object without its fill.
+        let _ = writeln!(out, r#"{indent}<clipPath id="mesh{}"><path d="{}" clip-rule="evenodd"/></clipPath>"#, obj.id.0, path.to_svg());
+        let _ = writeln!(out, r#"{indent}<g clip-path="url(#mesh{})">"#, obj.id.0);
+        write_svg_image(out, &format!("{indent}  "), mesh, transform, obj.style.opacity());
+        let _ = writeln!(out, "{indent}</g>");
+        let mut bare = obj.clone();
+        bare.effects.mesh = None;
+        bare.style.fill = None;
+        if bare.style.outline.is_some() {
+            write_svg_shape(out, &bare, parent, depth);
+        }
+        return;
+    }
     let opacity = obj.style.opacity();
     let fill = obj.style.fill.as_ref().filter(|_| obj.shape.is_closed() && !matches!(obj.shape, Shape::Image(_)));
     if let Some(Fill::Gradient(g)) = fill {
@@ -263,11 +294,11 @@ fn tag_ids(obj: &mut Object, copy: u64) {
 }
 
 /// A PowerClip: the container's fill, its contents clipped to its outline, then the
-/// container's outline on top.
+/// container's outline on top. Its shadow and effects are written around it once.
 fn write_svg_powerclip(out: &mut String, obj: &Object, parent: vs_core::kurbo::Affine, depth: usize) {
     let indent = "  ".repeat(depth);
     let bare = |style: vs_core::Style| Object { style, contents: Vec::new(), ..obj.clone() };
-    write_svg_object(out, &bare(vs_core::Style { outline: None, ..obj.style.clone() }), parent, depth);
+    write_svg_shape(out, &bare(vs_core::Style { outline: None, ..obj.style.clone() }), parent, depth);
     let transform = parent * obj.transform;
     let mut clip = obj.shape.to_path();
     clip.apply_affine(transform);
@@ -279,7 +310,7 @@ fn write_svg_powerclip(out: &mut String, obj: &Object, parent: vs_core::kurbo::A
     }
     let _ = writeln!(out, "{indent}</g>");
     if obj.style.outline.is_some() {
-        write_svg_object(out, &bare(vs_core::Style { fill: None, ..obj.style.clone() }), parent, depth);
+        write_svg_shape(out, &bare(vs_core::Style { fill: None, ..obj.style.clone() }), parent, depth);
     }
 }
 

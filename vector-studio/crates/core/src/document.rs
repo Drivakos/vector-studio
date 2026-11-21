@@ -47,6 +47,13 @@ impl Rgba {
         Some(Self::rgb(byte(0)?, byte(2)?, byte(4)?))
     }
 
+    /// The colour `k` (0..=1) of the way from this one to `other`.
+    pub fn mix(self, other: Rgba, k: f64) -> Rgba {
+        let k = k.clamp(0.0, 1.0);
+        let l = |x: u8, y: u8| (f64::from(x) + (f64::from(y) - f64::from(x)) * k).round() as u8;
+        Rgba { r: l(self.r, other.r), g: l(self.g, other.g), b: l(self.b, other.b), a: l(self.a, other.a) }
+    }
+
     /// This colour with its alpha multiplied by `opacity` (0..=1).
     pub fn faded(self, opacity: f64) -> Self {
         Self { a: (f64::from(self.a) * opacity.clamp(0.0, 1.0)).round() as u8, ..self }
@@ -381,12 +388,16 @@ pub struct Object {
     /// A drop shadow drawn under the object (see [`crate::shadow`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shadow: Option<crate::shadow::DropShadow>,
+    /// Contour, blend, extrude, block shadow, envelope, distortion and mesh fill (see
+    /// [`crate::effects`]).
+    #[serde(default, skip_serializing_if = "crate::effects::Effects::is_empty")]
+    pub effects: crate::effects::Effects,
 }
 
 impl Object {
     /// A plain, unlocked object on no particular layer, placed by `shape` alone.
     pub fn new(id: ObjectId, shape: Shape, style: Style) -> Self {
-        Self { id, name: None, shape, style, transform: Affine::IDENTITY, locked: false, layer: LayerId::default(), contents: Vec::new(), clone_of: None, frame: false, symbol: None, symmetry: None, perspective: None, table: None, shadow: None }
+        Self { id, name: None, shape, style, transform: Affine::IDENTITY, locked: false, layer: LayerId::default(), contents: Vec::new(), clone_of: None, frame: false, symbol: None, symmetry: None, perspective: None, table: None, shadow: None, effects: Default::default() }
     }
 
     /// Turn this object, or every member of this group, into curves. Locked objects
@@ -395,8 +406,8 @@ impl Object {
         if self.locked {
             return;
         }
-        // A perspective becomes part of the curves.
-        self.bake_perspective();
+        // A perspective, envelope or distortion becomes part of the curves.
+        self.bake_warps();
         match &mut self.shape {
             Shape::Curve { .. } | Shape::Image(_) => {}
             Shape::Group { children } => {
@@ -411,7 +422,7 @@ impl Object {
     /// Whether Convert to Curves would change anything.
     pub fn can_convert_to_curves(&self) -> bool {
         !self.locked
-            && (self.perspective.is_some()
+            && (self.is_warped()
                 || match &self.shape {
                     Shape::Curve { .. } | Shape::Image(_) => false,
                     Shape::Group { children } => children.iter().any(Object::can_convert_to_curves),
@@ -813,7 +824,7 @@ impl Document {
         let id = ObjectId(self.alloc_id());
         let page = self.active_page_mut();
         let layer = page.active_layer;
-        page.objects.push(Object { id, name: None, shape, style, transform: Affine::IDENTITY, locked: false, layer, contents: Vec::new(), clone_of: None, frame: false, symbol: None, symmetry: None, perspective: None, table: None, shadow: None });
+        page.objects.push(Object { id, name: None, shape, style, transform: Affine::IDENTITY, locked: false, layer, contents: Vec::new(), clone_of: None, frame: false, symbol: None, symmetry: None, perspective: None, table: None, shadow: None, effects: Default::default() });
         page.settle_layers();
         id
     }

@@ -247,6 +247,7 @@ pub fn property_bar_ui(ui: &mut egui::Ui, state: &mut AppState, out: &mut Vec<Co
                 ui.label(egui::RichText::new(crate::tools::hint(state)).color(theme::TEXT_DIM));
             }
             Tool::DropShadow => crate::shadow_tool::property_bar(ui, state),
+            t if crate::effect_tools::is_effect_tool(t) => crate::effect_tools::property_bar(ui, state),
             Tool::Knife => {
                 ui.label(egui::RichText::new(crate::tools::hint(state)).color(theme::TEXT_DIM));
             }
@@ -766,7 +767,8 @@ pub fn palette_ui(ui: &mut egui::Ui, state: &mut AppState) {
         }
         let resp = resp.on_hover_text(format!("{name}\nClick: fill · Right-click: outline"));
         let color = vs_core::Rgba::rgb(*r, *g, *b);
-        if resp.clicked() {
+        // With the Mesh Fill tool, a click colours the selected mesh node.
+        if resp.clicked() && !crate::effect_tools::color_mesh_node(state, color) {
             set_style(state, |s| s.fill = Some(color.into()));
         }
         if resp.secondary_clicked() {

@@ -127,7 +127,7 @@ pub enum Command {
     DrawInPerspective,
     /// Copy Effect > Perspective From: waits for the click on the source.
     CopyPerspective,
-    /// Clear Effect: removes a perspective.
+    /// Clear Effect: removes every effect (perspective, shadows, contour, blend, envelope and the rest).
     ClearEffect,
     TableCreate,
     TextToTable,

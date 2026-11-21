@@ -85,6 +85,8 @@ enum Drag {
     Marquee { start: Point, add: bool },
     /// Drop Shadow: from where the pointer took the object.
     Shadow { object: ObjectId, start: Point },
+    /// The other effect tools.
+    Effect(crate::effect_tools::EffectDrag),
     /// Freehand Pick: the loop drawn so far.
     Lasso { points: Vec<Point>, add: bool },
     NodeMarquee { start: Point, add: bool },
@@ -175,6 +177,8 @@ pub struct ToolState {
     /// Crop tool: the area waiting to be cropped to (Enter or double-click applies it).
     pub crop: Option<kurbo::Rect>,
     pub eyedropper: crate::paint_tools::Eyedropper,
+    /// Contour, Blend, Distort, Envelope, Extrude, Block Shadow and Mesh Fill.
+    pub effect: crate::effect_tools::EffectState,
     drag: Option<Drag>,
     pen: Option<PenPath>,
     /// 3-point tools: the first edge, waiting for the click that sets the third point.
@@ -257,6 +261,7 @@ pub fn is_implemented(tool: Tool) -> bool {
         || matches!(tool, Tool::InteractiveFill | Tool::SmartFill | Tool::Transparency | Tool::ColorEyedropper | Tool::AttributesEyedropper)
         || matches!(tool, Tool::Crop | Tool::Knife | Tool::VirtualSegmentDelete | Tool::Eraser)
         || tool == Tool::DropShadow
+        || crate::effect_tools::is_effect_tool(tool)
         || is_brush(tool)
         || matches!(tool, Tool::TwoPointLine | Tool::Polyline | Tool::BSpline | Tool::Spiral | Tool::GraphPaper | Tool::Table)
         || is_three_point(tool)
@@ -485,6 +490,11 @@ fn press(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers, dou
                 state.tools.drag = Some(Drag::Shadow { object, start: p });
             }
         }
+        t if crate::effect_tools::is_effect_tool(t) => {
+            if let Some(d) = crate::effect_tools::press(state, p, view.doc_len(HIT)) {
+                state.tools.drag = Some(Drag::Effect(d));
+            }
+        }
         t if is_brush(t) => press_brush(state, view, p),
         Tool::SmartFill => {
             let s = &state.tools.settings;
@@ -634,8 +644,9 @@ fn press_free(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers
 fn shape_target(state: &AppState) -> Option<ObjectId> {
     let [id] = state.selection.as_slice() else { return None };
     let top = state.doc.active_page().object(*id).filter(|o| !o.locked)?;
-    // A member's own perspective is not drawn by the Shape tool's view of it: edit the group.
-    let member = state.tools.member.filter(|m| top.find(*m, Affine::IDENTITY).is_some_and(|(o, _)| !o.locked && o.perspective.is_none()));
+    // A member's own perspective or envelope is not drawn by the Shape tool's view of it:
+    // edit the group.
+    let member = state.tools.member.filter(|m| top.find(*m, Affine::IDENTITY).is_some_and(|(o, _)| !o.locked && !o.is_warped()));
     Some(member.unwrap_or(*id))
 }
 
@@ -668,7 +679,7 @@ fn press_shape(state: &mut AppState, view: &View, p: Point, mods: egui::Modifier
                 state.tools.drag = Some(Drag::Perspective { object: id, corner });
                 return;
             }
-        } else {
+        } else if !obj.is_warped() {
         match &obj.shape {
             Shape::Curve { path } => {
                 let node_list = nodes::nodes(path);
@@ -740,7 +751,7 @@ fn press_shape(state: &mut AppState, view: &View, p: Point, mods: egui::Modifier
     }
     match state.doc.active_page().hit_test(p, tol) {
         Some(hit) => shape_pick(state, hit, p, tol),
-        None if shape_object(state).is_some_and(|(o, _)| o.perspective.is_none() && matches!(o.shape, Shape::Curve { .. })) =>
+        None if shape_object(state).is_some_and(|(o, _)| !o.is_warped() && matches!(o.shape, Shape::Curve { .. })) =>
         {
             state.tools.drag = Some(Drag::NodeMarquee { start: p, add: mods.shift });
         }
@@ -1157,6 +1168,14 @@ fn drag_to(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers) {
             }
             Drag::Shadow { object, start }
         }
+        Drag::Effect(mut d) => {
+            let moved = match &d {
+                crate::effect_tools::EffectDrag::Cast { start, .. } | crate::effect_tools::EffectDrag::Blend { start, .. } => view.screen_dist(*start, p) > DRAG_START,
+                _ => true,
+            };
+            crate::effect_tools::drag(state, &mut d, p, moved);
+            Drag::Effect(d)
+        }
         Drag::FillVector { object, start } => {
             if view.screen_dist(start, p) > DRAG_START {
                 let end = snapper(state, view, &[]).point(p);
@@ -1299,6 +1318,7 @@ fn creation_shape(tool: Tool, rect: kurbo::Rect, settings: &ToolSettings) -> Opt
 fn release(state: &mut AppState, view: &View, p: Point, mods: egui::Modifiers) {
     let Some(drag) = state.tools.drag.take() else { return };
     match drag {
+        Drag::Effect(d) => crate::effect_tools::release(state, d, p, view.doc_len(HIT)),
         Drag::Marquee { start, add } => {
             let rect = kurbo::Rect::from_points(start, p);
             if view.screen_dist(start, p) <= DRAG_START {
@@ -1652,6 +1672,11 @@ pub const GUIDE_LINE: Color32 = Color32::from_rgb(0x00, 0xA6, 0x51);
 pub fn draw_overlay(painter: &egui::Painter, state: &AppState, canvas: Rect) {
     let view = View::flat(state, canvas);
     crate::draw_perspective::draw(painter, state, |p| view.screen(p));
+    let effect_drag = match &state.tools.drag {
+        Some(Drag::Effect(d)) => Some(d),
+        _ => None,
+    };
+    crate::effect_tools::draw(painter, state, effect_drag, state.tools.pointer, |p| view.screen(p));
     let page = state.doc.active_page();
     let thin = Stroke::new(1.0, ACCENT);
     crate::text_tool::draw_frames(painter, state, |p| view.screen(p));
@@ -1686,7 +1711,7 @@ pub fn draw_overlay(painter: &egui::Painter, state: &AppState, canvas: Rect) {
             let t = parent * obj.transform;
             if let Some(corners) = obj.perspective_corners() {
                 perspective_grid(painter, obj, &corners, &view);
-            } else {
+            } else if !obj.is_warped() {
             match &obj.shape {
                 Shape::Curve { path } => {
                     for n in nodes::nodes(path) {
@@ -2009,6 +2034,7 @@ pub fn hint(state: &AppState) -> String {
         Tool::FreeTransform => "Click an object to transform it, or drag a box around objects".into(),
         Tool::Shape => match shape_object(state).map(|(o, _)| o) {
             Some(o) if o.perspective.is_some() => "Drag a corner to change the perspective · Object > Clear Effect removes it".into(),
+            Some(o) if o.is_warped() => "An envelope or distortion reshapes it · Convert to Curves bakes it in to edit the nodes · Object > Clear Effect removes it".into(),
             Some(o) if matches!(o.shape, Shape::Curve { .. }) => {
                 "Drag nodes or handles · double-click a line to add a node, a node to delete it".into()
             }
@@ -2077,6 +2103,7 @@ pub fn hint(state: &AppState) -> String {
         Tool::Crop => "Drag the area to keep; everything on the page is cropped".into(),
         Tool::Knife => "Drag a line across objects to cut them in two".into(),
         Tool::DropShadow => "Drag from an object to cast its shadow there · Object > Clear Effect removes it".into(),
+        t if crate::effect_tools::is_effect_tool(t) => crate::effect_tools::hint(state),
         Tool::VirtualSegmentDelete => "Click a line to delete it up to where other lines cross it".into(),
         Tool::Eraser if state.has_selection() => "Drag over the selected objects to erase · size in the property bar".into(),
         Tool::Eraser => "Drag over objects to erase · size in the property bar".into(),

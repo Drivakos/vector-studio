@@ -135,6 +135,9 @@ pub struct Leaf<'a> {
     pub projected: bool,
     /// A drop shadow's bitmap: drawn, but not hit, measured or shaped.
     pub shadow: bool,
+    /// Drawn by an effect (contour, blend steps, extrusion, block shadow, mesh): hit with
+    /// its object, but not measured or shaped.
+    pub effect: bool,
 }
 
 impl Leaf<'_> {
@@ -155,11 +158,11 @@ impl Object {
     pub fn leaves(&self) -> Vec<Leaf<'_>> {
         let mut out = Vec::new();
         self.collect_leaves(Affine::IDENTITY, &[], &mut out);
-        out.retain(|l| !l.shadow);
+        out.retain(|l| !l.shadow && !l.effect);
         out
     }
 
-    /// [`Self::leaves`] with drop shadows, each under the object that casts it.
+    /// [`Self::leaves`] with what effects draw: drop shadows and the rest.
     pub fn drawn_leaves(&self) -> Vec<Leaf<'_>> {
         let mut out = Vec::new();
         self.collect_leaves(Affine::IDENTITY, &[], &mut out);
@@ -171,18 +174,20 @@ impl Object {
             let mut path = b.rect.to_path(PATH_TOLERANCE);
             path.apply_affine(parent);
             let style = std::borrow::Cow::Owned(Style { fill: None, outline: None, ..Style::default() });
-            out.push(Leaf { path, shape, style, closed: true, transform: parent, clips: clips.to_vec(), projected: false, shadow: true });
+            out.push(Leaf { path, shape, style, closed: true, transform: parent, clips: clips.to_vec(), projected: false, shadow: true, effect: false });
         }
+        collect_effect(self.effects_under(), parent, clips, out);
         let transform = parent * self.transform;
-        let Some(h) = self.perspective else {
+        let Some(warp) = self.warp() else {
             self.collect_plain(transform, clips, out);
+            collect_effect(self.effects_over(), parent, clips, out);
             return;
         };
-        // Everything in the object's own space, then through the perspective.
+        // Everything in the object's own space, then through the reshaping effects.
         let start = out.len();
         self.collect_plain(Affine::IDENTITY, &[], out);
         let project = |path: &BezPath| {
-            let mut p = h.map_path(path);
+            let mut p = warp.map_path(path);
             p.apply_affine(transform);
             p
         };
@@ -193,6 +198,7 @@ impl Object {
             leaf.transform = transform * leaf.transform;
             leaf.projected = true;
         }
+        collect_effect(self.effects_over(), parent, clips, out);
     }
 
     /// [`Self::collect_leaves`] without this object's own perspective; `transform` is
@@ -202,13 +208,31 @@ impl Object {
         match &self.shape {
             Shape::Group { children } => {
                 for at in self.member_placements(transform) {
-                    children.iter().for_each(|c| c.collect_leaves(at, clips, out));
+                    for (i, c) in children.iter().enumerate() {
+                        c.collect_leaves(at, clips, out);
+                        // A blend's steps go between its two ends.
+                        if i == 0 {
+                            collect_effect(self.blend_steps().iter(), at, clips, out);
+                        }
+                    }
                 }
             }
             shape => {
                 let mut path = shape.to_path();
                 path.apply_affine(transform);
-                let leaf = |style: Cow<'a, Style>, path: BezPath| Leaf { path, shape, style, closed: shape.is_closed(), transform, clips: clips.to_vec(), projected: false, shadow: false };
+                let leaf = |style: Cow<'a, Style>, path: BezPath| Leaf { path, shape, style, closed: shape.is_closed(), transform, clips: clips.to_vec(), projected: false, shadow: false, effect: false };
+                // A mesh fill is drawn as a bitmap inside the outline, in place of the fill.
+                let mesh = self.effects.mesh.as_ref().and_then(|m| m.shape()).filter(|_| shape.is_closed() && !self.is_warped());
+                if let (Some(image @ Shape::Image(b)), true) = (mesh, self.contents.is_empty()) {
+                    let mut area = b.rect.to_path(PATH_TOLERANCE);
+                    area.apply_affine(transform);
+                    let mut inside = clips.to_vec();
+                    inside.push(path.clone());
+                    let style = Cow::Owned(Style { fill: None, outline: None, transparency: self.style.transparency, ..Style::default() });
+                    out.push(Leaf { path: area, shape: image, style, closed: true, transform, clips: inside, projected: false, shadow: false, effect: true });
+                    out.push(leaf(Cow::Owned(Style { fill: None, ..self.style.clone() }), path));
+                    return;
+                }
                 if self.contents.is_empty() {
                     out.push(leaf(Cow::Borrowed(&self.style), path));
                     return;
@@ -236,8 +260,8 @@ impl Object {
     /// The outline in page space.
     pub fn world_path(&self) -> BezPath {
         let mut path = self.shape.to_path();
-        if let Some(h) = self.perspective {
-            path = h.map_path(&path);
+        if let Some(w) = self.warp() {
+            path = w.map_path(&path);
         }
         path.apply_affine(self.transform);
         path
@@ -251,7 +275,7 @@ impl Object {
 
     fn bounds_in(&self, parent: Affine) -> Rect {
         let transform = parent * self.transform;
-        if self.perspective.is_none() {
+        if !self.is_warped() {
             return self.plain_bounds(transform);
         }
         let mut out = Vec::new();
@@ -318,6 +342,17 @@ impl Object {
     }
 }
 
+/// Add the leaves of objects an effect draws (placed by `parent`), marked as such.
+fn collect_effect<'a>(objects: impl Iterator<Item = &'a Object>, parent: Affine, clips: &[BezPath], out: &mut Vec<Leaf<'a>>) {
+    let start = out.len();
+    for o in objects {
+        o.collect_leaves(parent, clips, out);
+    }
+    for leaf in &mut out[start..] {
+        leaf.effect = true;
+    }
+}
+
 /// The colour shown at a point, as the Color Eyedropper picks it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PaintHit {
@@ -330,15 +365,15 @@ pub struct PaintHit {
 
 impl Object {
     /// A group whose members can be edited one by one in place: not a table, symbol,
-    /// clone, symmetry group or a group drawn through a perspective, whose members are
-    /// laid out or drawn by something else.
+    /// clone, symmetry group or a group reshaped by an effect (a perspective, envelope or
+    /// distortion), whose members are laid out or drawn by something else.
     fn opens(&self) -> bool {
         matches!(self.shape, Shape::Group { .. })
             && self.table.is_none()
             && self.symbol.is_none()
             && self.clone_of.is_none()
             && self.symmetry.is_none()
-            && self.perspective.is_none()
+            && !self.is_warped()
     }
 
     /// Object `id`: this one or one in it (see [`Self::opens`]), with the transform that

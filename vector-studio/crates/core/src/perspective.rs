@@ -177,7 +177,7 @@ impl Object {
         }
     }
 
-    fn has_bitmap(&self) -> bool {
+    pub(crate) fn has_bitmap(&self) -> bool {
         matches!(self.shape, Shape::Image(_))
             || self.contents.iter().any(Object::has_bitmap)
             || matches!(&self.shape, Shape::Group { children } if children.iter().any(Object::has_bitmap))

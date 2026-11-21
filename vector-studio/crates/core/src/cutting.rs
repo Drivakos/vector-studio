@@ -140,9 +140,9 @@ fn cut_object(obj: &Object, parent: Affine, region: &Region, keep: Keep) -> Outc
     if obj.locked {
         return Outcome::Unchanged;
     }
-    if obj.perspective.is_some() {
+    if obj.is_warped() {
         let mut baked = obj.clone();
-        baked.bake_perspective();
+        baked.bake_warps();
         return cut_object(&baked, parent, region, keep);
     }
     let to_page = parent * obj.transform;

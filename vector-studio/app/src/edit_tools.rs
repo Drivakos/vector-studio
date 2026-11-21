@@ -331,8 +331,9 @@ pub fn finish_contents(state: &mut AppState) {
 /// The curve the Shape tool edits (the one unlocked curve selected, or the curve picked in
 /// the selected group), whose nodes Select All Nodes picks.
 fn node_target(state: &AppState) -> Option<ObjectId> {
-    // A curve with a perspective shows its perspective corners, not its nodes.
-    crate::tools::shape_object(state).map(|(o, _)| o).filter(|o| o.perspective.is_none() && matches!(o.shape, Shape::Curve { .. })).map(|o| o.id)
+    // A curve with a perspective shows its perspective corners, not its nodes; one with an
+    // envelope or distortion shows neither.
+    crate::tools::shape_object(state).map(|(o, _)| o).filter(|o| !o.is_warped() && matches!(o.shape, Shape::Curve { .. })).map(|o| o.id)
 }
 
 pub fn can_select_all_nodes(state: &AppState) -> bool {

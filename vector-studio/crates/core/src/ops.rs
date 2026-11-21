@@ -259,6 +259,7 @@ impl Document {
             perspective: None,
             table: None,
             shadow: None,
+            effects: Default::default(),
         };
         objects.insert(top - below_top, group);
         Some(id)
@@ -267,8 +268,9 @@ impl Document {
     /// Replace each unlocked group among `ids` by its members, in place. Returns the ids of
     /// the members (to select them) and of any non-group objects in `ids`.
     pub fn ungroup_objects(&mut self, ids: &[ObjectId]) -> Vec<ObjectId> {
-        // A symmetry group's mirrored copies come out as objects too.
+        // A symmetry group's mirrored copies come out as objects too, and a blend's steps.
         self.remove_symmetry(ids);
+        self.break_blends(ids);
         let objects = &mut self.active_page_mut().objects;
         let mut out = Vec::new();
         let mut i = 0;
@@ -283,7 +285,9 @@ impl Document {
                 i += 1;
                 continue;
             }
-            let group = objects.remove(i);
+            let mut group = objects.remove(i);
+            // An envelope or distortion goes into the members' shapes.
+            group.bake_shape_warps();
             let Shape::Group { children } = group.shape else { unreachable!() };
             let n = children.len();
             for (k, mut child) in children.into_iter().enumerate() {

@@ -68,7 +68,7 @@ pub fn import_bitmap(data: &[u8]) -> Result<Object, IoError> {
 }
 
 fn object(shape: Shape, style: Style) -> Object {
-    Object { id: ObjectId(0), name: None, shape, style, transform: Affine::IDENTITY, locked: false, layer: vs_core::LayerId::UNSET, contents: Vec::new(), clone_of: None, frame: false, symbol: None, symmetry: None, perspective: None, table: None, shadow: None }
+    Object { id: ObjectId(0), name: None, shape, style, transform: Affine::IDENTITY, locked: false, layer: vs_core::LayerId::UNSET, contents: Vec::new(), clone_of: None, frame: false, symbol: None, symmetry: None, perspective: None, table: None, shadow: None, effects: Default::default() }
 }
 
 fn affine(t: usvg::Transform) -> Affine {

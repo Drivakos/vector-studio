@@ -577,7 +577,7 @@ impl VectorStudioApp {
             Command::AddPerspective => (doc.can_add_perspective(&state.selection), None),
             Command::DrawInPerspective => (true, Some(state.draw_perspective.is_some())),
             Command::CopyPerspective => (crate::edit_tools::can_copy_perspective(state), None),
-            Command::ClearEffect => (!doc.with_perspective(&state.selection).is_empty() || !doc.with_shadow(&state.selection).is_empty(), None),
+            Command::ClearEffect => (!doc.with_effect(&state.selection, vs_core::Object::has_effect).is_empty(), None),
             Command::TextToTable => (crate::table_tool::can_text_to_table(state), None),
             Command::TableToText => (crate::table_tool::selected_table(state).is_some(), None),
             Command::TableRowAbove | Command::TableRowBelow | Command::TableColumnLeft | Command::TableColumnRight => (crate::table_tool::can_insert(state), None),
@@ -1035,8 +1035,8 @@ impl VectorStudioApp {
                 Ok(())
             }
             Command::ClearEffect => {
-                s.doc.clear_perspective(&s.selection);
-                s.doc.clear_shadow(&s.selection);
+                s.doc.clear_effects(&s.selection);
+                s.tools.effect.mesh_node = None;
                 Ok(())
             }
             Command::ConvertText => {
@@ -1356,6 +1356,8 @@ impl VectorStudioApp {
         s.doc.sync_clones();
         s.doc.sync_symbols();
         s.doc.sync_page_numbers();
+        // Effects first: a drop shadow falls from what they draw too.
+        s.doc.sync_effects();
         s.doc.sync_shadows();
         let page = s.doc.active_page();
         s.selection.retain(|id| page.object(*id).is_some_and(|o| page.is_selectable(o)));
